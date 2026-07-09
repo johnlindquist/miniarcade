@@ -149,6 +149,26 @@ globalThis.__bmHomeRun=n=>{
     if(p.atCamp&&p.caravans===1&&p.dur===p.durMax)break;}
   return Object.assign({sawHoming},p);
 };
+globalThis.__bmTowerFixture=s=>{
+  resetGame();if(s)seed=s;
+  goalState.stage=10;treesPlanted=2;grantTool(4);P.armor=2;P.bow=true;
+  Object.assign(P,{cx:CAMP_X,cy:SURFACE-1,x:centerX(CAMP_X),y:centerY(SURFACE-1),toX:CAMP_X,toY:SURFACE-1,
+    cobble:120,wood:36,ladder:16,food:4,ammo:25,gold:0,route:[],target:null,mine:null,progressFrame:frame});
+  nextTripF=1e9; // the fixture tests the build, not the commute
+  return towerPlan();
+};
+globalThis.__bmTowerProbe=()=>{
+  const tp=towerPlan();let windows=0,floors=0,walls=0,rungs=0,westWin=0,eastWin=0;
+  for(let h=0;h<towerH;h++){const y=SURFACE-1-h;
+    const w=tile(TOWER_X-tp.half,y),e=tile(TOWER_X+tp.half,y);
+    if(w===WINDOW){windows++;westWin++;}else if(w===FORT)walls++;
+    if(e===WINDOW){windows++;eastWin++;}else if(e===FORT)walls++;
+    for(let x=TOWER_X-tp.half+1;x<=TOWER_X+tp.half-1;x++)if(tile(x,y)===BRIDGE)floors++;
+    if(tile(TOWER_X,y)===LADDER)rungs++;
+  }
+  return{towerH,plan:tp,windows,floors,walls,rungs,westWin,eastWin,deaths,repaths,
+    finite:Number.isFinite(P.x)&&Number.isFinite(P.y)&&Number.isFinite(camY)};
+};
 globalThis.__bmDiscoveryFixture=()=>{
   resetGame();P.dead=1e9;nextMob=1e9;for(let i=0;i<120;i++)step();const idle=discoveryPasses;
   setTile(P.cx+1,P.cy,STONE);setTile(P.cx+1,P.cy,AIR);step();
@@ -268,6 +288,25 @@ console.log(`  homing ${homeProbe.sawHoming}, row ${homeProbe.cy}, camp ${homePr
 if(!homeProbe.sawHoming)fail('low durability/gold never engaged homing');
 if(!homeProbe.atCamp||homeProbe.caravans!==1||homeProbe.gold!==0||homeProbe.dur!==homeProbe.durMax)fail('viable surface route did not deliver both camp services');
 if(homeProbe.homing)fail('homing state did not clear at camp');
+
+console.log('tower of babel: three seeds raise distinct, structured towers');
+{
+  const plans=[];
+  for(const s of[311,1234,4321]){
+    boot(0xBABE10+s);const plan=globalThis.__bmTowerFixture(s);run(15000);
+    const t=globalThis.__bmTowerProbe();plans.push(JSON.stringify(t.plan));
+    console.log(`  seed ${s}: ${t.towerH}m of ${plan.half*2+1}-wide/${plan.story}-row-story/${plan.win}-window tower — `+
+      `${t.walls} walls, ${t.windows} windows, ${t.floors} floors, ${t.rungs} rungs, ${t.deaths} deaths`);
+    if(!t.finite)fail(`tower seed ${s}: non-finite state`);
+    if(t.towerH<12)fail(`tower seed ${s}: built only ${t.towerH}m with full materials (limit 12m)`);
+    if(t.walls<8||t.windows<2||t.floors<2||t.rungs<t.towerH-1)
+      fail(`tower seed ${s}: structure incomplete (walls ${t.walls}, windows ${t.windows}, floors ${t.floors}, rungs ${t.rungs})`);
+    if(t.plan.win==='alt'&&t.towerH>=t.plan.story*2&&(t.westWin===0&&t.eastWin===0))
+      fail(`tower seed ${s}: alternating windows never appeared`);
+    if(t.deaths>1)fail(`tower seed ${s}: builder died ${t.deaths} times on his own lawn`);
+  }
+  if(new Set(plans).size<2)fail('tower blueprints do not vary across seeds');
+}
 
 console.log('discovery scheduling: idle frames do no repeated flood work');
 boot();const discoveryProbe=globalThis.__bmDiscoveryFixture();

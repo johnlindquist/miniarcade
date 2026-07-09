@@ -71,7 +71,7 @@ let golemKills=0,surge=0,nextGolemDepth=100,lastDeepFrame=0,recentDeaths=[];
 let caravans=0,forgeT=0,nextTripF=0;
 // Waygates: each deep portal is twinned with one home portal at the camp, so
 // established runs commute instead of re-digging (or re-climbing) the shaft.
-let homePortal=null,deepPortals=[],lastPortalDepth=0;
+let homePortal=null,deepPortals=[],lastPortalDepth=0,nextSurfMob=0;
 // The Tower of Babel and the grove that feeds it. Heaven sits at 60 meters:
 // the summit is a real ending, not an asymptote.
 const TOWER_MAX=60;
@@ -82,7 +82,7 @@ const P={cx:10,cy:11,x:84,y:92,toX:10,toY:11,moveT:0,mine:null,face:1,hp:5,invT:
   target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,aiMode:'SCOUT',
   bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,lastBuildDepth:0,fallD:0,air:0,
   ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
-  portalT:0,portalCd:0,portalTo:null,
+  portalT:0,portalCd:0,portalTo:null,regroup:false,
   beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()};
 let goalState={stage:0,depthTarget:50,outpostTarget:1,trapTarget:1,legendTarget:500,caravanTarget:1,completed:0,lastFlash:0};
 
@@ -95,6 +95,16 @@ function generateBaseTile(x,y){
   if((x===4||x===15)&&y>=7&&y<=11)return WOOD;
   if((Math.abs(x-4)<=2&&y>=4&&y<=8)||(Math.abs(x-15)<=2&&y>=4&&y<=8)){
     if(!((x===4||x===15)&&y>=7))return LEAVES;
+  }
+  // Seeded rubble on the west meadow: boulders, stumps, and brush scattered
+  // over the tower site, different every run. Clearing (or building over)
+  // them is part of raising Babel — no two builds start from the same lawn.
+  if(x>=1&&x<=6&&x!==4&&y>=SURFACE-2&&y<SURFACE){
+    const rock=(yy)=>hash(x*31+seed*17,yy*13+seed*5)>0.78;
+    if(rock(y)&&(y===SURFACE-1||rock(SURFACE-1))){
+      const kind=hash(x*3+seed,y*7-seed);
+      return kind<0.45?STONE:kind<0.75?LEAVES:WOOD;
+    }
   }
   if(y<SURFACE)return AIR;
   if(y===SURFACE)return GRASS;
@@ -224,7 +234,11 @@ function activeGoals(){
     primaryGoal(),
     {label:'EXPLORE DEEPER',value:deepest,target:goalState.depthTarget},
     {label:'DAWN CARAVAN',value:caravans,target:goalState.caravanTarget},
-    {label:'TOWER OF BABEL',value:towerH,target:Math.min(towerTarget,TOWER_MAX)},
+    // Once the primary goal IS the tower, this slot shows the outposts again
+    // instead of duplicating the same bar twice.
+    goalState.stage>=10&&towerH<TOWER_MAX
+      ?{label:'FORTIFY OUTPOSTS',value:outpostCount(),target:goalState.outpostTarget}
+      :{label:'TOWER OF BABEL',value:towerH,target:Math.min(towerTarget,TOWER_MAX)},
     {label:'OUTSMART MOBS',value:trapKills,target:goalState.trapTarget}
   ];
 }
@@ -270,7 +284,7 @@ function resetGame(){
   deepest=0;kills=0;nextMob=540;day=0.3;buildScore=0;trapKills=0;trapBuilds=0;deaths=0;repaths=0;
   golemKills=0;surge=0;nextGolemDepth=100;lastDeepFrame=0;recentDeaths=[];
   caravans=0;forgeT=0;nextTripF=0;
-  homePortal=null;deepPortals=[];lastPortalDepth=0;
+  homePortal=null;deepPortals=[];lastPortalDepth=0;nextSurfMob=0;
   towerH=0;towerTarget=10;saplings=[];treesPlanted=0;
   mobRepathBudget=0;mobSerial=0;
   goalState={stage:0,depthTarget:50,outpostTarget:1,trapTarget:1,legendTarget:500,caravanTarget:1,completed:0,lastFlash:0};
@@ -279,7 +293,7 @@ function resetGame(){
     tool:0,torch:4,swing:0,target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,
     aiMode:'SCOUT',bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,fallD:0,air:0,
     ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
-    portalT:0,portalCd:0,portalTo:null,
+    portalT:0,portalCd:0,portalTo:null,regroup:false,
     lastBuildDepth:0,beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()});
 }
 
@@ -441,6 +455,10 @@ function landFall(){
 function respawn(){
   P.hp=5;P.dead=0;P.invT=300;P.mine=null;P.moveT=0;P.route=[];P.target=null;P.fallD=0;P.air=0;
   P.warpT=0;P.homing=false;P.portalT=0;P.portalTo=null;
+  // Gates turned death loops into express lines: respawn, step through, die in
+  // the same lava pool. A cooldown makes him walk (and restock) first; a
+  // grinder streak locks the gates long enough to genuinely regroup.
+  P.portalCd=Math.max(P.portalCd,900);
   // The camp packs a couple of rations for the walk back: without them a
   // starved deep run just chains fractional-hp deaths until the clock runs out.
   P.food=Math.max(P.food,2);
@@ -449,6 +467,9 @@ function respawn(){
   // rather than feeding another body into it.
   recentDeaths.push(frame);recentDeaths=recentDeaths.filter(f=>frame-f<3600);
   const grinder=recentDeaths.length>=3;
+  // Two deaths in a minute unlocks an immediate regroup trip: the usual trip
+  // cooldown otherwise pins a broke, bleeding miner inside the killing field.
+  if(recentDeaths.length>=2){P.regroup=true;nextTripF=Math.min(nextTripF,frame);}
   // Keep the story moving in attract mode: respawn at the latest torch that
   // still has footing (a torch over a void would just relaunch the death).
   let t={x:10,y:11};
@@ -511,6 +532,12 @@ function findRoute(sx,sy,gx,gy,opt){
           if(d[1]===0&&!opt.mob&&P.cobble>=3&&b===AIR&&P.hp>3)c+=2.5;
           else c+=(2+drop*3)*(P.hp<=3?3:P.homing?4:1);}
       }
+      // Broke miners give lava a wide berth: with no cobble to seal or bridge,
+      // one slip beside a pool is a guaranteed death chain, so cells touching
+      // lava price like hazards instead of shortcuts.
+      if(!opt.mob&&P.cobble<2&&!solid(t)&&t!==LAVA){
+        if(tile(x,y+1)===LAVA||tile(x-1,y)===LAVA||tile(x+1,y)===LAVA||tile(x,y-1)===LAVA)c+=18;
+      }
       if(opt.avoidMobs)for(const m of mobs)if(m.dead<=0){const md=Math.abs(Math.floor(m.x/TS)-x)+Math.abs(Math.floor(m.y/TS)-y);if(md<3)c+=(3-md)*7;}
       if(P.visits)c+=(P.visits.get(key(x,y))||0)*0.35;
       const ng=q.g+c,nk=key(x,y);if(ng>=(best.get(nk)??1e9))continue;
@@ -545,6 +572,9 @@ function armTrapAt(x,y,kind){
 }
 function placeTrapToward(m,forced){
   if(P.trapCd>0&&!forced)return false;
+  // Endgame cobble is tower stock: no carpeting the lawn with spike traps for
+  // every passing wolf. A genuine emergency (forced) still gets its trap.
+  if(!forced&&P.cy<=SURFACE+1&&goalState.stage>=9)return false;
   const cand=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]})).filter(c=>tile(c.x,c.y)===AIR||tile(c.x,c.y)===BRIDGE)
     .sort((a,b)=>Math.hypot(centerX(a.x)-m.x,centerY(a.y)-m.y)-Math.hypot(centerX(b.x)-m.x,centerY(b.y)-m.y));
   if(!cand.length)return false;const c=cand[0],kind=P.powder>0&&P.coal>0?'tnt':'spike';
@@ -746,7 +776,11 @@ function combatAct(){
   // Chasing every distant zombie was where whole runs quietly bled away.
   // On the climb home the bar is higher still: only fight what's in his face —
   // stopping to duel every cave dweller made surface trips take forever.
-  const engageR=m=>P.homing?34:(m.kind==='skeleton'||m.kind==='golem'?105:62);
+  // A builder on the meadow fights like a homebound miner: only what's in his
+  // face. Chasing every distant wolf across the lawn is how the tower stays
+  // at zero — the wolves come to him anyway.
+  const builder=P.cy<=SURFACE+1&&goalState.stage>=9;
+  const engageR=m=>P.homing||builder?34:(m.kind==='skeleton'||m.kind==='golem'?105:62);
   const threats=mobs.filter(m=>m.dead<=0&&!ignored(m)&&Math.hypot(m.x-P.x,m.y-P.y)<engageR(m));
   if(!threats.length)return false;
   threats.sort((a,b)=>Math.hypot(a.x-P.x,a.y-P.y)-Math.hypot(b.x-P.x,b.y-P.y));
@@ -854,20 +888,30 @@ function plantGroveAct(){
   }
   return routeAndFollow(x,SURFACE-1,'PLANT GROVE');
 }
-// One row of Babel — a real tower, not a ladder with delusions. Five cells
-// wide: stone walls two out from the spine, a wood-plank floor spanning the
-// interior at the base of every 4-row story, window rows mid-story, and a
-// two-tall doorway at ground level. Stone for walls, timber for floors and
-// rungs: the grove and the mine both feed the build.
-function babelRowPlan(h){
-  // h = absolute row index (0 at the meadow). Story pattern, bottom to top:
-  // floor / wall / window / wall.
-  const r=h%4;
+// The tower blueprint is drawn from the world seed: every run raises a
+// different Babel. Width (5 or 7 cells), story height (3-5 rows), and window
+// style (both walls, or alternating sides per story) all vary — and the
+// meadow itself seeds different rubble to clear before the walls can rise.
+function towerPlan(){
   return{
-    wall:r===2?WINDOW:FORT,
-    floor:r===0&&h>0, // the ground story stands on grass, not planks
+    half:hash(seed*7+11,3)<0.5?2:3,          // walls 2 or 3 cells out from the spine
+    story:3+Math.floor(hash(seed*13+5,17)*3),// 3, 4, or 5 rows per story
+    win:hash(seed*29+2,7)<0.5?'both':'alt'   // window walls: both sides, or alternating
+  };
+}
+// One row of Babel — a real tower, not a ladder with delusions. Stone walls,
+// a wood-plank floor spanning the interior at the base of every story, a
+// window row mid-story, and a two-tall doorway at ground level on the camp
+// side. Stone for walls, timber for floors and rungs: the grove and the mine
+// both feed the build.
+function babelRowPlan(h){
+  const tp=towerPlan(),r=h%tp.story;
+  const floor=r===0&&h>0; // the ground story stands on grass, not planks
+  return{
+    window:r===tp.story-2,
+    floor,
     door:h<2, // east wall stays open two cells high so he can walk in
-    wood:(r===0&&h>0)?2:0,cobble:2
+    wood:floor?(tp.half-1)*2:0,cobble:2
   };
 }
 function babelAct(){
@@ -876,20 +920,32 @@ function babelAct(){
   // would eat the very timber the floors are waiting on.
   if(P.ladder<=0&&P.cobble>=6){P.cobble-=3;P.ladder+=2;say('CARVED STONE STEPS','#9aa0a6');}
   else ensureClimbStock();
-  const plan=babelRowPlan(towerH);
+  const tp=towerPlan(),plan=babelRowPlan(towerH);
   // Keep a survival reserve: a builder who spends his last cobble on walls
   // dives back into the deep with nothing to bridge lava or plank gaps.
   if(P.cobble<plan.cobble+8||P.ladder<1||P.wood<plan.wood)return false;
   const top={x:TOWER_X,y:SURFACE-1-towerH};
   if(P.cx===top.x&&P.cy===top.y&&P.moveT<=0){
-    const y=top.y;
-    setTile(TOWER_X-2,y,plan.wall);
-    if(!plan.door)setTile(TOWER_X+2,y,plan.wall);
-    if(plan.floor){setTile(TOWER_X-1,y,BRIDGE);setTile(TOWER_X+1,y,BRIDGE);P.wood-=plan.wood;}
+    const y=top.y,storyIdx=Math.floor(towerH/tp.story);
+    const westWin=plan.window&&(tp.win==='both'||storyIdx%2===0);
+    const eastWin=plan.window&&(tp.win==='both'||storyIdx%2===1);
+    setTile(TOWER_X-tp.half,y,westWin?WINDOW:FORT);
+    if(!plan.door)setTile(TOWER_X+tp.half,y,eastWin?WINDOW:FORT);
+    else if(solid(tile(TOWER_X+tp.half,y)))setTile(TOWER_X+tp.half,y,AIR); // rubble in the doorway
+    for(let x=TOWER_X-tp.half+1;x<=TOWER_X+tp.half-1;x++){
+      if(x===TOWER_X)continue;
+      const t=tile(x,y);
+      if(plan.floor)setTile(x,y,BRIDGE);
+      else if(t!==AIR){ // demolish site rubble inside the footprint, salvage it
+        if(t===STONE)P.cobble++;else if(t===WOOD)P.wood++;
+        setTile(x,y,AIR);
+      }
+    }
+    if(plan.floor)P.wood-=plan.wood;
     setTile(TOWER_X,y,LADDER);
     P.cobble-=plan.cobble;P.ladder--;towerH++;P.progressFrame=frame;lastDeepFrame=frame;
     buildScore+=15;if(playing())addScore(15);
-    if(towerH%4===0){say('BABEL: STORY '+(towerH/4)+' DONE','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
+    if(towerH%tp.story===0){say('BABEL: STORY '+(towerH/tp.story)+' DONE','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
     if(towerH>=TOWER_MAX){
       // The crown: a beacon burning at the top of the world.
       setTile(TOWER_X,y-1,BEACON);
@@ -947,6 +1003,7 @@ function aiAct(){
   // the run doesn't dissolve into yo-yoing between depth and daylight.
   if(campNear()){
     if(P.homing){P.homing=false;P.tripEnd=0;P.route=[];P.target=null;nextTripF=frame+4800;}
+    P.regroup=false; // made it home: the crisis is over
     if(isNight()&&(P.gold>0||P.hp<5)){
       // The caravan trades by daylight; till then the fire mends what it can.
       P.aiMode='CAMPFIRE REST';P.hp=Math.min(5,P.hp+0.01);lastDeepFrame=frame;return;
@@ -975,10 +1032,12 @@ function aiAct(){
       if(P.route.length&&!followRoute()){P.route=[];P.target=null;}
       return;
     }
-  }else if(frame>=nextTripF&&((P.tool>=2&&P.dur<P.durMax*0.15)||(P.gold>=8&&goalState.stage>=4)
+  }else if(frame>=nextTripF&&(P.regroup||(P.tool>=2&&P.dur<P.durMax*0.15)||(P.gold>=8&&goalState.stage>=4)
     ||(goalState.stage>=9&&(P.cobble>=30||P.sapling>=2)))){
-    if(deepPortals.length&&P.cy>SURFACE+4){
-      // A gate commute beats everything: head for the nearest waygate.
+    if(deepPortals.length&&P.cy>SURFACE+4&&P.portalCd<=0){
+      // A gate commute beats everything: head for the nearest waygate. But a
+      // gate on cooldown (fresh respawn) is a bench beside the thing that just
+      // killed him — the totem gets him out NOW.
       P.homing=true;P.tripEnd=frame+1800;P.route=[];P.target=null;
       say('TO THE WAYGATE','#b57aff');
     }else if(P.cy-SURFACE>30){
@@ -1157,11 +1216,14 @@ function carvePocket(x,y){for(let yy=y-1;yy<=y+1;yy++)for(let xx=x-1;xx<=x+1;xx+
 const depthTier=()=>Math.floor(deepest/50); // 0 near surface, ~4 at diamond depth
 // Daylight has its own bestiary: wolves prowl the meadow and harpies circle
 // the tower — the deep kinds never climb out, and the surface kinds never dig.
+// Pacing matters more than pressure up here: the surface is where the tower
+// gets built, and a constant wolf treadmill preempts the build forever.
 function spawnSurfaceMob(){
-  if(goalState.stage<2)return; // the meadow stays safe while he tools up
+  if(goalState.stage<2||frame<nextSurfMob)return; // the meadow stays safe while he tools up
   const night=isNight();
-  const cap=2+(towerH>=10?2:towerH>=1?1:0)+(night?1:0);
+  const cap=1+(towerH>=10?1:0)+(night?1:0);
   if(mobs.filter(m=>m.dead<=0&&(m.kind==='wolf'||m.kind==='harpy')).length>=cap)return;
+  nextSurfMob=frame+RI(900,1800);
   const wantHarpy=towerH>=5&&(night||random()<0.5);
   if(wantHarpy){
     // Harpies materialize in open sky near the miner's altitude.
@@ -1315,6 +1377,12 @@ function mobStep(){
     if(m.kind==='golem'&&frame-m.born>3600){m.hp=0;m.dead=20;
       burst(m.x,m.y,20,'#9aa3ad',2);say('GOLEM CRUMBLES','#9aa3ad');continue;}
     if(tile(Math.floor(m.x/TS),Math.floor(m.y/TS))===LAVA&&frame%30===0){m.hp--;m.hit=6;if(m.hp<=0){killMob(m,'lava');continue;}}
+    // Surface predators don't besiege forever: a wolf that has prowled for a
+    // while without a kill slinks off, and harpies drift back to the peaks.
+    // Without this, one long fight chains into a permanent lawn war.
+    if((m.kind==='wolf'&&frame-m.born>2700||m.kind==='harpy'&&frame-m.born>3600)&&d>28){
+      m.hp=0;m.dead=1;continue;
+    }
     if(m.kind==='harpy'){
       // Harpies fly: no routes, no walls to respect above ground. They spiral
       // near the miner and dive in swoops; they lose interest in cave mouths.
