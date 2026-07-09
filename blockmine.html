@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLOCK MINE</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080c}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#000}
+</style>
+<canvas id="cv" width="320" height="720"></canvas>
+<script src="engine.js?v=435b484c"></script>
+<script src="autoplay.js?v=1acff4bb"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,shake,preDraw,postDraw,
+  start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+
+// BLOCK MINE — a tiny, endless, self-playing mining story for the 4:9 strip.
+// The controls are deliberately grid-like: every move is readable at video size,
+// while easing and particles keep the world from feeling turn based.
+const TS=8,COLS=20,SURFACE=12;
+const AIR=0,GRASS=1,DIRT=2,STONE=3,COAL=4,IRON=5,GOLD=6,DIAMOND=7,
+  WOOD=8,LEAVES=9,LAVA=10,BEDROCK=11,BRIDGE=12,FORT=13,BEACON=14,WATER=15,OBSIDIAN=16,PORTAL=17,
+  LADDER=18,ROPE=19,SAPLING=20;
+const BC={
+  [GRASS]:['#6f9f38','#8fc94a','#4f7b2c'],[DIRT]:['#80552f','#9a693d','#654226'],
+  [STONE]:['#777b80','#94989b','#5e6267'],[COAL]:['#777b80','#26282c','#a1a4a7'],
+  [IRON]:['#777b80','#c98762','#e5b48f'],[GOLD]:['#777b80','#f4ca42','#fff09a'],
+  [DIAMOND]:['#777b80','#43d9d4','#b8fff8'],[WOOD]:['#76502d','#9a6b3c','#51351e'],
+  [LEAVES]:['#397a35','#58a84a','#28632c'],[LAVA]:['#e94f20','#ff9f1c','#ffe066'],
+  [BEDROCK]:['#32343a','#555861','#1e2025'],[BRIDGE]:['#9a693d','#c98a4c','#654226'],
+  [FORT]:['#4e5967','#738091','#303844'],[BEACON]:['#1a777b','#56f0e7','#d5fffb'],
+  [WATER]:['#2369b5','#52a9e8','#b8e8ff'],[OBSIDIAN]:['#1b1030','#3d2a66','#7a55cc'],
+  [PORTAL]:['#2c1450','#9a5cf0','#e0c3ff'],[LADDER]:['#6b4a26','#a97e46','#3f2c12'],
+  [ROPE]:['#8a7a5e','#d8ccb0','#5e523c'],[SAPLING]:['#4f7b2c','#8fc94a','#6b4a26']
+};
+const NAMES=['HAND','WOOD PICK','STONE PICK','IRON PICK','DIAMOND PICK'];
+const TOOLCOL=['#d5a06f','#a66d3d','#9aa0a6','#d8c9b5','#52e5df'];
+// Every pick wears out: each mined block chips it, melee swings chip it more.
+// Spans are sized for roughly one anvil visit per long expedition.
+const DURMAX=[0,120,260,520,1000];
+const VAL={[COAL]:12,[IRON]:35,[GOLD]:70,[DIAMOND]:180,[OBSIDIAN]:130,[WOOD]:5,[STONE]:2,[DIRT]:1,[GRASS]:1,[LEAVES]:1};
+const HARD={[GRASS]:20,[DIRT]:18,[STONE]:48,[COAL]:55,[IRON]:66,[GOLD]:74,[DIAMOND]:88,
+  [WOOD]:40,[LEAVES]:16,[FORT]:100,[BEACON]:120,[OBSIDIAN]:150,[PORTAL]:1e9,[BEDROCK]:1e9,
+  [LADDER]:10,[ROPE]:8,[BRIDGE]:14,[SAPLING]:6};
+
+// Hot queues and route frontiers stay allocation-light. Fluids used to shift
+// an Array on every cell update, while A* linearly scanned and spliced its
+// frontier; both costs grow with the amount of cave the miner has exposed.
+class RingQueue{
+  constructor(cap=64){this.a=new Array(cap);this.h=0;this.t=0;this.n=0;}
+  get length(){return this.n;}
+  push(v){
+    if(this.n===this.a.length){const b=new Array(this.a.length*2);
+      for(let i=0;i<this.n;i++)b[i]=this.a[(this.h+i)%this.a.length];
+      this.a=b;this.h=0;this.t=this.n;
+    }
+    this.a[this.t]=v;this.t=(this.t+1)%this.a.length;this.n++;
+  }
+  shift(){if(!this.n)return undefined;const v=this.a[this.h];this.a[this.h]=undefined;
+    this.h=(this.h+1)%this.a.length;this.n--;return v;}
+}
+let seed=1,frame=0,camY=0,blocks=new Map(),baseTiles=new Map(),torches=[],mobs=[],texts=[],drops=[];
+let traps=[],structures=[],projectiles=[],enemyShots=[];
+let discovered=new Set(),fluidCells=new Map(),fluidQueue=new RingQueue(),fluidQueued=new Set(),fluidCursor=0;
+let lastDiscoverKey=-1,discoveryDirty=true,discoveryPasses=0;
+let deepest=0,kills=0,nextMob=540,day=0,buildScore=0,trapKills=0,trapBuilds=0,deaths=0,repaths=0;
+let golemKills=0,surge=0,nextGolemDepth=100,lastDeepFrame=0,recentDeaths=[];
+let caravans=0,forgeT=0,nextTripF=0;
+// Waygates: each deep portal is twinned with one home portal at the camp, so
+// established runs commute instead of re-digging (or re-climbing) the shaft.
+let homePortal=null,deepPortals=[],lastPortalDepth=0;
+// The Tower of Babel and the grove that feeds it. Heaven sits at 60 meters:
+// the summit is a real ending, not an asymptote.
+const TOWER_MAX=60;
+let towerH=0,towerTarget=10,saplings=[],treesPlanted=0;
+let mobRepathBudget=0,mobSerial=0;
+const P={cx:10,cy:11,x:84,y:92,toX:10,toY:11,moveT:0,mine:null,face:1,hp:5,invT:0,
+  wood:0,cobble:0,coal:0,iron:0,gold:0,diamond:0,obsidian:0,tool:0,torch:4,swing:0,
+  target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,aiMode:'SCOUT',
+  bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,lastBuildDepth:0,fallD:0,air:0,
+  ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
+  portalT:0,portalCd:0,portalTo:null,
+  beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()};
+let goalState={stage:0,depthTarget:50,outpostTarget:1,trapTarget:1,legendTarget:500,caravanTarget:1,completed:0,lastFlash:0};
+
+// Twenty columns fit in five bits. Keeping grid identities numeric removes
+// the string creation/splitting that dominated maps, fog checks, and A*.
+const KEY_STRIDE=32,key=(x,y)=>y*KEY_STRIDE+x,keyX=k=>k&31,keyY=k=>(k-keyX(k))/KEY_STRIDE;
+function generateBaseTile(x,y){
+  if(x<0||x>=COLS)return BEDROCK;
+  // Two chunky trees make the opening craft legible before the camera heads underground.
+  if((x===4||x===15)&&y>=7&&y<=11)return WOOD;
+  if((Math.abs(x-4)<=2&&y>=4&&y<=8)||(Math.abs(x-15)<=2&&y>=4&&y<=8)){
+    if(!((x===4||x===15)&&y>=7))return LEAVES;
+  }
+  if(y<SURFACE)return AIR;
+  if(y===SURFACE)return GRASS;
+  if(y<=16)return DIRT;
+  const d=y-SURFACE;
+  // Pit shafts: every 30m band hides one 3-wide, ~26-deep drop. The center
+  // column offers nothing to grab, so blundering in means real fall damage.
+  if(d>6){
+    const band=Math.floor(d/30),bd=d-band*30,px=2+Math.floor(hash(band*17+seed*3,seed*7)*15);
+    if(Math.abs(x-px)<=1&&bd>2&&bd<29)return AIR;
+  }
+  // Broad, deterministic cave pockets. Solid rock remains common enough that mining reads.
+  const wave=Math.sin(x*0.83+y*0.31+seed)*0.62+Math.sin(x*0.27-y*0.57+seed*1.7)*0.5;
+  const cave=d>7&&(wave>0.72||hash(x+seed*3,y-seed*5)>0.935);
+  if(cave){
+    const f=hash(x+seed*11,y+19);
+    if(d>58&&f<0.025)return LAVA;
+    if(d>14&&d<110&&f>0.965)return WATER;
+    return AIR;
+  }
+  const r=hash(x*7+seed*13,y*11-seed*3);
+  // Sight stops at the first solid face now, so the bands run richer still:
+  // roughly half the ore a miner walks past is ever actually seen.
+  if(d>58&&r<0.028)return DIAMOND;
+  if(d>68&&r>=0.028&&r<0.05)return OBSIDIAN;
+  if(d>38&&r<0.06)return GOLD;
+  if(d>20&&r<0.12)return IRON;
+  if(d>7&&r<0.21)return COAL;
+  return STONE;
+}
+function baseTile(x,y){
+  if(x<0||x>=COLS)return BEDROCK;
+  const k=key(x,y),cached=baseTiles.get(k);if(cached!==undefined)return cached;
+  const t=generateBaseTile(x,y);baseTiles.set(k,t);return t;
+}
+function tile(x,y){const k=key(x,y),changed=blocks.get(k);return changed===undefined?baseTile(x,y):changed;}
+function setTile(x,y,t){
+  const before=tile(x,y),k=key(x,y);blocks.set(k,t);
+  if(t===LAVA||t===WATER)fluidCells.set(k,{x,y,t});else fluidCells.delete(k);
+  if(t===AIR)activateFluidNeighbors(x,y);
+  // Opening a nearby face is the only stationary topology change that can
+  // reveal new fog. Movement is detected separately by refreshDiscovery().
+  if(t===AIR&&before!==AIR&&Math.abs(x-P.cx)<=13&&Math.abs(y-P.cy)<=13)discoveryDirty=true;
+}
+const solid=t=>t!==AIR&&t!==LAVA&&t!==WATER&&t!==BRIDGE&&t!==LADDER&&t!==ROPE&&t!==SAPLING;
+// Crafted fittings come apart under the pick — fast — and refund their material.
+const removable=t=>t===LADDER||t===ROPE||t===BRIDGE||t===SAPLING;
+const climbable=t=>t===LADDER||t===ROPE||t===WATER;
+const centerX=x=>x*TS+TS/2,centerY=y=>y*TS+TS/2;
+function say(s,c){
+  // Stack-avoidance: bump each new line up until it clears every live message.
+  let y=P.y-12,guard=0;
+  while(guard++<12&&texts.some(t=>Math.abs(t.x-P.x)<42&&Math.abs(t.y-y)<7))y-=8;
+  texts.push({s,c:c||'#fff',x:P.x,y,t:100});
+}
+
+function queueFluid(x,y){const k=key(x,y);if(!fluidCells.has(k)||fluidQueued.has(k))return;
+  fluidQueued.add(k);fluidQueue.push(k);}
+function setFluidCell(x,y,t){const k=key(x,y);blocks.set(k,t);fluidCells.set(k,{x,y,t});queueFluid(x,y);}
+function activateFluidNeighbors(x,y){for(const d of[[0,-1],[0,1],[-1,0],[1,0]])queueFluid(x+d[0],y+d[1]);}
+// Strict line-of-sight discovery: sight spreads only through open space, so
+// every solid block shows just its exposed face — what waits behind it stays
+// unknown until the block is mined and the flood pushes one cell further.
+function discoverAround(cx,cy,r){
+  discoveryPasses++;lastDiscoverKey=key(cx,cy);discoveryDirty=false;
+  const reveal=(x,y)=>{
+    const k=key(x,y),fresh=!discovered.has(k);discovered.add(k);
+    const t=tile(x,y);
+    if((t===LAVA||t===WATER)&&!fluidCells.has(k)){blocks.set(k,t);fluidCells.set(k,{x,y,t});queueFluid(x,y);}
+    if(fresh&&t===AIR)activateFluidNeighbors(x,y);
+  };
+  const seen=new Set([key(cx,cy)]),q=new RingQueue(256);q.push([cx,cy,0]);
+  reveal(cx,cy);
+  while(q.length){
+    const[x,y,d]=q.shift();
+    if(d>=r)continue;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy)continue;
+      const nx=x+dx,ny=y+dy;if(nx<0||nx>=COLS)continue;
+      const nk=key(nx,ny);if(seen.has(nk))continue;seen.add(nk);
+      reveal(nx,ny);
+      if(!solid(tile(nx,ny)))q.push([nx,ny,d+1]);
+    }
+  }
+}
+function refreshDiscovery(){
+  const k=key(P.cx,P.cy);if(discoveryDirty||k!==lastDiscoverKey)discoverAround(P.cx,P.cy,12);
+}
+function fluidStep(){
+  if(frame%4!==0||!fluidQueue.length)return;let budget=24;
+  while(budget-->0&&fluidQueue.length){
+    const k=fluidQueue.shift();fluidQueued.delete(k);const f=fluidCells.get(k);if(!f||tile(f.x,f.y)!==f.t)continue;
+    const opposite=f.t===WATER?LAVA:WATER,tryFlow=(x,y)=>{
+      const nk=key(x,y);if(!discovered.has(nk))return false;const nt=tile(x,y);
+      if(nt===opposite){setTile(x,y,STONE);if(Math.abs(y-P.cy)<24){burst(centerX(x),centerY(y),6,'#d8edf0',0.8);}
+        return true;}
+      if(nt!==AIR)return false;setFluidCell(x,y,f.t);return true;
+    };
+    if(tryFlow(f.x,f.y+1)){queueFluid(f.x,f.y);continue;}
+    const flip=(fluidCursor++)&1,side=flip?[-1,1]:[1,-1];let spread=false;
+    for(const dx of side)if(tryFlow(f.x+dx,f.y))spread=true;
+    if(spread)queueFluid(f.x,f.y);
+  }
+}
+
+const GOAL_LABELS=['CHOP WOOD','STONE PICK','IRON KIT','DIAMOND KIT','CAVE OUTPOST','DIAMOND BEACON',
+  'GOLEM SLAIN','OBSIDIAN HAUL','WAYGATE','GROVE PLANTED'];
+const outpostCount=()=>structures.reduce((n,s)=>n+(s.kind==='outpost'?1:0),0);
+function primaryGoal(){
+  const s=goalState.stage;
+  if(s===0)return{label:'CHOP WOOD',value:P.wood,target:3};
+  if(s===1)return{label:'CRAFT STONE PICK',value:P.cobble,target:8};
+  if(s===2)return{label:'CRAFT IRON KIT',value:Math.min(3,P.iron)+Math.min(1,P.coal),target:4};
+  if(s===3)return{label:'CRAFT DIAMOND KIT',value:P.diamond,target:2};
+  if(s===4)return{label:'BUILD CAVE OUTPOST',value:outpostCount(),target:1};
+  if(s===5)return{label:'RAISE DIAMOND BEACON',value:P.diamond,target:3};
+  if(s===6)return{label:'SLAY STONE GOLEM',value:golemKills,target:1};
+  if(s===7)return{label:'MINE OBSIDIAN',value:P.obsidian,target:4};
+  if(s===8)return{label:'OPEN A WAYGATE',value:P.obsidian,target:6};
+  if(s===9)return{label:'PLANT THE GROVE',value:treesPlanted,target:2};
+  // The endgame: everything below ground exists to push this number up.
+  if(towerH<TOWER_MAX)return{label:'TOWER TO HEAVEN',value:towerH,target:Math.min(towerTarget,TOWER_MAX)};
+  return{label:'BECOME MASTER BUILDER',value:buildScore,target:goalState.legendTarget};
+}
+function activeGoals(){
+  return[
+    primaryGoal(),
+    {label:'EXPLORE DEEPER',value:deepest,target:goalState.depthTarget},
+    {label:'DAWN CARAVAN',value:caravans,target:goalState.caravanTarget},
+    {label:'TOWER OF BABEL',value:towerH,target:Math.min(towerTarget,TOWER_MAX)},
+    {label:'OUTSMART MOBS',value:trapKills,target:goalState.trapTarget}
+  ];
+}
+function goalDone(stage){return stage===0?P.tool>=1:stage===1?P.tool>=2:stage===2?P.tool>=3:
+  stage===3?P.tool>=4:stage===4?outpostCount()>=1:stage===5?P.beaconBuilt:
+  stage===6?golemKills>=1:stage===7?P.obsidian>=4:stage===8?P.portalBuilt:
+  stage===9?treesPlanted>=2:false;}
+function completeGoal(label){goalState.completed++;goalState.lastFlash=frame;say('GOAL! '+label,'#9af7ff');
+  if(playing())addScore(100);burst(P.x,P.y,16,'#9af7ff',1.7);}
+function updateGoals(){
+  while(goalState.stage<10&&goalDone(goalState.stage)){completeGoal(GOAL_LABELS[goalState.stage]);goalState.stage++;}
+  while(deepest>=goalState.depthTarget){completeGoal(goalState.depthTarget+'M DEEP');goalState.depthTarget+=50;}
+  while(outpostCount()>=goalState.outpostTarget){completeGoal('OUTPOST '+goalState.outpostTarget);goalState.outpostTarget++;}
+  while(trapKills>=goalState.trapTarget){completeGoal('TRAP MASTERY');goalState.trapTarget+=2;}
+  while(caravans>=goalState.caravanTarget){completeGoal('DAWN CARAVAN');goalState.caravanTarget++;}
+  while(towerH>=towerTarget&&towerTarget<=TOWER_MAX){
+    completeGoal(towerTarget>=TOWER_MAX?'BABEL TOUCHES HEAVEN':'TOWER '+towerTarget+'M');towerTarget+=10;}
+  if(goalState.stage>=10&&buildScore>=goalState.legendTarget){completeGoal(goalState.legendTarget+' BLD');goalState.legendTarget+=500;}
+}
+function goalTileBonus(t){
+  const s=goalState.stage;
+  if(t===STONE&&P.cobble<6)return 20;
+  if(t===COAL&&P.bow&&P.ammo<4)return 14; // dry quiver: coal doubles as arrow stock
+  if(t===WOOD&&P.wood<2&&P.ladder+P.rope<3)return 16; // ladder stock runs on wood
+  if(t===GOLD&&goalState.stage>=2)return 8; // the caravan pays for every nugget
+  if(s===0)return t===WOOD?18:0;
+  if(s===1)return t===STONE?8:t===COAL?3:0;
+  if(s===2)return t===IRON?18:t===COAL?8:0;
+  if(s===3)return t===DIAMOND?24:t===IRON?4:0;
+  if(s===4)return t===STONE?10:0;
+  if(s===5)return t===DIAMOND?20:t===STONE?5:0;
+  if(s===7||s===8)return t===OBSIDIAN?30:0;
+  if(s===9)return t===WOOD?15:t===LEAVES?6:0; // the grove wants saplings
+  if(s>=10)return t===STONE?8:t===WOOD?6:0; // the tower eats cobble and rungs
+  return t===OBSIDIAN?6:0;
+}
+
+function resetGame(){
+  seed=RI(1,9999);frame=0;camY=-55;blocks=new Map();baseTiles=new Map();torches=[];mobs=[];texts=[];drops=[];
+  traps=[];structures=[];projectiles=[];enemyShots=[];
+  discovered=new Set();fluidCells=new Map();fluidQueue=new RingQueue();fluidQueued=new Set();fluidCursor=0;
+  lastDiscoverKey=-1;discoveryDirty=true;discoveryPasses=0;
+  deepest=0;kills=0;nextMob=540;day=0.3;buildScore=0;trapKills=0;trapBuilds=0;deaths=0;repaths=0;
+  golemKills=0;surge=0;nextGolemDepth=100;lastDeepFrame=0;recentDeaths=[];
+  caravans=0;forgeT=0;nextTripF=0;
+  homePortal=null;deepPortals=[];lastPortalDepth=0;
+  towerH=0;towerTarget=10;saplings=[];treesPlanted=0;
+  mobRepathBudget=0;mobSerial=0;
+  goalState={stage:0,depthTarget:50,outpostTarget:1,trapTarget:1,legendTarget:500,caravanTarget:1,completed:0,lastFlash:0};
+  Object.assign(P,{cx:10,cy:11,x:centerX(10),y:centerY(11),toX:10,toY:11,moveT:0,
+    mine:null,face:1,hp:5,invT:0,wood:0,cobble:0,coal:0,iron:0,gold:0,diamond:0,obsidian:0,
+    tool:0,torch:4,swing:0,target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,
+    aiMode:'SCOUT',bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,fallD:0,air:0,
+    ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
+    portalT:0,portalCd:0,portalTo:null,
+    lastBuildDepth:0,beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()});
+}
+
+function mineFrames(t){
+  const mult=[1.7,0.75,0.5,0.32,0.2][P.tool];
+  const gate=(t===IRON&&P.tool<1)||(t===GOLD&&P.tool<2)||(t===DIAMOND&&P.tool<3)||(t===OBSIDIAN&&P.tool<4);
+  return Math.ceil((HARD[t]||30)*mult*(gate?2.2:1));
+}
+function startMine(x,y){
+  const t=tile(x,y);if((!solid(t)&&!removable(t))||t===BEDROCK||t===PORTAL)return false;
+  const n=mineFrames(t);P.mine={x,y,t,n,left:n};P.face=x<P.cx?-1:x>P.cx?1:P.face;return true;
+}
+function collect(t,x,y){
+  if(t===WOOD){P.wood++;if(random()<0.35)P.sapling++;}
+  else if(t===LEAVES&&random()<0.15)P.sapling++;
+  else if(t===STONE)P.cobble++;else if(t===COAL){P.coal++;P.torch+=4;P.ammo+=2;}
+  else if(t===IRON)P.iron++;else if(t===GOLD)P.gold++;else if(t===DIAMOND)P.diamond++;
+  else if(t===OBSIDIAN)P.obsidian++;
+  else if(t===LADDER)P.ladder++;else if(t===ROPE)P.rope++;else if(t===BRIDGE)P.cobble++;
+  else if(t===SAPLING)P.sapling++;
+  if(playing())addScore(VAL[t]||1);
+  const col=(BC[t]||['#aaa','#fff'])[1];
+  for(let i=0;i<7;i++)spawn({x:centerX(x)+R(-3,3),y:centerY(y)+R(-3,3),
+    vx:R(-0.8,0.8),vy:R(-1.1,0.2),grav:0.06,t:RI(16,28),c:col});
+  drops.push({x:centerX(x),y:centerY(y),t:20,c:col});
+  P.progressFrame=frame;
+  checkCraft();
+}
+const isOre=t=>t===COAL||t===IRON||t===GOLD||t===DIAMOND||t===OBSIDIAN;
+function finishMine(){
+  const m=P.mine,t=tile(m.x,m.y);P.mine=null;
+  if(t===AIR||t===LAVA||t===BEDROCK)return;
+  setTile(m.x,m.y,AIR);collect(t,m.x,m.y);shake(t===DIAMOND?3:1);wearTool(1);
+  // Vein sense: after cracking an ore, immediately chase adjacent blocks of the
+  // same ore so the bot strips whole veins instead of wandering off mid-lode.
+  if(isOre(t)&&!playing()&&!manual()){
+    for(const d of DIRS)if(tile(m.x+d[0],m.y+d[1])===t){
+      P.route=[{x:m.x,y:m.y},{x:m.x+d[0],y:m.y+d[1]}];P.target={x:m.x+d[0],y:m.y+d[1]};
+      P.targetT=Math.max(P.targetT,180);P.aiMode='VEIN STRIP';return;
+    }
+  }
+}
+function grantTool(n){P.tool=n;P.dur=P.durMax=DURMAX[n];}
+function checkCraft(){
+  if(P.tool<1&&P.wood>=3){P.wood-=3;grantTool(1);say('CRAFTED WOOD PICK','#f6c177');burst(P.x,P.y,14,TOOLCOL[1],1.4);}
+  else if(P.tool<2&&P.cobble>=8){P.cobble-=8;grantTool(2);P.bow=true;P.ammo+=10;
+    say('STONE PICK + BOW','#d7dce2');burst(P.x,P.y,14,TOOLCOL[2],1.4);}
+  else if(P.tool<3&&P.iron>=3&&P.coal>=1){P.iron-=3;P.coal--;grantTool(3);P.armor=2;
+    say('IRON KIT + SHIELD','#fff0d7');burst(P.x,P.y,16,TOOLCOL[3],1.6);}
+  // Kit costs 2 diamonds under face-only sight; the beacon still wants 3 more.
+  else if(P.tool<4&&P.diamond>=2){P.diamond-=2;grantTool(4);P.armor=2;
+    say('DIAMOND KIT!','#55f4e9');burst(P.x,P.y,22,TOOLCOL[4],2);shake(3);}
+}
+// Wear and shatter. A shattered pick is lashed back together from scrap: it
+// still swings (tier 1, short-lived), but the real fix is the camp anvil at
+// the surface — or crafting a fresh kit from carried materials.
+function wearTool(n){
+  if(P.tool<1||P.durMax<=0)return;
+  P.dur-=n;
+  if(P.dur<=0){
+    const was=NAMES[P.tool];P.tool=1;P.dur=P.durMax=50;
+    say(was+' SHATTERED!','#ff6b6b');shake(3);burst(P.x,P.y,14,'#9aa0a6',1.6);
+    checkCraft();
+  }
+}
+
+function startMove(x,y){
+  const t=tile(x,y);
+  // Portal cores are the one solid the miner may step into — that IS the door.
+  if(x<0||x>=COLS||(solid(t)&&t!==PORTAL))return false;
+  P.toX=x;P.toY=y;P.moveT=t===WATER?12:8;P.face=x<P.cx?-1:x>P.cx?1:P.face;return true;
+}
+function placeTorch(){
+  if(P.torch<=0||torches.some(t=>t.x===P.cx&&t.y===P.cy))return;
+  torches.push({x:P.cx,y:P.cy});P.torch--;P.lastTorch=P.cy;
+  say('TORCH','#ffd166');burst(P.x,P.y,6,'#ffd166',0.8);
+}
+function hurt(n,why){
+  if(P.invT>0||P.dead>0)return;n=Math.max(0.5,n-P.armor*0.45);P.hp-=n;P.invT=75;shake(4);burst(P.x,P.y,12,'#ff5a5f',1.7);
+  if(P.hp<=0){
+    if(playing())gameOver((why||'FELL')+'  '+deepest+'M');
+    deaths++;P.dead=120;say(why||'RESPAWN','#ff7075');
+  }
+}
+// SteamWorld rules: air gives no purchase. The miner stands on solid ground
+// or a bridge, hangs on ladders and ropes, floats in water, and lava arrests
+// a fall so the escape logic can climb out (never sink through it).
+function supported(){const b=tile(P.cx,P.cy+1),h=tile(P.cx,P.cy);
+  return climbable(h)||h===LAVA||h===WATER||h===BRIDGE||solid(b)||b===BRIDGE||b===LADDER;}
+// Crafting the way back out: wood nails into ladders, spider silk weaves into
+// rope, and in a pinch cobble is carved into stone steps.
+function ensureClimbStock(){
+  if(P.ladder<=0&&P.wood>0){P.wood--;P.ladder+=3;say('CRAFTED LADDERS','#c98a4c');}
+  if(P.ladder<=0&&P.rope<=0&&P.silk>0){P.silk--;P.rope+=2;say('WOVE SILK ROPE','#d8ccb0');}
+  // Carve steps from cobble even while rope remains: rope needs an overhead
+  // anchor, and holding it hostage wedged miners in anchorless spots.
+  if(P.ladder<=0&&P.cobble>=3){P.cobble-=3;P.ladder+=2;say('CARVED STONE STEPS','#9aa0a6');}
+}
+const climbSupply=()=>P.ladder+P.rope+P.wood*3+P.silk*2+Math.floor(P.cobble/3)*2;
+function placeClimbAt(x,y){
+  if(tile(x,y)!==AIR)return false;
+  ensureClimbStock();
+  const b=tile(x,y+1),a=tile(x,y-1);
+  // A ladder can stand in a water pool, which is how the miner exits a swim.
+  if(P.ladder>0&&(solid(b)||b===LADDER||b===BRIDGE||b===WATER)){setTile(x,y,LADDER);P.ladder--;return true;}
+  if(P.rope>0&&(solid(a)||a===ROPE||a===LADDER)){setTile(x,y,ROPE);P.rope--;return true;}
+  // Rope can also chain downward off a ladder run when climbing keeps going up.
+  if(P.rope>0&&(solid(b)||b===LADDER||b===ROPE||b===BRIDGE)){setTile(x,y,ROPE);P.rope--;return true;}
+  return false;
+}
+const placeClimb=()=>placeClimbAt(P.cx,P.cy);
+function climbUp(){
+  const here=tile(P.cx,P.cy),above=tile(P.cx,P.cy-1);
+  // Water is "climbable" for the route planner, but leaving it upward is the
+  // classic pogo trap: swim up, no support in the air cell, splash back down.
+  // Exit the pool only into more water, onto a rung, or by hanging a rung in
+  // the air cell first; otherwise fail so the planner re-routes.
+  if(here===WATER){
+    if(above===WATER||above===LADDER||above===ROPE)return startMove(P.cx,P.cy-1);
+    if(above===AIR&&placeClimbAt(P.cx,P.cy-1))return startMove(P.cx,P.cy-1);
+    return false;
+  }
+  if(climbable(here)){
+    // A rope top is not a ledge: unlike a ladder, a rope below the feet holds
+    // nothing. Chain the next rung into the air cell first, or stay put —
+    // climbing off the end of a rope is another way to pogo in place.
+    if(here===ROPE&&above===AIR&&!placeClimbAt(P.cx,P.cy-1))return false;
+    return startMove(P.cx,P.cy-1);
+  }
+  if(here===AIR&&placeClimb())return startMove(P.cx,P.cy-1);
+  // Standing inside a plank: the cell itself can't take a rung, but the plank
+  // is a solid anchor for one directly above — without this, a miner on his
+  // own walkway can never start climbing off it.
+  if(here===BRIDGE&&above===AIR&&placeClimbAt(P.cx,P.cy-1))return startMove(P.cx,P.cy-1);
+  // One-block hop from solid footing: enough to mantle a ledge, never a shaft.
+  // The landing must hold on its own (a rung above, or a wall to mantle at the
+  // top) — a hop into bare air just falls back to this exact spot, and that
+  // pogo loop is what "the miner jumping in place" looks like on screen.
+  if((here===AIR||here===BRIDGE)&&supported()&&hopHolds()&&startMove(P.cx,P.cy-1)){P.air=2;return true;}
+  return false;
+}
+// Would the miner have anything at all at (cx,cy-1)? Climbable in the cell,
+// a plank he can stand in, or a solid ledge beside it to mantle onto next step.
+function hopHolds(){
+  const a=tile(P.cx,P.cy-1);
+  if(climbable(a)||a===BRIDGE)return true;
+  for(const s of[-1,1]){
+    const side=tile(P.cx+s,P.cy-1);
+    if(!solid(side)&&side!==LAVA&&(solid(tile(P.cx+s,P.cy))||tile(P.cx+s,P.cy)===BRIDGE))return true;
+  }
+  return false;
+}
+function landFall(){
+  const splash=tile(P.cx,P.cy)===WATER;
+  if(P.fallD>=4&&!splash)hurt(Math.min(3,P.fallD-3),'FALL');
+  else if(P.fallD>=4)say('SPLASH LANDING','#52a9e8');
+  P.fallD=0;P.route=[];P.target=null;
+}
+function respawn(){
+  P.hp=5;P.dead=0;P.invT=300;P.mine=null;P.moveT=0;P.route=[];P.target=null;P.fallD=0;P.air=0;
+  P.warpT=0;P.homing=false;P.portalT=0;P.portalTo=null;
+  // The camp packs a couple of rations for the walk back: without them a
+  // starved deep run just chains fractional-hp deaths until the clock runs out.
+  P.food=Math.max(P.food,2);
+  // Circuit breaker for pathological seeds: three deaths inside a minute means
+  // the whole area is a meat grinder — retreat all the way to the surface camp
+  // rather than feeding another body into it.
+  recentDeaths.push(frame);recentDeaths=recentDeaths.filter(f=>frame-f<3600);
+  const grinder=recentDeaths.length>=3;
+  // Keep the story moving in attract mode: respawn at the latest torch that
+  // still has footing (a torch over a void would just relaunch the death).
+  let t={x:10,y:11};
+  if(!grinder)for(let i=torches.length-1;i>=0;i--){const c=torches[i],b=tile(c.x,c.y+1),h=tile(c.x,c.y);
+    // Reject anchors with lava on any side: pools flow, and respawning beside
+    // one produced nine-death chains before the run could recover.
+    const scalding=h===LAVA||b===LAVA||DIRS.some(d=>tile(c.x+d[0],c.y+d[1])===LAVA);
+    if((solid(b)||b===BRIDGE||b===LADDER||climbable(h))&&!scalding){t=c;break;}}
+  P.cx=t.x;P.cy=t.y;P.toX=t.x;P.toY=t.y;P.x=centerX(t.x);P.y=centerY(t.y);
+  // Break the respawn death-spiral: whatever killed the miner loses the trail,
+  // and the caves stay quiet for a few beats while the run finds its feet.
+  mobs=mobs.filter(m=>Math.hypot(m.x-P.x,m.y-P.y)>140);
+  nextMob=Math.max(nextMob,frame+600);surge=0;
+}
+
+const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+function gridLOS(ax,ay,bx,by){
+  const n=Math.ceil(Math.max(Math.abs(bx-ax),Math.abs(by-ay))/3);
+  for(let i=1;i<n;i++){const u=i/n,x=Math.floor((ax+(bx-ax)*u)/TS),y=Math.floor((ay+(by-ay)*u)/TS);
+    if(solid(tile(x,y)))return false;}
+  return true;
+}
+function findRoute(sx,sy,gx,gy,opt){
+  // The floor is -48, not 0: the Tower of Babel routes climb above the old
+  // world ceiling, and sky cells are plain AIR all the way up.
+  opt=opt||{};const minY=Math.max(-48,Math.min(sy,gy)-12),maxY=Math.max(sy,gy)+18;
+  const sk=key(sx,sy),gk=key(gx,gy),open=new AI.BinaryHeap((a,b)=>a.f-b.f),best=new Map([[sk,0]]),came=new Map();open.push({x:sx,y:sy,g:0,f:0});
+  let loops=0;
+  while(open.size&&loops++<2200){
+    const q=open.pop(),qk=key(q.x,q.y);if(q.g!==best.get(qk))continue;
+    if(qk===gk){const out=[];let k=qk;while(k!==sk){out.push({x:keyX(k),y:keyY(k)});k=came.get(k);if(k===undefined)return null;}return out.reverse();}
+    for(const d of DIRS){const x=q.x+d[0],y=q.y+d[1];if(x<1||x>COLS-2||y<minY||y>maxY)continue;
+      const t=tile(x,y),isGoal=x===gx&&y===gy;if(t===BEDROCK||t===PORTAL)continue;
+      if(opt.airOnly&&solid(t)&&!isGoal)continue;if(t===LAVA&&(!opt.allowBridge||P.cobble<2))continue;
+      let c=1;
+      // Climbing gate (player routes only; cave mobs scale walls natively):
+      // heading up costs a ladder or rope unless one is already hung there,
+      // and with no climbing stock at all only a one-block hop off footing works.
+      if(d[1]===-1&&!opt.mob){
+        const ft=tile(q.x,q.y),fb=tile(q.x,q.y+1);
+        if(!climbable(ft)){
+          if(climbSupply()>0)c+=2;
+          else if(solid(fb)||fb===BRIDGE||fb===LADDER)c+=1.5;
+          else continue;
+        }
+      }
+      if(t===LAVA)c=30*(P.hp<=2?4:P.hp<=3?2:1);else if(t===WATER)c=3.5;else if(solid(t))c=2+mineFrames(t)/18+(t===FORT||t===BEACON?24:0);
+      // Fall awareness: passing through a cell with no floor and no wall to
+      // grab risks a plunge, so the planner prices in the drop below it.
+      if(!solid(t)&&t!==WATER&&t!==LADDER&&t!==ROPE){
+        const b=tile(x,y+1);
+        if(!solid(b)&&b!==BRIDGE&&b!==LADDER){let drop=1;while(drop<7&&!solid(tile(x,y+1+drop)))drop++;
+          // With cobble in the bag a sideways gap is just a plank (the route
+          // executor lays it before stepping). Only air can hold a plank —
+          // water or lava under the gap keeps the full fall price. Mobs can't
+          // plank; wounded or homebound miners still treat drops as near-walls.
+          if(d[1]===0&&!opt.mob&&P.cobble>=3&&b===AIR&&P.hp>3)c+=2.5;
+          else c+=(2+drop*3)*(P.hp<=3?3:P.homing?4:1);}
+      }
+      if(opt.avoidMobs)for(const m of mobs)if(m.dead<=0){const md=Math.abs(Math.floor(m.x/TS)-x)+Math.abs(Math.floor(m.y/TS)-y);if(md<3)c+=(3-md)*7;}
+      if(P.visits)c+=(P.visits.get(key(x,y))||0)*0.35;
+      const ng=q.g+c,nk=key(x,y);if(ng>=(best.get(nk)??1e9))continue;
+      best.set(nk,ng);came.set(nk,qk);open.push({x,y,g:ng,f:ng+(Math.abs(gx-x)+Math.abs(gy-y))*1.15});
+    }
+  }
+  return null;
+}
+function awardBuild(name,points){
+  buildScore+=points;P.progressFrame=frame;say(name+' +'+points,'#7ef0ff');
+  if(playing())addScore(points);burst(P.x,P.y,10,'#7ef0ff',1.25);
+}
+function buildBridge(x,y){
+  if(tile(x,y)!==LAVA||P.cobble<2)return false;P.cobble-=2;setTile(x,y,BRIDGE);
+  structures.push({kind:'bridge',x,y});awardBuild('LAVA BRIDGE',30);return true;
+}
+// Placing a block as the solution: a cobble plank laid into open air, so a
+// gap becomes a walkway instead of a detour (or a fall).
+function placePlank(x,y){
+  if(tile(x,y)!==AIR||P.cobble<1)return false;
+  P.cobble--;setTile(x,y,BRIDGE);burst(centerX(x),centerY(y),6,'#94989b',1);
+  if(frame-(P.lastPlankSay||0)>240){P.lastPlankSay=frame;say('PLANKED','#9aa0a6');}
+  P.progressFrame=frame;return true;
+}
+function armTrapAt(x,y,kind){
+  if(tile(x,y)!==AIR&&tile(x,y)!==BRIDGE)return false;
+  if(traps.some(t=>t.x===x&&t.y===y&&t.live))return false;
+  if(kind==='tnt'){if(P.powder<1||P.coal<1)return false;P.powder--;P.coal--;}
+  else{if(P.cobble<6)return false;P.cobble-=2;}
+  traps.push({x,y,kind,uses:kind==='tnt'?1:3,live:true,flash:0});trapBuilds++;P.trapCd=180;
+  awardBuild(kind==='tnt'?'TNT AMBUSH':'SPIKE TRAP',kind==='tnt'?75:35);return true;
+}
+function placeTrapToward(m,forced){
+  if(P.trapCd>0&&!forced)return false;
+  const cand=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]})).filter(c=>tile(c.x,c.y)===AIR||tile(c.x,c.y)===BRIDGE)
+    .sort((a,b)=>Math.hypot(centerX(a.x)-m.x,centerY(a.y)-m.y)-Math.hypot(centerX(b.x)-m.x,centerY(b.y)-m.y));
+  if(!cand.length)return false;const c=cand[0],kind=P.powder>0&&P.coal>0?'tnt':'spike';
+  if(!armTrapAt(c.x,c.y,kind))return false;
+  // Two cheap shoulders turn an ordinary trap into a visible mob funnel.
+  const dx=c.x-P.cx,dy=c.y-P.cy;for(const s of[-1,1]){const x=c.x+dy*s,y=c.y-dx*s;
+    if(P.cobble>0&&tile(x,y)===AIR&&!(x===P.cx&&y===P.cy)){setTile(x,y,FORT);P.cobble--;}}
+  return true;
+}
+function buildCover(m,forced){
+  if(P.cobble<2||(!forced&&(P.cobble<6||P.trapCd>0||m.covered)))return false;
+  const cand=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]})).filter(c=>tile(c.x,c.y)===AIR)
+    .sort((a,b)=>Math.hypot(centerX(a.x)-m.x,centerY(a.y)-m.y)-Math.hypot(centerX(b.x)-m.x,centerY(b.y)-m.y));
+  if(!cand.length)return false;const c=cand[0];setTile(c.x,c.y,FORT);P.cobble-=2;P.trapCd=150;m.covered=true;
+  structures.push({kind:'cover',x:c.x,y:c.y});awardBuild('TACTICAL COVER',25);return true;
+}
+function buildOutpost(){
+  if(P.cobble<18||P.cy-P.lastBuildDepth<28)return false;
+  const cx=P.cx,cy=P.cy,doors=new Set([key(cx,cy-2),key(cx,cy+2)]),wall=[];
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+    const edge=Math.abs(dx)===2||Math.abs(dy)===2,x=cx+dx,y=cy+dy;if(x<1||x>COLS-2)continue;
+    if(edge&&!doors.has(key(x,y)))wall.push({x,y});else if(!edge&&!(x===cx&&y===cy))setTile(x,y,AIR);
+  }
+  if(wall.length<10)return false;for(const c of wall)setTile(c.x,c.y,FORT);P.cobble-=12;
+  if(!torches.some(t=>t.x===cx&&t.y===cy))torches.push({x:cx,y:cy});
+  if(P.cobble>=2)armTrapAt(cx,cy+2,'spike');
+  structures.push({kind:'outpost',x:cx,y:cy});P.lastBuildDepth=P.cy;P.buildCd=600;
+  P.hp=Math.min(5,P.hp+1);P.food++; // every outpost stocks a ration cache
+  awardBuild('CAVE OUTPOST',180);return true;
+}
+function buildBeacon(){
+  // 3 diamonds, not 4: with sight stopping at each rock face, every diamond
+  // costs real prospecting time and the beacon was slipping out of reach.
+  if(P.beaconBuilt||P.tool<4||P.diamond<3||P.cobble<8)return false;
+  const spots=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]})).filter(c=>tile(c.x,c.y)===AIR);
+  if(!spots.length)return false;const c=spots[0];setTile(c.x,c.y,BEACON);P.diamond-=3;P.cobble-=4;P.beaconBuilt=true;
+  structures.push({kind:'beacon',x:c.x,y:c.y});P.hp=5;P.ammo+=12;P.armor=3; // beacon-forged plate for the golem era
+  awardBuild('DIAMOND BEACON',350);return true;
+}
+// --- Waygates ----------------------------------------------------------------
+// An obsidian archway with a burning two-cell core the miner walks INTO from
+// either side. The first one tears a twin open at the camp; every gate links
+// to the surface, and the surface gate leads back to the newest gate below —
+// a two-way commute between daylight and the deep.
+function erectFrame(cx,cy){ // cy = the row the miner stands on; core fills cy-1..cy
+  setTile(cx,cy,PORTAL);setTile(cx,cy-1,PORTAL);
+  if(tile(cx,cy-2)!==BEDROCK)setTile(cx,cy-2,OBSIDIAN);
+  if(tile(cx,cy+1)!==BEDROCK)setTile(cx,cy+1,OBSIDIAN);
+  for(const s of[-1,1]){
+    // Corner stones for the arch, and carved approaches at walking height.
+    if(tile(cx+s,cy-2)!==BEDROCK)setTile(cx+s,cy-2,OBSIDIAN);
+    if(tile(cx+s,cy+1)!==BEDROCK)setTile(cx+s,cy+1,OBSIDIAN);
+    if(tile(cx+s,cy)!==BEDROCK)setTile(cx+s,cy,AIR);
+    if(tile(cx+s,cy-1)!==BEDROCK)setTile(cx+s,cy-1,AIR);
+  }
+  return{x:cx,y:cy}; // lower core cell
+}
+const HOME_PORTAL_X=17;
+function buildPortal(){
+  if(goalState.stage<8||P.obsidian<6)return false;
+  if(deepPortals.length&&P.cy-lastPortalDepth<45)return false; // one gate per stratum
+  if(P.cy<SURFACE+20)return false; // a gate near the lawn is a staircase with extra steps
+  const cx=clamp(P.cx+2*(P.face||1),2,COLS-3);
+  // The frame must displace only honest rock or air — never the miner's cell.
+  if(Math.abs(cx-P.cx)<2)return false;
+  for(let dy=-2;dy<=1;dy++)if(tile(cx,P.cy+dy)===BEDROCK)return false;
+  const gate=erectFrame(cx,P.cy);
+  deepPortals.push(gate);lastPortalDepth=P.cy;
+  if(!homePortal)homePortal=erectFrame(HOME_PORTAL_X,SURFACE-1);
+  P.obsidian-=6;P.portalBuilt=true;P.buildCd=900;structures.push({kind:'portal',x:gate.x,y:gate.y});
+  P.hp=5;P.food+=2;P.ammo+=10;shake(6);burst(P.x,P.y-12,30,'#b57aff',2.6);
+  awardBuild('WAYGATE',600);say('A TWIN GATE OPENS AT CAMP','#d9b8ff');return true;
+}
+// Standing inside a burning core counts as "in the gate".
+function gateHere(){
+  if(P.portalCd>0)return null;
+  const at=g=>P.cx===g.x&&(P.cy===g.y||P.cy===g.y-1);
+  if(homePortal&&at(homePortal))return homePortal;
+  for(const g of deepPortals)if(at(g))return g;
+  return null;
+}
+function gateTwin(g){
+  if(g===homePortal)return deepPortals[deepPortals.length-1]||null;
+  return homePortal;
+}
+function enterGate(g){
+  const twin=gateTwin(g);if(!twin)return false;
+  P.portalTo=twin;P.portalT=40;P.mine=null;P.route=[];P.target=null;
+  say('THE GATE TAKES HOLD','#b57aff');return true;
+}
+// Route helper: the open approach cells flanking a gate's lower core.
+function gateApproach(g){
+  const out=[];
+  for(const s of[-1,1]){const x=g.x+s,t=tile(x,g.y);
+    if(x>0&&x<COLS-1&&!solid(t)&&t!==LAVA)out.push({x,y:g.y});}
+  return out;
+}
+function maybeBuild(){
+  if(P.buildCd>0)return false;if(buildPortal())return true;if(buildBeacon())return true;
+  if(buildOutpost())return true;return false;
+}
+// --- The surface camp -------------------------------------------------------
+// Home base at the spawn meadow: an anvil that reforges worn picks, and a
+// trade caravan that rolls in by daylight to buy gold. Together they give the
+// miner a living reason to climb all the way back out of the dark.
+const CAMP_X=10;
+const campNear=()=>Math.abs(P.cx-CAMP_X)<=2&&P.cy<=SURFACE+1;
+const isNight=()=>Math.cos(day*Math.PI*2)*0.5+0.15>0.45;
+function campServices(){
+  if(!campNear()||P.dead>0)return;
+  if(P.tool>=1&&P.dur<P.durMax){
+    if(++forgeT>=90){forgeT=0;P.dur=P.durMax;P.progressFrame=frame;
+      say('ANVIL: '+NAMES[P.tool]+' REFORGED','#d8c9b5');burst(P.x,P.y,12,'#d8c9b5',1.4);}
+  }else forgeT=0;
+  if(!isNight()&&P.gold>0){
+    const g=P.gold;P.gold=0;caravans++;buildScore+=g*30;nextTripF=frame+3600;
+    P.food=Math.min(4,P.food+Math.ceil(g/2));P.ammo+=g*3;P.torch+=g*2;P.hp=5;P.progressFrame=frame;
+    // Traders carry seed stock from distant forests — the grove's bootstrap.
+    if(goalState.stage>=8)P.sapling+=2;
+    say('CARAVAN! GOLD x'+g+' TRADED','#ffd166');burst(P.x,P.y,20,'#ffd166',2);
+    if(playing())addScore(g*30);
+  }
+}
+function followRoute(){
+  while(P.route.length&&P.route[0].x===P.cx&&P.route[0].y===P.cy)P.route.shift();
+  if(!P.route.length)return false;const n=P.route[0],t=tile(n.x,n.y);
+  if(t===LAVA){if(!buildBridge(n.x,n.y)){P.route=[];return false;}}
+  const now=tile(n.x,n.y);
+  if(solid(now)){
+    // Never dig straight down blindly: breaking the block underfoot with fog
+    // beneath it is a leap of faith. Carve a diagonal stair instead and let
+    // the planner re-route once the new ground is revealed.
+    if(n.x===P.cx&&n.y===P.cy+1&&fogged(n.x,n.y+1)&&!playing()&&!manual()&&stairStep()){
+      P.route=[];P.aiMode='STAIR DIG';return true;
+    }
+    return startMine(n.x,n.y)||(P.route=[],false);
+  }
+  if(n.y<P.cy&&n.x===P.cx){
+    if(climbUp())return true;
+    // Routes go stale (fluids solidify, golems smash): mine through the block
+    // that appeared rather than silently re-planning the same dead route.
+    const t2=tile(n.x,n.y);
+    if(solid(t2)&&startMine(n.x,n.y))return true;
+    P.route=[];return false;
+  }
+  // Placing a block as the solution: before stepping sideways over a drop,
+  // lay a plank under the landing so the gap becomes floor instead of a fall.
+  // Even a one-cell dip gets planked — dropping off the route invalidates it
+  // and burns a replan, which is far pricier than a cobble.
+  if(n.y===P.cy&&n.x!==P.cx&&!playing()&&!manual()&&P.cobble>0){
+    if(tile(n.x,n.y+1)===AIR)placePlank(n.x,n.y+1);
+  }
+  if(startMove(n.x,n.y))return true;
+  if(solid(tile(n.x,n.y))&&startMine(n.x,n.y))return true;
+  P.route=[];return false;
+}
+const ignored=m=>m.ignore&&m.ignore>frame&&Math.hypot(m.x-P.x,m.y-P.y)>26;
+function nearestThreat(radius){
+  let best=null,bd=radius;
+  for(const m of mobs)if(m.dead<=0&&!ignored(m)){const d=Math.hypot(m.x-P.x,m.y-P.y);if(d<bd){bd=d;best=m;}}
+  return best?{m:best,d:bd}:null;
+}
+function retreatRoute(threats){
+  let best=null,bs=-1e9;
+  for(let y=P.cy-6;y<=P.cy+6;y++)for(let x=Math.max(1,P.cx-7);x<=Math.min(COLS-2,P.cx+7);x++){
+    if(solid(tile(x,y))||tile(x,y)===LAVA)continue;const r=findRoute(P.cx,P.cy,x,y,{airOnly:true,avoidMobs:true});if(!r||!r.length)continue;
+    let md=1e9;for(const m of threats)md=Math.min(md,Math.hypot(centerX(x)-m.x,centerY(y)-m.y));
+    const exits=DIRS.reduce((n,d)=>n+(!solid(tile(x+d[0],y+d[1]))&&tile(x+d[0],y+d[1])!==LAVA?1:0),0);
+    const lit=torches.some(t=>Math.abs(t.x-x)+Math.abs(t.y-y)<4)?10:0,score=md+exits*5+lit-r.length*0.3;
+    if(score>bs){bs=score;best=r;}
+  }
+  return best;
+}
+function shootBow(m){
+  if(!P.bow||P.ammo<=0||P.attackT>0)return false;const dx=m.x-P.x,dy=m.y-P.y,d=Math.hypot(dx,dy)||1;
+  P.ammo--;P.attackT=34;P.swing=8;P.face=dx<0?-1:1;projectiles.push({x:P.x,y:P.y-2,vx:dx/d*2.8,vy:dy/d*2.8,t:80,dmg:1+Math.floor(P.tool/2)});
+  return true;
+}
+function dodgeShot(){
+  if(P.moveT>0||P.dead>0)return false;
+  for(const a of enemyShots){
+    const dx=P.x-a.x,dy=P.y-a.y,d=Math.hypot(dx,dy);if(d>36)continue;
+    const sp=Math.hypot(a.vx,a.vy)||1;
+    if((dx*a.vx+dy*a.vy)/sp<=0)continue; // already past us
+    const perp=Math.abs(dx*a.vy-dy*a.vx)/sp;if(perp>7)continue; // will miss anyway
+    let best=null,bs=perp;
+    for(const dd of DIRS){const x=P.cx+dd[0],y=P.cy+dd[1],t=tile(x,y);
+      if(solid(t)||t===LAVA)continue;
+      const ex=centerX(x)-a.x,ey=centerY(y)-a.y;
+      const p2=Math.abs(ex*a.vy-ey*a.vx)/sp;
+      if(p2>bs){bs=p2;best={x,y};}}
+    if(best){P.mine=null;startMove(best.x,best.y);P.aiMode='DODGE!';return true;}
+  }
+  return false;
+}
+function combatAct(){
+  if(dodgeShot())return true;
+  // Ranged mobs demand attention across the cavern; brawlers only once close.
+  // Chasing every distant zombie was where whole runs quietly bled away.
+  // On the climb home the bar is higher still: only fight what's in his face —
+  // stopping to duel every cave dweller made surface trips take forever.
+  const engageR=m=>P.homing?34:(m.kind==='skeleton'||m.kind==='golem'?105:62);
+  const threats=mobs.filter(m=>m.dead<=0&&!ignored(m)&&Math.hypot(m.x-P.x,m.y-P.y)<engageR(m));
+  if(!threats.length)return false;
+  threats.sort((a,b)=>Math.hypot(a.x-P.x,a.y-P.y)-Math.hypot(b.x-P.x,b.y-P.y));
+  const m=threats[0],d=Math.hypot(m.x-P.x,m.y-P.y);
+  const golem=m.kind==='golem';
+  const panic=P.hp<=2||threats.length>=2||(m.kind==='creeper'&&d<48)||(golem&&d<55);
+  // On the last heart with an empty pack, survival beats every other plan.
+  if(P.hp<=1&&P.food<=0){
+    P.aiMode='LAST STAND RETREAT';
+    if(P.trapCd<=0)placeTrapToward(m,true);
+    const rr=retreatRoute(threats);
+    if(rr&&rr.length){P.route=rr;followRoute();return true;}
+    if(buildCover(m,true))return true;
+  }
+  if(P.hp<=3&&P.food>0){P.food--;P.hp=Math.min(5,P.hp+2);P.invT=45;P.aiMode='EAT + HEAL';say('ATE RATIONS','#7ed957');return true;}
+  if(m.kind==='skeleton'&&d<70&&gridLOS(P.x,P.y,m.x,m.y)&&buildCover(m)){P.aiMode='BUILD COVER';return true;}
+  if(panic){
+    P.aiMode=golem?'BAIT GOLEM':m.kind==='creeper'?'BAIT CREEPER':'FALL BACK';
+    const armed=P.trapCd<=0&&placeTrapToward(m,golem);
+    if(armed||d<27||(m.kind==='creeper'&&m.charge>10)||golem){
+      const rr=retreatRoute(threats);if(rr&&rr.length){P.route=rr;followRoute();return true;}
+      // Cornered with no way out: wall the tunnel shut and fight through a slit.
+      if(P.hp<=2&&buildCover(m,true)){P.aiMode='SEAL TUNNEL';return true;}
+    }
+  }
+  // Golems punish melee: keep range and let arrows plus traps do the work.
+  if(d<15&&P.attackT<=0&&!golem){P.aiMode='SHIELD BASH';attack(m);return true;}
+  if(golem&&d<15&&P.attackT<=0&&(!P.bow||P.ammo<=0)){P.aiMode='DESPERATE SWING';attack(m);return true;}
+  if(d>(golem?12:17)&&gridLOS(P.x,P.y,m.x,m.y)&&shootBow(m)){P.aiMode='BOW KITE';return true;}
+  const mx=clamp(Math.floor(m.x/TS),1,COLS-2),my=Math.max(0,Math.floor(m.y/TS));
+  const r=findRoute(P.cx,P.cy,mx,my,{airOnly:true,avoidMobs:false});
+  if(r&&r.length){P.aiMode='HUNT '+m.kind.toUpperCase();P.route=r;followRoute();return true;}
+  // A wall-separated enemy is no longer a permanent stand-off: mine one tactical breach.
+  const breach=findRoute(P.cx,P.cy,mx,my,{allowBridge:true,avoidMobs:true});
+  if(breach&&breach.length){P.aiMode='BREACH';P.route=breach;followRoute();return true;}
+  // Truly unreachable: write the grudge off for a while and get back to work.
+  m.ignore=frame+900;return false;
+}
+function targetValue(t){const base=t===DIAMOND?10:t===OBSIDIAN?9:t===GOLD?6:t===IRON?4:t===COAL?2:t===WOOD?8:0;
+  return base+goalTileBonus(t);}
+function pickTarget(){
+  const cand=[];
+  if(P.tool===0&&P.wood<3)for(const x of[4,15])for(let y=7;y<=11;y++)if(tile(x,y)===WOOD)cand.push({x,y,s:1000});
+  // Grove harvest: when he's topside and wants timber (or sapling seed for
+  // stage 9), the grown trees are the richest wood in the world.
+  if(P.cy<=SURFACE+6&&(P.wood<3||goalState.stage===9||(goalState.stage>=10&&P.ladder<2)))
+    for(let y=3;y<SURFACE;y++)for(let x=4;x<COLS-4;x++){
+      const t=tile(x,y);if(t===WOOD)cand.push({x,y,s:600});else if(t===LEAVES)cand.push({x,y,s:300});
+    }
+  for(let y=Math.max(13,P.cy-10);y<=P.cy+16;y++)for(let x=1;x<COLS-1;x++){
+    if(fogged(x,y))continue; // fog of war: the bot only covets ore it has seen
+    const t=tile(x,y),v=targetValue(t);if(!v)continue;
+    if(y<P.cy-4&&v<8)continue; // only climb back up for genuinely rich finds
+    // A prize far overhead is a mirage without rungs to reach it: chasing
+    // surface trees from 30m down (to restock ladder wood!) fell-looped runs.
+    if(P.cy-y>4&&climbSupply()+3<P.cy-y)continue;
+    const md=Math.abs(x-P.cx)+Math.abs(y-P.cy);
+    // Once the goal ladder wants diamonds, gravity is strategy: weight the
+    // scan downward so shallow coal snacking can't stall the descent.
+    const sink=goalState.stage>=3&&deepest<90?(y-P.cy)*4:(y-P.cy)*2;
+    cand.push({x,y,s:v*38+sink-md*3+hash(x+frame,y)*3});
+  }
+  cand.sort((a,b)=>b.s-a.s);
+  for(const c of cand.slice(0,10)){const r=findRoute(P.cx,P.cy,c.x,c.y,{allowBridge:true,avoidMobs:true});
+    if(r&&r.length){P.target={x:c.x,y:c.y};P.route=r;P.targetT=480;return true;}}
+  // Blind prospecting under face-only visibility: diagonal staircases and
+  // lateral galleries expose far more fresh rock faces than a plumb shaft.
+  for(let n=0;n<6;n++){
+    const dir=RI(0,1)?1:-1,lateral=n%3===2;
+    const c=lateral?{x:clamp(P.cx+dir*RI(5,9),1,COLS-2),y:P.cy+RI(0,2),r:null}
+      :{x:clamp(P.cx+dir*RI(3,7),1,COLS-2),y:P.cy+RI(6,12),r:null};
+    c.r=findRoute(P.cx,P.cy,c.x,c.y,{allowBridge:true,avoidMobs:true});
+    if(c.r&&c.r.length){P.target={x:c.x,y:c.y};P.route=c.r;P.targetT=480;return true;}}
+  return false;
+}
+// --- Surface work: the grove and the tower -----------------------------------
+const TOWER_X=2,GROVE_XS=[5,6,14,15];
+function groveSpot(){
+  for(const x of GROVE_XS)if(tile(x,SURFACE)===GRASS&&tile(x,SURFACE-1)===AIR)return x;
+  return -1;
+}
+function routeAndFollow(x,y,mode){
+  if(P.moveT>0){P.aiMode=mode;lastDeepFrame=frame;return true;}
+  if(!P.route.length||!P.target||P.target.x!==x||P.target.y!==y){
+    const r=findRoute(P.cx,P.cy,x,y,{allowBridge:true,avoidMobs:true});
+    if(!r||!r.length)return false;
+    P.route=r;P.target={x,y};P.targetT=600;
+  }
+  P.aiMode=mode;lastDeepFrame=frame;
+  if(!followRoute()){P.route=[];P.target=null;}
+  return true;
+}
+function plantGroveAct(){
+  if(P.sapling<=0)return false;
+  const x=groveSpot();if(x<0)return false;
+  if(P.cx===x&&P.cy===SURFACE-1&&P.moveT<=0){
+    setTile(x,SURFACE-1,SAPLING);saplings.push({x,y:SURFACE-1,at:frame});
+    P.sapling--;treesPlanted++;P.progressFrame=frame;lastDeepFrame=frame;
+    say('SAPLING PLANTED','#8fc94a');burst(P.x,P.y,8,'#8fc94a',1.2);
+    P.aiMode='PLANT GROVE';return true;
+  }
+  return routeAndFollow(x,SURFACE-1,'PLANT GROVE');
+}
+// One layer of Babel: stone shoulders around a ladder spine, laid from the
+// top of the spine itself. Two cobble and a rung per meter of heaven.
+function babelAct(){
+  if(goalState.stage<9||towerH>=TOWER_MAX)return false;
+  ensureClimbStock();
+  if(P.cobble<4||P.ladder<1)return false;
+  const top={x:TOWER_X,y:SURFACE-1-towerH};
+  if(P.cx===top.x&&P.cy===top.y&&P.moveT<=0){
+    for(const s of[-1,1])setTile(TOWER_X+s,top.y,FORT);
+    setTile(TOWER_X,top.y,LADDER);
+    P.cobble-=2;P.ladder--;towerH++;P.progressFrame=frame;lastDeepFrame=frame;
+    buildScore+=15;if(playing())addScore(15);
+    if(towerH%5===0){say('BABEL RISES: '+towerH+'M','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
+    P.aiMode='BUILD BABEL';return true;
+  }
+  return routeAndFollow(top.x,top.y,'BUILD BABEL');
+}
+// Nothing left to do topside? Step back through the home gate and get digging.
+function gateReturnAct(){
+  const g=homePortal;
+  if(!g||!deepPortals.length||P.portalCd>0)return false;
+  if(P.cx===g.x&&(P.cy===g.y||P.cy===g.y-1))return true; // gateStep takes it from here
+  if(Math.abs(P.cx-g.x)===1&&P.cy===g.y&&P.moveT<=0){
+    startMove(g.x,g.y);P.aiMode='TO THE GATE';return true;
+  }
+  for(const a of gateApproach(g))if(routeAndFollow(a.x,a.y,'TO THE GATE'))return true;
+  return false;
+}
+// The deep end of the commute: the nearest gate the miner can actually walk to.
+function nearestGateRoute(){
+  let best=null;
+  for(const g of deepPortals){
+    if(Math.abs(g.x-P.cx)+Math.abs(g.y-P.cy)>34)continue;
+    for(const a of gateApproach(g)){
+      const r=findRoute(P.cx,P.cy,a.x,a.y,{airOnly:true,avoidMobs:true});
+      if(r&&r.length&&(!best||r.length<best.r.length))best={g,r,a};
+    }
+  }
+  return best;
+}
+function aiAct(){
+  // Warp channel is all-consuming: he plants the totem, holds on, and rides
+  // the light home to the surface camp.
+  if(P.portalT>0){P.aiMode='THE GATE TAKES HOLD';return;}
+  if(P.warpT>0){
+    P.aiMode='WARP TOTEM';P.mine=null;P.route=[];P.target=null;
+    if(frame%12===0)burst(P.x,P.y,4,'#b57aff',1.2);
+    if(--P.warpT===0){
+      burst(P.x,P.y,24,'#b57aff',2.4);
+      P.cx=CAMP_X;P.cy=SURFACE-1;P.toX=P.cx;P.toY=P.cy;P.x=centerX(P.cx);P.y=centerY(P.cy);
+      P.fallD=0;P.moveT=0;burst(P.x,P.y,24,'#b57aff',2.4);shake(3);
+      say('WARPED TO CAMP','#b57aff');lastDeepFrame=frame;
+    }
+    return;
+  }
+  if(combatAct())return;if(maybeBuild()){P.aiMode='ARCHITECT';return;}
+  // Peace-time upkeep: top off health while nothing is hunting, before the next fight.
+  if(P.hp<=3&&(P.food>1||(P.food>0&&P.hp<=2))&&!nearestThreat(140)){
+    P.food--;P.hp=Math.min(5,P.hp+2);P.invT=30;P.aiMode='CAMP SNACK';say('SNACK BREAK','#7ed957');return;
+  }
+  // Reasons to climb home. A trip is a commitment with a time budget: either
+  // he makes it to camp within it, or the trip is shelved for a long while so
+  // the run doesn't dissolve into yo-yoing between depth and daylight.
+  if(campNear()){
+    if(P.homing){P.homing=false;P.tripEnd=0;P.route=[];P.target=null;nextTripF=frame+4800;}
+    if(isNight()&&(P.gold>0||P.hp<5)){
+      // The caravan trades by daylight; till then the fire mends what it can.
+      P.aiMode='CAMPFIRE REST';P.hp=Math.min(5,P.hp+0.01);lastDeepFrame=frame;return;
+    }
+    if(P.tool>=2&&P.dur<P.durMax*0.6){P.aiMode='AT THE ANVIL';lastDeepFrame=frame;return;}
+  }else if(P.homing){
+    if(frame>P.tripEnd){P.homing=false;P.tripEnd=0;P.route=[];P.target=null;nextTripF=frame+6000;}
+    else{
+      P.aiMode='SURFACE RUN';lastDeepFrame=frame; // the watchdog holds its breath on the way up
+      if((!P.route.length||!P.target||P.target.y>=P.cy)&&frame%30===0){
+        // The fastest way home is a gate; then retrace open tunnels (the way
+        // home is the staircase he dug); then mine upward; then settle for
+        // any 10-cell gain.
+        const gate=P.cy>SURFACE+4?nearestGateRoute():null;
+        let r=gate?gate.r:null;
+        r=r||findRoute(P.cx,P.cy,CAMP_X,SURFACE-1,{airOnly:true,avoidMobs:true})
+          ||findRoute(P.cx,P.cy,CAMP_X,SURFACE-1,{allowBridge:true,avoidMobs:true});
+        for(let dx=-3;(!r||!r.length)&&dx<=3;dx+=3)
+          r=findRoute(P.cx,P.cy,clamp(P.cx+dx,1,COLS-2),Math.max(SURFACE-1,P.cy-10),{allowBridge:true,avoidMobs:true});
+        if(r&&r.length){P.route=r;const e=r[r.length-1];P.target={x:e.x,y:e.y};P.targetT=700;}
+      }
+      // At a gate's doorstep: step into the fire and let it carry him home.
+      for(const g of deepPortals)if(Math.abs(P.cx-g.x)===1&&P.cy===g.y&&P.moveT<=0&&P.portalCd<=0){
+        startMove(g.x,g.y);return;
+      }
+      if(P.route.length&&!followRoute()){P.route=[];P.target=null;}
+      return;
+    }
+  }else if(frame>=nextTripF&&((P.tool>=2&&P.dur<P.durMax*0.15)||(P.gold>=8&&goalState.stage>=4)
+    ||(goalState.stage>=9&&(P.cobble>=30||P.sapling>=2)))){
+    if(deepPortals.length&&P.cy>SURFACE+4){
+      // A gate commute beats everything: head for the nearest waygate.
+      P.homing=true;P.tripEnd=frame+1800;P.route=[];P.target=null;
+      say('TO THE WAYGATE','#b57aff');
+    }else if(P.cy-SURFACE>30){
+      // SteamWorld rules again: from real depth you don't climb home through a
+      // hundred contested cells — you fire up a warp totem and ride it out.
+      P.warpT=120;P.aiMode='WARP TOTEM';say('WARP TOTEM LIT','#b57aff');
+    }else{
+      // Shallow enough to walk: budget scales with depth.
+      P.homing=true;P.tripEnd=frame+2400+(P.cy-SURFACE)*45;P.route=[];P.target=null;
+      say('HOMEWARD BOUND','#ffd166');
+    }
+  }
+  // Surface errands, in daylight order: plant the grove, raise the tower, and
+  // when there is nothing left to do topside, ride the gate back down.
+  if(!P.homing&&P.cy<=SURFACE+1){
+    if(plantGroveAct())return;
+    if(babelAct())return;
+    const business=(P.tool>=2&&P.dur<P.durMax*0.6)||(P.gold>0&&!isNight())||(isNight()&&P.hp<4.5);
+    if(!business&&gateReturnAct())return;
+  }
+  // Depth watchdog: a miner can graze visible coal in explored caves forever.
+  // If the depth record hasn't moved in ~45s, abandon the buffet and commit to
+  // a long dive; re-arm shortly so the pressure stays on until depth moves.
+  if(frame-lastDeepFrame>2700){
+    lastDeepFrame=frame-2100;
+    // Aim the dive diagonally: the stair-mining rule turns a plumb-bob target
+    // into wasted zigzag, so ask for the slope the miner will dig anyway.
+    const dx=clamp(P.cx+(RI(0,1)?1:-1)*RI(4,7),1,COLS-2);
+    const r=findRoute(P.cx,P.cy,dx,P.cy+14,{allowBridge:true,avoidMobs:true});
+    // A forced dive straight through a lava lake is a scripted death loop:
+    // dry shafts are always fine, wet ones need bridging cobble and health.
+    const wet=r&&r.some(c=>tile(c.x,c.y)===LAVA);
+    if(r&&r.length&&(!wet||(P.cobble>=6&&P.hp>=2))){P.target={x:dx,y:P.cy+14};P.route=r;P.targetT=900;P.aiMode='DEEP DIG';return;}
+    P.target=null;P.route=[];shaftDown();return;
+  }
+  P.aiMode='ORE ROUTE';
+  const need=!P.target||P.targetT--<=0||tile(P.target.x,P.target.y)===AIR||!P.route.length;
+  if(need&&!pickTarget()){shaftDown();return;}
+  if(P.target&&fogged(P.target.x,P.target.y)){
+    P.aiMode='DELVE THE DARK';
+    // Every swing exposes new faces; glance around mid-delve, but only abandon
+    // the dig for a visible jackpot (gold or better) — trading the descent for
+    // every coal seam is exactly how runs stall at 55m.
+    if(frame%30===0){
+      const keep={t:P.target,r:P.route,tt:P.targetT};
+      if(pickTarget()&&(fogged(P.target.x,P.target.y)||targetValue(tile(P.target.x,P.target.y))<6)){
+        P.target=keep.t;P.route=keep.r;P.targetT=keep.tt;
+      }
+    }
+  }
+  if(!followRoute()){P.target=null;P.route=[];}
+}
+// No reachable prize anywhere? Sink a shaft straight down: guaranteed motion,
+// fresh fog revealed, and the depth goal ticks over while options reopen.
+// Stair-mining: the miner's "never dig straight down" rule. Digging the block
+// underfoot removes his own footing while the cell beneath is still fogged; a
+// diagonal step is carved from solid ground, and its floor is revealed by the
+// sight flood before he ever walks down onto it.
+function stairStep(){
+  if(!P.stairDir)P.stairDir=P.face>=0?1:-1;
+  for(let attempt=0;attempt<2;attempt++){
+    const dir=P.stairDir;
+    if(P.cx+dir<1||P.cx+dir>COLS-2){P.stairDir=-dir;continue;}
+    const side=tile(P.cx+dir,P.cy),step=tile(P.cx+dir,P.cy+1);
+    if(side===BEDROCK||side===PORTAL||step===BEDROCK||step===PORTAL){P.stairDir=-dir;continue;}
+    if(side===LAVA||step===LAVA){
+      if(P.cobble>=2){buildBridge(side===LAVA?P.cx+dir:P.cx+dir,side===LAVA?P.cy:P.cy+1);return true;}
+      P.stairDir=-dir;continue;
+    }
+    if(solid(side)){startMine(P.cx+dir,P.cy);return true;}
+    if(solid(step)){startMine(P.cx+dir,P.cy+1);return true;}
+    // Step is open: its floor was revealed the moment the step was. Only
+    // descend onto footing he has actually seen.
+    const floor=tile(P.cx+dir,P.cy+2);
+    if(floor===LAVA&&P.cobble>=2){buildBridge(P.cx+dir,P.cy+2);return true;}
+    if(solid(floor)||floor===BRIDGE||floor===LADDER){startMove(P.cx+dir,P.cy+1);return true;}
+    P.stairDir=-dir; // revealed drop or lava: turn the staircase around
+  }
+  return false;
+}
+function shaftDown(){
+  P.route=[];P.target=null;
+  if(stairStep()){P.aiMode='STAIR DIG';return;}
+  P.aiMode='SHAFT DOWN';
+  const bt=tile(P.cx,P.cy+1);
+  if(bt===LAVA&&P.cobble>=2){buildBridge(P.cx,P.cy+1);return;}
+  if(solid(bt)&&bt!==BEDROCK&&bt!==PORTAL){startMine(P.cx,P.cy+1);return;}
+  if(!solid(bt)&&bt!==LAVA){startMove(P.cx,P.cy+1);return;}
+  for(const d of DIRS){const t=tile(P.cx+d[0],P.cy+d[1]);
+    if(solid(t)&&t!==BEDROCK&&t!==PORTAL){startMine(P.cx+d[0],P.cy+d[1]);return;}}
+  // Nothing to mine at all (open cavern over lava): step anywhere safe and
+  // let gravity produce the progress.
+  for(const d of DIRS){const t=tile(P.cx+d[0],P.cy+d[1]);
+    if(!solid(t)&&t!==LAVA&&d[1]>=0){startMove(P.cx+d[0],P.cy+d[1]);return;}}
+  // Marooned on a bridge island in a lava lake with no cobble: swimming for
+  // shore burns, but it beats standing still until the run dies of old age.
+  for(const d of[[0,1],[P.face,0],[-P.face,0]]){
+    if(tile(P.cx+d[0],P.cy+d[1])===LAVA){startMove(P.cx+d[0],P.cy+d[1]);P.aiMode='SWIM LAVA';return;}
+  }
+}
+function manualAct(){
+  let dx=(keys.left?-1:0)+(keys.right?1:0),dy=(keys.up?-1:0)+(keys.down?1:0);
+  if(dx&&dy)dy=0;
+  if(tap('a'))placeTorch();
+  if(tap('c'))placeTrapToward({x:P.x+P.face*TS*3,y:P.y},true);
+  if(dx||dy){const x=P.cx+dx,y=P.cy+dy,t=tile(x,y);
+    if(solid(t)){if(keys.b)startMine(x,y);}
+    else if(dy<0)climbUp(); // manual climbs auto-place ladders and ropes too
+    else if(t!==LAVA||P.invT>0)startMove(x,y);
+  }else if(keys.b&&P.attackT<=0){
+    let foe=null,fd=18;for(const m of mobs){const d=Math.hypot(m.x-P.x,m.y-P.y);if(d<fd){fd=d;foe=m;}}
+    if(foe)attack(foe);
+  }
+}
+function playerStep(){
+  if(P.dead>0){if(--P.dead===0)respawn();return;}
+  // Entombed by solidifying fluids (water meeting lava can stone the miner's
+  // own cell): claw free immediately instead of deadlocking every planner.
+  const ht=tile(P.cx,P.cy);
+  if(solid(ht)&&ht!==BEDROCK&&ht!==PORTAL){
+    setTile(P.cx,P.cy,AIR);if(ht===STONE)P.cobble++;
+    burst(P.x,P.y,10,'#c8d2dc',1.4);say('DUG FREE','#c8d2dc');P.progressFrame=frame;
+  }
+  if(P.invT>0)P.invT--;if(P.attackT>0)P.attackT--;if(P.swing>0)P.swing--;
+  if(P.trapCd>0)P.trapCd--;if(P.buildCd>0)P.buildCd--;
+  // Combat's own digging (breaching, hunting) must never interrupt itself.
+  const combatDig=P.aiMode==='BREACH'||P.aiMode.indexOf('HUNT')===0||P.aiMode==='SEAL TUNNEL';
+  if(!playing()&&!manual()&&P.mine&&!combatDig){const th=nearestThreat(80);
+    // Ranged mobs get interrupted at sniping distance, brawlers when close.
+    if(th&&gridLOS(P.x,P.y,th.m.x,th.m.y)&&
+      (th.d<24||(th.m.kind==='skeleton'||th.m.kind==='golem')||th.d<40&&th.m.kind==='spider')){
+      P.mine=null;P.route=[];P.target=null;P.aiMode='THREAT!';}}
+  if(P.mine){P.mine.left--;P.swing=6;P.progressFrame=frame; // active digging is progress
+    if(P.mine.left%7===0)dust(centerX(P.mine.x),centerY(P.mine.y),2,(BC[P.mine.t]||[])[1]);
+    if(P.mine.left<=0)finishMine();
+  }else if(P.moveT>0){
+    P.moveT--;P.x+=(centerX(P.toX)-P.x)*0.42;P.y+=(centerY(P.toY)-P.y)*0.42;
+    if(P.moveT===0){P.cx=P.toX;P.cy=P.toY;P.x=centerX(P.cx);P.y=centerY(P.cy);
+      while(P.route.length&&P.route[0].x===P.cx&&P.route[0].y===P.cy)P.route.shift();
+      const vk=key(P.cx,P.cy);P.visits.set(vk,(P.visits.get(vk)||0)+1);P.progressFrame=frame;
+      const t=tile(P.cx,P.cy);if(t===LAVA)hurt(2,'LAVA');
+      // Never plant a torch mid-plunge: respawn anchors must be standable ground.
+      if(P.cy>P.lastTorch+11&&P.torch>0&&P.fallD===0&&supported()&&!playing()&&!manual())placeTorch();
+    }
+  }else if(!supported()&&P.air<=0){
+    P.fallD++;P.mine=null;P.route=[];P.target=null;
+    // A miner with rope doesn't pancake: at three cells of freefall (damage
+    // starts at four) he catches himself on a thrown rung — sooner when every
+    // fallen cell is homeward climbing he would have to redo.
+    if(P.fallD>=(P.homing?1:3)&&!playing()&&!manual()&&tile(P.cx,P.cy)===AIR){
+      ensureClimbStock();
+      if(placeClimb()){P.fallD=0;P.aiMode='ROPE CATCH';say('ROPE CATCH!','#d8ccb0');return;}
+    }
+    // Mid-air lava dodge: kick off nothing toward any open side cell rather
+    // than dropping straight into a burning pool.
+    let vx=0;
+    if(tile(P.cx,P.cy+1)===LAVA)for(const s of[P.face,-P.face]){
+      const st=tile(P.cx+s,P.cy);
+      if(!solid(st)&&st!==LAVA&&tile(P.cx+s,P.cy+1)!==LAVA){vx=s;break;}
+    }
+    P.toX=P.cx+vx;P.toY=vx?P.cy:P.cy+1;P.moveT=3;P.aiMode='FALLING!';
+    if(P.fallD===4)say('FALLING!','#ff9f5a');
+  }else{
+    if(P.air>0)P.air--;
+    if(P.fallD>0)landFall();
+    if(playing()||manual())manualAct();else aiAct();
+  }
+  const d=Math.max(0,P.cy-SURFACE);if(d>deepest){if(playing())addScore(d-deepest);deepest=d;lastDeepFrame=frame;}
+}
+
+function carvePocket(x,y){for(let yy=y-1;yy<=y+1;yy++)for(let xx=x-1;xx<=x+1;xx++)if(xx>0&&xx<COLS-1)setTile(xx,yy,AIR);}
+const depthTier=()=>Math.floor(deepest/50); // 0 near surface, ~4 at diamond depth
+// Daylight has its own bestiary: wolves prowl the meadow and harpies circle
+// the tower — the deep kinds never climb out, and the surface kinds never dig.
+function spawnSurfaceMob(){
+  if(goalState.stage<2)return; // the meadow stays safe while he tools up
+  const night=isNight();
+  const cap=2+(towerH>=10?2:towerH>=1?1:0)+(night?1:0);
+  if(mobs.filter(m=>m.dead<=0&&(m.kind==='wolf'||m.kind==='harpy')).length>=cap)return;
+  const wantHarpy=towerH>=5&&(night||random()<0.5);
+  if(wantHarpy){
+    // Harpies materialize in open sky near the miner's altitude.
+    const x=RI(2,COLS-3),y=Math.min(SURFACE-3,Math.max(1,P.cy-RI(2,6)));
+    if(tile(x,y)!==AIR)return;
+    const hp=2+Math.floor(towerH/10);
+    mobs.push({kind:'harpy',x:centerX(x),y:centerY(y),hp,maxHp:hp,hit:0,charge:0,vx:0,vy:0,dead:0,
+      route:null,pathPhase:mobSerial++%12,repathAt:0,shotCd:RI(60,120),trapCd:0,smash:null,lunge:0,stun:0,born:frame});
+    return;
+  }
+  // Wolves lope in from the meadow edges.
+  const x=random()<0.5?1:COLS-2;
+  if(solid(tile(x,SURFACE-1)))return;
+  const hp=3+(night?1:0);
+  mobs.push({kind:'wolf',x:centerX(x),y:centerY(SURFACE-1),hp,maxHp:hp,hit:0,charge:0,vx:0,vy:0,dead:0,
+    route:null,pathPhase:mobSerial++%12,repathAt:0,shotCd:0,trapCd:0,smash:null,lunge:0,stun:0,born:frame});
+  say(night?'WOLVES ON THE PROWL':'A WOLF CIRCLES','#c9d4e2');
+}
+function spawnMob(kindOverride){
+  // Topside the player meets the surface bestiary instead.
+  if(!kindOverride&&P.cy<=SURFACE+1){spawnSurfaceMob();return;}
+  // The caves stay quiet while the miner is still tooling up, then ramp:
+  // an early zombie parade eats the whole run before the story starts.
+  const cap=goalState.stage<2?2:goalState.stage<3?4:Math.min(7,3+depthTier());
+  if(P.cy<24||mobs.length>=cap)return;
+  const spots=[];
+  for(let y=P.cy-9;y<=P.cy+9;y++)for(let x=Math.max(2,P.cx-10);x<=Math.min(COLS-3,P.cx+10);x++){
+    if(y<=SURFACE+1)continue; // cave kinds never spawn under the open sky
+    const d=Math.abs(x-P.cx)+Math.abs(y-P.cy);if(d<6||d>13||solid(tile(x,y))||tile(x,y)===LAVA)continue;
+    spots.push({x,y});
+  }
+  // Try a bounded random sample instead of running A* for every open cell in
+  // the 21x19 spawn annulus. A dozen attempts still spans disconnected caves.
+  let c=null;for(let i=0;i<Math.min(12,spots.length);i++){
+    const j=RI(i,spots.length-1),tmp=spots[i];spots[i]=spots[j];spots[j]=tmp;
+    const s=spots[i],r=findRoute(s.x,s.y,P.cx,P.cy,{airOnly:true,mob:true});if(r&&r.length){c={x:s.x,y:s.y,r};break;}
+  }
+  if(!c)return;const roll=random(),tier=depthTier(),pathPhase=mobSerial++%12;
+  let kind=kindOverride;
+  if(!kind){
+    kind=roll<0.24?'creeper':roll<0.44?'skeleton':(tier>=1&&roll<0.58)?'spider':'zombie';
+  }
+  const hpBonus=Math.floor(tier/2); // deep caves breed sturdier monsters
+  const hp=kind==='golem'?10+tier*2:kind==='creeper'?3+hpBonus:kind==='skeleton'?2+hpBonus:
+    kind==='spider'?3+hpBonus:4+hpBonus;
+  mobs.push({kind,x:centerX(c.x),y:centerY(c.y),hp,maxHp:hp,hit:0,charge:0,vx:0,vy:0,dead:0,
+    route:c.r,pathPhase,repathAt:frame+30+pathPhase*4,shotCd:RI(45,100),trapCd:0,smash:null,lunge:0,stun:0,born:frame});
+  if(kind==='golem'){say('STONE GOLEM WAKES','#ff8f5a');shake(5);}
+}
+function killMob(m,how){
+  if(m.hp<=0&&m.dead>0)return;m.hp=0;m.dead=20;kills++;P.progressFrame=frame;
+  if(how==='trap'){trapKills++;buildScore+=25;if(playing())addScore(60);say('TRAP KILL +25','#7ef0ff');}
+  else if(playing())addScore(m.kind==='golem'?250:m.kind==='creeper'?55:m.kind==='skeleton'?40:
+    m.kind==='spider'?45:30);
+  if(m.kind==='creeper'&&random()<0.8)P.powder++;
+  if(m.kind==='skeleton')P.ammo+=RI(2,5);
+  if(m.kind==='zombie'&&random()<0.45)P.food++;
+  if(m.kind==='spider'){P.silk+=RI(1,2);if(random()<0.5)P.ammo+=2;}
+  if(m.kind==='wolf'&&random()<0.6)P.food++;
+  if(m.kind==='harpy'){P.ammo+=2;if(random()<0.35)P.sapling++;} // nests carry seeds
+  if(m.kind==='golem'){golemKills++;P.diamond++;P.obsidian++;P.food++;buildScore+=50;
+    burst(m.x,m.y,26,'#c9d4e2',2.6);shake(6);say('GOLEM FELLED! LOOT!','#ffd166');return;}
+  say(how==='trap'?'OUTSMARTED':m.kind.toUpperCase()+' DOWN',how==='trap'?'#7ef0ff':'#ffd166');
+}
+function attack(m){
+  const dx=m.x-P.x,dy=m.y-P.y,d=Math.hypot(dx,dy)||1;
+  P.attackT=24;P.swing=12;P.face=dx<0?-1:1;m.hp-=1+Math.floor(P.tool/2)+(buildScore>=500?1:0);m.hit=9;wearTool(0.5);
+  if(m.kind!=='golem')m.stun=18; // a clean hit staggers ordinary mobs
+  m.vx=dx/d*2.2;m.vy=dy/d*2.2;burst(m.x,m.y,7,m.kind==='creeper'?'#72d66b':'#75a86b',1.2);
+  if(m.hp<=0)killMob(m,'melee');
+}
+function explode(m){
+  burst(m.x,m.y,28,'#e8e5d8',2.8);burst(m.x,m.y,18,'#7c776c',2.1);shake(7);
+  const cx=Math.floor(m.x/TS),cy=Math.floor(m.y/TS);
+  for(let y=cy-2;y<=cy+2;y++)for(let x=cx-2;x<=cx+2;x++)if(Math.hypot(x-cx,y-cy)<2.4){const t=tile(x,y);if(t!==BEDROCK&&t!==DIAMOND&&t!==OBSIDIAN&&t!==PORTAL)setTile(x,y,AIR);}
+  if(Math.hypot(m.x-P.x,m.y-P.y)<27)hurt(3,'CREEPER');m.hp=0;m.dead=1;
+}
+function explodeTrap(t){
+  t.live=false;burst(centerX(t.x),centerY(t.y),30,'#ffcf5a',2.8);burst(centerX(t.x),centerY(t.y),18,'#e36a3e',2);shake(6);
+  for(const m of mobs)if(m.dead<=0&&Math.hypot(m.x-centerX(t.x),m.y-centerY(t.y))<30){m.hp-=5;if(m.hp<=0)killMob(m,'trap');}
+  if(Math.hypot(P.x-centerX(t.x),P.y-centerY(t.y))<18)hurt(1,'OWN TNT');
+}
+function triggerTraps(m){
+  if(m.trapCd>0){m.trapCd--;return;}
+  for(const t of traps)if(t.live&&Math.hypot(m.x-centerX(t.x),m.y-centerY(t.y))<6){
+    if(t.kind==='tnt')explodeTrap(t);else{m.hp-=2;t.uses--;m.trapCd=45;m.hit=8;m.vx*=-1;m.vy*=-1;
+      burst(m.x,m.y,8,'#c8d2dc',1.4);if(t.uses<=0)t.live=false;if(m.hp<=0)killMob(m,'trap');}
+    break;
+  }
+}
+function navigateMob(m){
+  const mx=clamp(Math.floor(m.x/TS),1,COLS-2),my=Math.max(0,Math.floor(m.y/TS));
+  if(frame>=m.repathAt||!m.route||!m.route.length||(m.route[0]&&solid(tile(m.route[0].x,m.route[0].y)))){
+    const phase=m.pathPhase||0;
+    if(mobRepathBudget>0){mobRepathBudget--;m.route=findRoute(mx,my,P.cx,P.cy,{airOnly:true,mob:true});
+      m.repathAt=frame+48+phase*3;
+    }else m.repathAt=frame+1+(phase&3);
+  }
+  // The golem does not respect walls: with no open path it smashes toward the player.
+  if((!m.route||!m.route.length)&&m.kind==='golem'){golemSmash(m,mx,my);return;}
+  if(!m.route||!m.route.length)return;while(m.route.length&&m.route[0].x===mx&&m.route[0].y===my)m.route.shift();
+  if(!m.route.length)return;const n=m.route[0],tx=centerX(n.x),ty=centerY(n.y),dx=tx-m.x,dy=ty-m.y,d=Math.hypot(dx,dy)||1;
+  let sp=m.kind==='spider'?0.3:m.kind==='wolf'?0.32:m.kind==='creeper'?0.23:m.kind==='skeleton'?0.18:m.kind==='golem'?0.13:0.2;
+  if(tile(mx,my)===WATER)sp*=0.55;
+  m.x+=dx/d*sp+m.vx;m.y+=dy/d*sp+m.vy;m.vx*=0.78;m.vy*=0.78;
+  if(Math.hypot(tx-m.x,ty-m.y)<0.55){m.x=tx;m.y=ty;m.route.shift();}
+}
+function golemSmash(m,mx,my){
+  if(!m.smash){
+    const sx=P.cx>mx?1:P.cx<mx?-1:0,sy=P.cy>my?1:P.cy<my?-1:0;
+    for(const c of[[mx+sx,my],[mx,my+sy],[mx+sx,my+sy]]){
+      const t=tile(c[0],c[1]);
+      if(solid(t)&&t!==BEDROCK&&t!==PORTAL&&t!==OBSIDIAN){m.smash={x:c[0],y:c[1],t:80};break;}
+    }
+    if(!m.smash)return;
+  }
+  m.smash.t--;if(m.smash.t%16===0)dust(centerX(m.smash.x),centerY(m.smash.y),3,'#9aa3ad');
+  if(m.smash.t<=0){setTile(m.smash.x,m.smash.y,AIR);burst(centerX(m.smash.x),centerY(m.smash.y),10,'#8b939c',1.6);
+    shake(3);m.smash=null;m.repathAt=frame;}
+}
+function projectileStep(){
+  for(const a of projectiles){a.x+=a.vx;a.y+=a.vy;a.t--;if(solid(tile(Math.floor(a.x/TS),Math.floor(a.y/TS)))){a.t=0;continue;}
+    for(const m of mobs)if(m.dead<=0&&Math.hypot(a.x-m.x,a.y-m.y)<6){m.hp-=a.dmg;m.hit=8;a.t=0;
+      burst(m.x,m.y,5,'#e8d7ae',1);if(m.hp<=0)killMob(m,'bow');break;}}
+  for(const a of enemyShots){a.x+=a.vx;a.y+=a.vy;a.t--;if(solid(tile(Math.floor(a.x/TS),Math.floor(a.y/TS)))){a.t=0;continue;}
+    if(Math.hypot(a.x-P.x,a.y-P.y)<(a.rock?7:6)){a.t=0;hurt(a.rock?2:1,a.rock?'ROCK':'ARROW');}}
+  projectiles=projectiles.filter(a=>a.t>0);enemyShots=enemyShots.filter(a=>a.t>0);
+}
+function mobStep(){
+  const tier=depthTier();mobRepathBudget=2;
+  if(frame>=nextMob){spawnMob();
+    const slow=goalState.stage<2?2:goalState.stage<3?1.5:1;
+    nextMob=frame+RI(Math.max(240,480-tier*60)*slow,Math.max(420,780-tier*80)*slow);}
+  // Mob surges arrive once the miner is established (iron kit and real depth):
+  // the eruption tests traps and outposts, not the fragile early climb.
+  if(deepest>60&&goalState.stage>=3&&surge<=0&&P.hp>=3&&frame%2700===2699){surge=3;say('MOB SURGE!','#ff8f5a');shake(4);}
+  if(surge>0&&frame%50===0){spawnMob();surge--;}
+  // Once the beacon is lit the deep answers: a wall-breaking siege golem rises
+  // at each depth milestone until the miner puts one down for good.
+  if(frame%90===0&&goalState.stage>=6&&deepest>=nextGolemDepth&&
+    !mobs.some(m=>m.kind==='golem'&&m.dead<=0)){
+    const before=mobs.length;spawnMob('golem');
+    if(mobs.length>before)nextGolemDepth=Math.max(nextGolemDepth,deepest)+80;
+  }
+  for(const m of mobs){
+    if(m.dead>0){m.dead--;continue;}if(m.hit>0)m.hit--;
+    if(m.stun>0){m.stun--;m.x+=m.vx;m.y+=m.vy;m.vx*=0.8;m.vy*=0.8;triggerTraps(m);continue;}
+    const dx=P.x-m.x,dy=P.y-m.y,d=Math.hypot(dx,dy)||1;
+    // An unbeaten golem eventually crumbles rather than pinning a run forever;
+    // it grants no loot or goal credit, and the next one rises 80m deeper.
+    if(m.kind==='golem'&&frame-m.born>3600){m.hp=0;m.dead=20;
+      burst(m.x,m.y,20,'#9aa3ad',2);say('GOLEM CRUMBLES','#9aa3ad');continue;}
+    if(tile(Math.floor(m.x/TS),Math.floor(m.y/TS))===LAVA&&frame%30===0){m.hp--;m.hit=6;if(m.hp<=0){killMob(m,'lava');continue;}}
+    if(m.kind==='harpy'){
+      // Harpies fly: no routes, no walls to respect above ground. They spiral
+      // near the miner and dive in swoops; they lose interest in cave mouths.
+      const aloft=P.cy<=SURFACE+1;
+      if(m.lunge<=0&&aloft&&d<80&&d>16){m.lunge=90;m.vx=dx/d*2.2;m.vy=dy/d*2.2;}
+      const hx=aloft?P.x+Math.sin(frame*0.03+m.pathPhase)*30:m.x,
+        hy=aloft?P.y-26+Math.cos(frame*0.04+m.pathPhase)*8:Math.min(m.y,(SURFACE-4)*TS);
+      const hd=Math.hypot(hx-m.x,hy-m.y)||1;
+      m.x+=(hx-m.x)/hd*0.55+m.vx;m.y+=(hy-m.y)/hd*0.55+m.vy;m.vx*=0.9;m.vy*=0.9;
+      // Never chase underground: the sky is their element.
+      if(m.y>(SURFACE-0.2)*TS){m.y=(SURFACE-0.2)*TS;m.vy=-Math.abs(m.vy);}
+      if(d<8&&frame%50===0)hurt(1,'HARPY');
+      if(m.lunge>0)m.lunge--;
+      continue;
+    }
+    if(m.kind==='wolf'&&P.cy>SURFACE+2){m.charge=0;continue;} // wolves won't spelunk
+    if(m.kind==='creeper'&&d<20&&gridLOS(m.x,m.y,P.x,P.y)){m.charge++;if(m.charge>58)explode(m);}
+    else if(m.kind==='skeleton'&&d>18&&d<78&&gridLOS(m.x,m.y,P.x,P.y)){
+      m.charge=0;if(--m.shotCd<=0){m.shotCd=RI(Math.max(55,90-tier*8),140);enemyShots.push({x:m.x,y:m.y-2,vx:dx/d*1.8,vy:dy/d*1.8,t:100});}}
+    else if(m.kind==='spider'&&m.lunge<=0&&d>14&&d<44&&gridLOS(m.x,m.y,P.x,P.y)){
+      // Spiders pounce: a sharp velocity spike that punishes standing in the open.
+      m.lunge=110;m.vx=dx/d*2.6;m.vy=dy/d*2.6;m.hit=3;
+    }
+    else if(m.kind==='wolf'&&m.lunge<=0&&d>12&&d<40&&gridLOS(m.x,m.y,P.x,P.y)){
+      // Wolves close the gap in bounding leaps.
+      m.lunge=80;m.vx=dx/d*2.4;m.vy=dy/d*1.2;
+    }
+    else{m.charge=Math.max(0,m.charge-2);navigateMob(m);}
+    if(m.lunge>0)m.lunge--;
+    if(m.kind==='golem'&&d>30&&d<95&&gridLOS(m.x,m.y,P.x,P.y)&&--m.shotCd<=0){
+      m.shotCd=RI(110,170);enemyShots.push({x:m.x,y:m.y-3,vx:dx/d*1.4,vy:dy/d*1.4,t:120,rock:true});
+    }
+    if(d<7&&m.kind==='zombie'&&frame%70===0)hurt(1,'ZOMBIE');
+    if(d<7&&m.kind==='spider'&&frame%55===0)hurt(1,'SPIDER');
+    if(d<7&&m.kind==='wolf'&&frame%55===0)hurt(1,'WOLF');
+    if(d<9&&m.kind==='golem'&&frame%60===0)hurt(2,'GOLEM');
+    triggerTraps(m);
+  }
+  mobs=mobs.filter(m=>m.dead!==0||m.hp>0).filter(m=>Math.abs(m.y-P.y)<500);
+}
+
+// Gate travel is owned by the world step so manual players ride gates too:
+// stand in a burning core and it takes hold, channels, and delivers you to
+// the twin. A short cooldown stops an instant bounce straight back.
+function gateStep(){
+  if(P.portalCd>0)P.portalCd--;
+  if(P.dead>0){P.portalT=0;P.portalTo=null;return;}
+  if(P.portalT>0){
+    if(frame%6===0)burst(P.x,P.y,3,'#b57aff',1.1);
+    if(--P.portalT===0&&P.portalTo){
+      const t=P.portalTo;P.portalTo=null;P.portalCd=300;
+      P.cx=t.x;P.cy=t.y;P.toX=t.x;P.toY=t.y;P.x=centerX(t.x);P.y=centerY(t.y);
+      P.moveT=0;P.fallD=0;P.mine=null;P.route=[];P.target=null;
+      camY=P.y-178;discoveryDirty=true;
+      burst(P.x,P.y,24,'#b57aff',2.4);shake(3);say('THROUGH THE GATE','#b57aff');
+      P.progressFrame=frame;if(P.cy>SURFACE)lastDeepFrame=frame;
+    }
+    return;
+  }
+  if(P.moveT<=0){const g=gateHere();if(g)enterGate(g);}
+}
+function step(){
+  frame++;day=(day+0.00045)%1;sessionStep({reset:resetGame});
+  refreshDiscovery();gateStep();playerStep();campServices();mobStep();projectileStep();fluidStep();stepParts();updateGoals();
+  if(tile(P.cx,P.cy)===LAVA){
+    if(!playing()&&!manual()&&P.cobble>=2){buildBridge(P.cx,P.cy);P.aiMode='SEAL LAVA';}
+    else{hurt(1,'LAVA FLOW');if(!playing()&&!manual()&&P.moveT<=0){const safe=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]}))
+      .find(c=>tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y)));
+      if(safe){startMove(safe.x,safe.y);P.aiMode='ESCAPE LAVA';}
+      else if(!P.mine){ // fully walled in: claw upward through rock rather than boil
+        let acted=false;
+        for(const c of[[P.cx,P.cy-1],[P.cx-1,P.cy],[P.cx+1,P.cy]]){
+          const t=tile(c[0],c[1]);
+          if(solid(t)&&t!==BEDROCK&&t!==PORTAL&&startMine(c[0],c[1])){P.aiMode='DIG OUT';acted=true;break;}
+        }
+        // Adrift in an open lava lake: swim for it (downward first — lakes
+        // have stone floors to dig through) rather than tread fire forever.
+        if(!acted&&P.moveT<=0)for(const c of[[0,1],[P.face,0],[-P.face,0],[0,-1]]){
+          if(tile(P.cx+c[0],P.cy+c[1])===LAVA){startMove(P.cx+c[0],P.cy+c[1]);P.aiMode='SWIM LAVA';break;}
+        }
+      }}}
+  }
+  // Lava about to pour onto the miner's head reads as a threat, not scenery.
+  if(!playing()&&!manual()&&P.dead<=0&&P.moveT<=0&&tile(P.cx,P.cy)!==LAVA&&tile(P.cx,P.cy-1)===LAVA){
+    const safe=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]}))
+      .find(c=>c.y>=P.cy&&tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y))&&tile(c.x,c.y-1)!==LAVA);
+    if(safe){P.mine=null;startMove(safe.x,safe.y);P.aiMode='DODGE LAVA';}
+  }
+  if(!playing()&&!manual()&&P.dead<=0&&frame-P.progressFrame>540){
+    // Whatever wedged the planner, digging straight down always unwedges it.
+    P.mine=null;P.moveT=0;P.target=null;P.route=[];
+    shaftDown();
+    P.progressFrame=frame;P.stuckRecoveries++;repaths++;say('SMART REPATH','#ffcf5a');
+  }
+  // The grove: saplings quietly become timber. Growth waits politely if the
+  // miner is standing where the trunk would go.
+  if(frame%60===0&&saplings.length){
+    const grown=[];
+    for(const s of saplings){
+      if(frame-s.at<2400)continue;
+      if(Math.abs(P.cx-s.x)<=1&&P.cy>=s.y-4&&P.cy<=s.y)continue;
+      if(tile(s.x,s.y)!==SAPLING){grown.push(s);continue;} // trampled or mined
+      for(let i=0;i<3;i++)setTile(s.x,s.y-i,WOOD);
+      for(const dx of[-1,0,1])setTile(s.x+dx,s.y-3,LEAVES);
+      setTile(s.x,s.y-4,LEAVES);
+      grown.push(s);say('THE GROVE GROWS','#8fc94a');burst(centerX(s.x),centerY(s.y-2),10,'#8fc94a',1.4);
+    }
+    if(grown.length)saplings=saplings.filter(s=>!grown.includes(s));
+  }
+  for(const t of texts){t.t--;t.y-=0.18;}texts=texts.filter(t=>t.t>0);
+  for(const d of drops){d.t--;d.y-=0.12;}drops=drops.filter(d=>d.t>0);
+  camY+=((P.y-178)-camY)*0.07;
+}
+
+function drawSky(){
+  const sy=SURFACE*TS-camY;
+  const night=Math.max(0,Math.cos(day*Math.PI*2)*0.5+0.15);
+  rect(0,0,W,H,sy>0?(night>0.45?'#172745':'#71b8e6'):'#11151c');
+  if(sy>0){
+    const sunX=18+day*150,sunY=20+Math.sin(day*Math.PI)*30;
+    rect(sunX-5,sunY-5,10,10,night>0.45?'#e8ebcf':'#ffe06a');
+    for(let i=0;i<3;i++){const x=((i*67+frame*0.025)%210)-25,y=30+i*17;
+      rect(x,y,24,5,night>0.45?'#354766':'#e7f3fb');rect(x+6,y-4,11,4,night>0.45?'#354766':'#f4fbff');}
+  }
+}
+function drawBlock(t,x,y,sy){
+  const c=BC[t];if(!c)return;
+  // Climbing gear draws over open air, not as a filled block.
+  if(t===LADDER){
+    rect(x*TS+1,sy,1,TS,c[1]);rect(x*TS+6,sy,1,TS,c[1]);
+    rect(x*TS+1,sy+1,6,1,c[0]);rect(x*TS+1,sy+4,6,1,c[0]);rect(x*TS+1,sy+7,6,1,c[2]);
+    return;
+  }
+  if(t===ROPE){
+    rect(x*TS+3,sy,2,TS,c[0]);rect(x*TS+3,sy+2,2,1,c[1]);rect(x*TS+2,sy+5,4,1,c[2]);
+    return;
+  }
+  if(t===SAPLING){
+    const sway=Math.sin(frame*0.05+x)>0?1:0;
+    rect(x*TS+3,sy+4,2,4,c[2]);rect(x*TS+2+sway,sy+2,4,3,c[1]);rect(x*TS+3+sway,sy+1,2,1,c[0]);
+    return;
+  }
+  rect(x*TS,sy,TS,TS,c[0]);
+  const n=hash(x+seed,y-seed);
+  if(t===GRASS){rect(x*TS,sy,TS,2,c[1]);rect(x*TS+1,sy+3,2,1,c[2]);}
+  else if(t===WOOD){rect(x*TS+3,sy,2,TS,c[1]);rect(x*TS+1,sy+(y%3)*2,2,1,c[2]);}
+  else if(t===LEAVES){rect(x*TS+(n>0.5?1:5),sy+2,2,2,c[1]);rect(x*TS+3,sy+5,2,2,c[2]);}
+  else if(t===WATER){ctx.globalAlpha=0.72;rect(x*TS,sy,TS,TS,c[0]);ctx.globalAlpha=1;
+    rect(x*TS+((frame>>3)+x)%4,sy+1,4,1,c[2]);rect(x*TS,sy+5+((frame>>4+y)&1),TS,1,c[1]);}
+  else if(t===LAVA){rect(x*TS,sy+((frame>>3)+x+y)%5,TS,2,c[1]);rect(x*TS+(frame+y)%6,sy+2,2,2,c[2]);}
+  else if(t===BEDROCK){rect(x*TS+(n>0.5?1:4),sy+2,3,2,c[1]);rect(x*TS+2,sy+6,4,1,c[2]);}
+  else if(t===BRIDGE){rect(x*TS,sy+1,TS,2,c[1]);rect(x*TS,sy+5,TS,2,c[1]);rect(x*TS+2,sy,1,TS,c[2]);rect(x*TS+6,sy,1,TS,c[2]);}
+  else if(t===FORT){rect(x*TS,sy+3,TS,1,c[1]);rect(x*TS+3,sy,1,TS,c[2]);rect(x*TS+1,sy+1,1,1,'#a9b6c4');rect(x*TS+6,sy+6,1,1,'#a9b6c4');}
+  else if(t===BEACON){rect(x*TS+1,sy+1,6,6,c[1]);rect(x*TS+3,sy,2,TS,c[2]);rect(x*TS,sy+3,TS,2,c[2]);}
+  else if(t===OBSIDIAN){rect(x*TS+(n>0.5?1:4),sy+1,3,2,c[1]);rect(x*TS+2,sy+5,2,2,c[1]);
+    rect(x*TS+5,sy+3,1,1,c[2]);rect(x*TS+1,sy+6,1,1,c[2]);}
+  else if(t===PORTAL){rect(x*TS,sy,TS,TS,c[0]);
+    rect(x*TS+((frame>>2)+x*3)%6,sy+1,2,6,c[1]);rect(x*TS+2,sy+((frame>>3)+y*2)%6,4,1,c[2]);}
+  else if(t===DIRT){rect(x*TS+(n>0.5?1:5),sy+2,2,2,c[1]);rect(x*TS+3,sy+6,2,1,c[2]);}
+  else if(t===STONE){rect(x*TS+(n>0.5?1:5),sy+2,2,1,c[1]);rect(x*TS+2,sy+6,3,1,c[2]);}
+  else{ // ore: stone body with three unmistakable colored flecks
+    rect(x*TS+1,sy+1,2,2,c[1]);rect(x*TS+5,sy+3,2,2,c[2]);rect(x*TS+2,sy+6,2,1,c[1]);
+  }
+  ctx.globalAlpha=0.18;rect(x*TS,sy+7,TS,1,'#000');rect(x*TS+7,sy,1,TS,'#000');ctx.globalAlpha=1;
+}
+const fogged=(x,y)=>y>SURFACE+1&&!discovered.has(key(x,y));
+function drawFog(x,y,sy){
+  // Unexplored rock reads as a distinct veiled texture, not just darkness.
+  const rim=discovered.has(key(x-1,y))||discovered.has(key(x+1,y))||
+    discovered.has(key(x,y-1))||discovered.has(key(x,y+1));
+  rect(x*TS,sy,TS,TS,rim?'#0b0f18':'#05070c');
+  if(hash(x*5+seed,y*3)>0.84)rect(x*TS+(x*7+y*3)%5,sy+(x*3+y*5)%5,2,2,rim?'#131a26':'#0b1018');
+}
+function drawWorld(){
+  drawSky();const y0=Math.floor(camY/TS)-1,y1=Math.ceil((camY+H)/TS)+1;
+  for(let y=y0;y<=y1;y++)for(let x=0;x<COLS;x++){
+    if(fogged(x,y)){drawFog(x,y,y*TS-camY);continue;}
+    const t=tile(x,y);if(t!==AIR)drawBlock(t,x,y,y*TS-camY);
+  }
+  if(P.cy>SURFACE+7){
+    ctx.globalAlpha=clamp((P.cy-SURFACE)/150,0.18,0.58);rect(0,0,W,H,'#05070b');ctx.globalAlpha=1;
+  }
+  for(const t of torches){const x=centerX(t.x),y=centerY(t.y)-camY;if(y<-20||y>H+20)continue;
+    ctx.globalAlpha=0.07+Math.sin(frame*0.2+t.x)*0.02;rect(x-28,y-28,56,56,'#ffd166');
+    ctx.globalAlpha=0.13;rect(x-15,y-15,30,30,'#ff9f1c');ctx.globalAlpha=1;
+    rect(x-1,y-1,2,6,'#8a5a32');rect(x-1,y-4,2,3,frame%8<4?'#ffe066':'#ff9f1c');
+  }
+  for(const t of traps){const x=centerX(t.x),y=centerY(t.y)-camY;if(y<-12||y>H+12)continue;
+    if(t.kind==='tnt'){rect(x-4,y-4,8,8,t.live?'#c93f32':'#4b3b37');rect(x-4,y-1,8,2,'#f1d469');rect(x-1,y-5,2,2,'#8d7153');}
+    else{for(let i=-3;i<=3;i+=3){ctx.fillStyle=t.live?'#c8d2dc':'#59616b';ctx.beginPath();ctx.moveTo(x+i-2,y+4);ctx.lineTo(x+i,y-4);ctx.lineTo(x+i+2,y+4);ctx.fill();}}
+  }
+}
+function drawPick(x,y,face,phase){
+  ctx.save();ctx.translate(x+face*3,y-1);ctx.rotate(face*(-0.7+phase*0.13));
+  rect(0,-1,1,8,'#7b5230');rect(-3,-2,7,2,TOOLCOL[P.tool]);ctx.restore();
+}
+function drawPlayer(){
+  const x=P.x,y=P.y-camY;if(P.dead>0&&Math.floor(P.dead/5)%2===0)return;
+  ctx.globalAlpha=P.invT>0&&Math.floor(P.invT/4)%2===0?0.45:1;
+  const walk=P.moveT>0&&(P.moveT>>1)%2;
+  rect(x-3,y+3+(walk?1:0),3,5,'#334f9c');rect(x,y+3+(walk?0:1),3,5,'#293f7f');
+  rect(x-4,y-3,8,7,'#36a6a3');rect(x-4,y-8,8,6,'#b77b55');
+  rect(x+P.face*2-1,y-6,2,1,'#30251f');rect(x-P.face*3,y-6,2,2,'#49352a');
+  if(P.bow&&P.aiMode==='BOW KITE'){ctx.strokeStyle='#c99a61';ctx.beginPath();ctx.arc(x+P.face*3,y-1,4,-1.4,1.4);ctx.stroke();}
+  if(P.tool>0)drawPick(x,y,P.face,P.swing);ctx.globalAlpha=1;
+}
+function drawMob(m){
+  if(m.dead>0&&Math.floor(m.dead/3)%2===0)return;const x=m.x,y=m.y-camY;
+  if(m.kind==='creeper'){
+    const flash=m.charge>35&&Math.floor(frame/3)%2===0;
+    rect(x-4,y-8,8,8,flash?'#e9f6e7':'#61bd55');rect(x-3,y,2,7,'#4c9b43');rect(x+1,y,2,7,'#4c9b43');
+    rect(x-2,y-5,2,2,'#16321a');rect(x+2,y-5,2,2,'#16321a');rect(x-1,y-2,2,3,'#16321a');
+  }else if(m.kind==='skeleton'){
+    rect(x-3,y+2,2,6,'#cbd0ca');rect(x+1,y+2,2,6,'#aeb5b1');rect(x-4,y-3,8,5,'#cbd0ca');
+    rect(x-4,y-8,8,6,'#e5e8df');rect(x-2,y-6,1,1,'#252a2d');rect(x+2,y-6,1,1,'#252a2d');
+    ctx.strokeStyle='#a87545';ctx.beginPath();ctx.arc(x+5,y-1,4,-1.5,1.5);ctx.stroke();
+  }else if(m.kind==='spider'){
+    const skit=(frame>>2)%2;
+    rect(x-5,y-3,10,6,'#2a2330');rect(x-3,y-6,6,4,'#3a2f42');
+    rect(x-2,y-5,2,2,'#e04444');rect(x+1,y-5,2,2,'#e04444');
+    for(const s of[-1,1])for(let i=0;i<3;i++)
+      rect(x+s*(5+(i===1?skit:0)),y-2+i*2,2,1,'#221c28');
+  }else if(m.kind==='golem'){
+    const stomp=(frame>>4)%2;
+    rect(x-6,y-12,12,9,'#8b939c');rect(x-4,y-15,8,5,'#a4acb5');
+    rect(x-3,y-14,2,2,'#ff8f5a');rect(x+1,y-14,2,2,'#ff8f5a');
+    rect(x-6,y-3,4,7+(stomp?1:0),'#767e88');rect(x+2,y-3,4,7+(stomp?0:1),'#767e88');
+    rect(x-8,y-11,3,7,'#767e88');rect(x+5,y-11,3,7,'#767e88');
+    rect(x-4,y-9,2,2,'#5b636d');rect(x+2,y-7,2,2,'#5b636d');
+  }else if(m.kind==='wolf'){
+    const trot=(frame>>3)%2;
+    rect(x-6,y-3,12,4,'#8d949c');rect(x+4,y-6,4,4,'#a5adb5');
+    rect(x+6,y-5,1,1,'#d33');rect(x+7,y-8,2,2,'#6f767e');
+    rect(x-6,y+1,2,3+(trot?1:0),'#6f767e');rect(x-1,y+1,2,3+(trot?0:1),'#6f767e');
+    rect(x+3,y+1,2,3+(trot?1:0),'#6f767e');rect(x-8,y-5,3,2,'#7c838b');
+  }else if(m.kind==='harpy'){
+    const flap=(frame>>2)%2?3:-1;
+    rect(x-3,y-4,6,7,'#7a5a8c');rect(x-3,y-8,6,4,'#e3c9a8');
+    rect(x-2,y-7,1,1,'#2a1f33');rect(x+1,y-7,1,1,'#2a1f33');
+    rect(x-9,y-5-flap,6,2,'#9b7fb0');rect(x+3,y-5-flap,6,2,'#9b7fb0');
+    rect(x-2,y+3,1,3,'#c9a97a');rect(x+1,y+3,1,3,'#c9a97a');
+  }else{
+    rect(x-3,y+2,3,6,'#3e4f87');rect(x,y+2,3,6,'#354575');rect(x-4,y-3,8,6,'#477a67');
+    rect(x-4,y-8,8,6,'#69a06e');rect(x-2,y-6,1,1,'#18271b');rect(x+2,y-6,1,1,'#18271b');
+  }
+  if(m.hit>0){ctx.globalAlpha=0.65;const big=m.kind==='golem';
+    rect(x-(big?8:5),y-(big?16:9),big?16:10,big?24:17,'#fff');ctx.globalAlpha=1;}
+  if(m.hp>0){const bw=m.kind==='golem'?12:8,by=m.kind==='golem'?y-18:y-11;rect(x-bw/2,by,bw,1,'#381f24');
+    rect(x-bw/2,by,clamp(m.hp/(m.maxHp||4),0,1)*bw,1,'#72d66b');}
+}
+function drawProjectiles(){
+  for(const a of projectiles){const y=a.y-camY;ctx.strokeStyle='#e8d7ae';ctx.beginPath();ctx.moveTo(a.x,a.y-camY);ctx.lineTo(a.x-a.vx*2,y-a.vy*2);ctx.stroke();}
+  for(const a of enemyShots){const y=a.y-camY;
+    if(a.rock){rect(a.x-2,y-2,4,4,'#8b939c');rect(a.x-1,y-1,2,2,'#a4acb5');continue;}
+    ctx.strokeStyle='#d7dde0';ctx.beginPath();ctx.moveTo(a.x,a.y-camY);ctx.lineTo(a.x-a.vx*2,y-a.vy*2);ctx.stroke();}
+}
+function drawCracks(){
+  if(!P.mine)return;const m=P.mine,x=m.x*TS,y=m.y*TS-camY,q=1-m.left/m.n;
+  ctx.strokeStyle='rgba(20,20,20,'+(0.35+q*0.6)+')';ctx.beginPath();ctx.moveTo(x+4,y+1);ctx.lineTo(x+3,y+4);
+  ctx.lineTo(x+1,y+6);if(q>0.35){ctx.moveTo(x+3,y+4);ctx.lineTo(x+7,y+5);}if(q>0.7){ctx.moveTo(x+4,y+1);ctx.lineTo(x+7,y+2);ctx.moveTo(x+3,y+4);ctx.lineTo(x+4,y+7);}ctx.stroke();
+}
+function drawGoals(){
+  const gs=activeGoals(),flash=frame-goalState.lastFlash<80;
+  ctx.globalAlpha=0.82;rect(3,33,W-6,60,'#0a0d12');ctx.globalAlpha=1;
+  ctx.strokeStyle=flash?'#9af7ff':'#35404d';ctx.strokeRect(3.5,33.5,W-7,59);
+  ctx.font='bold 6px monospace';ctx.fillStyle=flash?'#9af7ff':'#8ea0b2';ctx.fillText('ACTIVE GOALS',7,40);
+  const done='x'+goalState.completed;ctx.fillStyle='#ffd166';ctx.fillText(done,W-7-done.length*3.6,40);
+  gs.forEach((g,i)=>{const y=48+i*9,ratio=clamp(g.value/(g.target||1),0,1),label=g.label.slice(0,19);
+    ctx.fillStyle=i===0?'#e8f6ff':'#9ba9b7';ctx.fillText((i===0?'> ':'  ')+label,7,y);
+    const s=Math.floor(g.value)+'/'+g.target;ctx.fillStyle=i===0?'#7ef0ff':'#768696';ctx.fillText(s,W-7-s.length*3.6,y);
+    rect(7,y+2,W-14,1,'#202936');rect(7,y+2,(W-14)*ratio,1,i===0?'#7ef0ff':'#526b7b');
+  });
+}
+// Pixel icons for the hotbar: distinct silhouettes, not colored squares.
+function drawIcon(kind,x,y){
+  if(kind==='pick'){
+    const c=TOOLCOL[P.tool];
+    rect(x+2,y+8,2,2,'#8a5a30');rect(x+4,y+6,2,2,'#8a5a30');rect(x+6,y+4,2,2,'#8a5a30');
+    rect(x+4,y+1,6,2,c);rect(x+8,y+3,2,4,c);rect(x+3,y+2,2,2,c);
+  }else if(kind==='torch'){
+    rect(x+5,y+4,2,7,'#8a5a30');rect(x+4,y+2,4,3,'#ffd166');rect(x+5,y+1,2,2,'#ff9f43');
+  }else if(kind==='cobble'){
+    rect(x+2,y+2,9,9,'#777b80');rect(x+2,y+2,4,4,'#94989b');rect(x+7,y+7,4,4,'#5e6267');rect(x+7,y+3,3,3,'#8b8f93');
+  }else if(kind==='arrow'){
+    rect(x+7,y+2,3,3,'#d7dce2');rect(x+6,y+4,2,2,'#b98a52');rect(x+4,y+6,2,2,'#b98a52');rect(x+2,y+8,2,2,'#e8e2d0');
+  }else if(kind==='tnt'){
+    rect(x+2,y+4,9,7,'#e35b46');rect(x+2,y+6,9,2,'#f3ede1');rect(x+5,y+6,1,2,'#1c1c1c');rect(x+7,y+6,1,2,'#1c1c1c');
+    rect(x+6,y+2,1,2,'#8a5a30');rect(x+6,y+1,1,1,'#ffd166');
+  }else if(kind==='ladder'){
+    rect(x+3,y+1,2,10,'#a97e46');rect(x+8,y+1,2,10,'#a97e46');
+    rect(x+3,y+3,7,1,'#c99a5b');rect(x+3,y+6,7,1,'#c99a5b');rect(x+3,y+9,7,1,'#c99a5b');
+  }else if(kind==='food'){
+    rect(x+3,y+2,6,5,'#c26d3f');rect(x+4,y+2,3,2,'#dd8a55');rect(x+7,y+6,2,3,'#f3ede1');rect(x+8,y+8,3,2,'#f3ede1');
+  }else if(kind==='gold'){
+    rect(x+3,y+6,8,4,'#f2c94c');rect(x+4,y+5,6,1,'#ffe08a');rect(x+4,y+7,2,1,'#fff3c4');rect(x+3,y+9,8,1,'#c9993a');
+  }
+}
+function drawDayDial(x,y){
+  const night=isNight();
+  rect(x-1,y-1,10,10,night?'#101a2e':'#2b4a66');
+  if(night){rect(x+2,y+1,5,6,'#e8ebcf');rect(x+1,y+2,2,4,'#101a2e');rect(x+7,y+1,1,1,'#fff');rect(x+1,y+6,1,1,'#fff');}
+  else{rect(x+2,y+2,4,4,'#ffd166');rect(x+3,y,2,1,'#ffd166');rect(x+3,y+7,2,1,'#ffd166');rect(x,y+3,1,2,'#ffd166');rect(x+7,y+3,1,2,'#ffd166');}
+}
+function drawHUD(){
+  ctx.globalAlpha=0.72;rect(0,0,W,31,'#0a0d12');ctx.globalAlpha=1;
+  for(let i=0;i<5;i++){const full=i<P.hp;rect(4+i*10,5,7,6,full?'#e84d55':'#432b31');
+    if(full){rect(3+i*10,5,2,4,'#e84d55');rect(10+i*10,5,2,4,'#e84d55');}}
+  ctx.font='bold 7px monospace';ctx.fillStyle='#dfe8ef';const ds=deepest+'M';ctx.fillText(ds,W-4-ds.length*4.3,10);
+  drawDayDial(W-34,2);
+  // Tool line with a live durability bar: green fades to red as the pick wears.
+  ctx.fillStyle=TOOLCOL[P.tool];ctx.fillText(NAMES[P.tool],4,19);
+  if(P.durMax>0){const dr=clamp(P.dur/P.durMax,0,1);
+    rect(4,21,52,2,'#26303a');rect(4,21,52*dr,2,dr>0.5?'#7ed957':dr>0.2?'#ffd166':'#e84d55');}
+  // Ore pouch: each ore gets its own block chip in its true colors.
+  {let ox=W-4;ctx.font='bold 6px monospace';
+    for(const[t,n]of[[OBSIDIAN,P.obsidian],[DIAMOND,P.diamond],[GOLD,P.gold],[IRON,P.iron],[COAL,P.coal]]){
+      const s=''+n,tw=s.length*3.6;ox-=tw;ctx.fillStyle=n>0?'#e6edf3':'#5a6672';ctx.fillText(s,ox,20);
+      ox-=7;const c=BC[t];rect(ox,14,6,6,c[0]);rect(ox+1,15,3,3,c[1]);rect(ox+4,17,2,2,c[2]);ox-=4;
+    }}
+  ctx.font='bold 6px monospace';ctx.fillStyle='#7ef0ff';ctx.fillText(P.aiMode,4,29);
+  const bs='BLD '+buildScore;ctx.fillStyle='#ffd166';ctx.fillText(bs,W-4-bs.length*3.7,29);
+  // Hotbar: distinct pixel icons, dimmed when the pouch is empty.
+  const items=['pick','torch','cobble','arrow','tnt','ladder','food','gold'];
+  const nums=[null,P.torch,P.cobble,P.ammo,P.powder,P.ladder+P.rope,P.food,P.gold],x0=4;
+  ctx.globalAlpha=0.74;rect(x0-2,332,156,24,'#11151c');ctx.globalAlpha=1;
+  items.forEach((kind,i)=>{const x=x0+i*19,empty=nums[i]!==null&&nums[i]<=0;
+    ctx.strokeStyle=i===0?'#f5f7fa':'#636a74';ctx.strokeRect(x+.5,334.5,17,18);
+    ctx.globalAlpha=empty?0.28:1;drawIcon(kind,x+2,336);ctx.globalAlpha=1;
+    if(i===0&&P.durMax>0){const dr=clamp(P.dur/P.durMax,0,1);
+      rect(x+2,350,13,1,'#26303a');rect(x+2,350,13*dr,1,dr>0.5?'#7ed957':dr>0.2?'#ffd166':'#e84d55');}
+    ctx.fillStyle=empty?'#5a6672':'#fff';ctx.font='bold 6px monospace';
+    const s=nums[i]===null?'':''+nums[i];if(s)ctx.fillText(s,x+16-s.length*3.5,351);});
+  for(const d of drops){ctx.globalAlpha=d.t/20;rect(d.x-2,d.y-camY-2,4,4,d.c);}ctx.globalAlpha=1;
+  for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/20);ctx.font='bold 7px monospace';ctx.fillStyle=t.c;
+    const w=t.s.length*4.2;ctx.fillText(t.s,clamp(t.x-w/2,3,W-w-3),t.y-camY);}ctx.globalAlpha=1;
+  drawGoals();
+  drawSession(false);
+}
+// The surface camp: tent, anvil, and a campfire that burns brighter at night.
+function drawCamp(){
+  const gy=SURFACE*TS-camY;if(gy<-24||gy>H+24)return;
+  const tx=(CAMP_X-3)*TS;
+  rect(tx,gy-10,14,10,'#8a3f30');rect(tx+2,gy-13,10,4,'#b8563f');rect(tx+5,gy-15,4,3,'#b8563f');
+  rect(tx+5,gy-6,4,6,'#3a2620');
+  const ax=(CAMP_X+1)*TS+1;
+  rect(ax+1,gy-2,6,2,'#3d434a');rect(ax+2,gy-4,4,2,'#52585f');rect(ax,gy-6,8,2,'#6a727b');
+  const fx=(CAMP_X+2)*TS+9,fl=isNight()?3:2;
+  rect(fx,gy-2,8,2,'#6b4a2a');
+  const h=fl+((frame>>3)%2);
+  rect(fx+2,gy-2-h*2,4,h*2,'#ff9f43');rect(fx+3,gy-2-h*3,2,h,'#ffd166');
+  if(isNight()){ctx.globalAlpha=0.12;rect(fx-8,gy-16,24,16,'#ffb35c');ctx.globalAlpha=1;}
+}
+function render(){
+  preDraw();drawWorld();drawCamp();
+  for(const m of mobs)if(!fogged(Math.floor(m.x/TS),Math.floor(m.y/TS)))drawMob(m);
+  drawProjectiles();drawPlayer();drawCracks();drawParts(camY);postDraw();drawHUD();
+}
+
+initSession('blockmine',[['ARROWS','MOVE / CLIMB'],['X + ARROW','MINE / FIGHT'],['SPACE','PLACE TORCH'],['Z / SHIFT','BUILD TRAP'],['ESC','AUTOPILOT']]);
+resetGame();start(()=>step(),()=>render());
+</script>
+</html>

@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SMALL GUYS</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080c}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#000}
+</style>
+<canvas id="cv" width="320" height="720"></canvas>
+<script src="engine.js?v=435b484c"></script>
+<script src="autoplay.js?v=1acff4bb"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+const{bestBy,controllerMux,progressWatchdog}=AI;
+
+const GRAV=0.22,JUMP=-3.7;
+const md=(a,n)=>((a%n)+n)%n;
+const PAL=['#ff4f7b','#ffd166','#57e389','#6cc4ff','#c792ea','#ff9e64','#f7f7fb','#7ce0d3','#ffa8cf','#b6e84f'];
+const HUES=[['#ff8fb1','#ffc9da'],['#ffd166','#ffe6ad'],['#7ce0d3','#bff0e9'],
+  ['#c792ea','#e2c8f5'],['#ff9e64','#ffcdaa'],['#6cc4ff','#b4e0ff']];
+const RNAMES={doors:'DOOR DASH',whirly:'WHIRLYGIG',slime:'SLIME CLIMB',final:'FALL MOUNTAIN'};
+// door slots: two alternating layouts so a broken door's hole never sits
+// directly under the next wall's doors (beans would yo-yo through their own hole)
+const SLOTA=[[16,44],[66,94],[116,144]],SLOTB=[[40,68],[92,120]];
+
+// ---------- state ----------
+let beans=[],floors=[],plats=[],sweeps=[],bumps=[],texts=[];
+let type='doors',finishY=-400,slimeY=40,slimeV=0.22,crown=null;
+let plan=[],QS=[6,4,1],round=0,Q=6,phase='intro',phT=0,timer=0,tLimit=0,qCount=0;
+let episode=0,winner=null,frame=0,camY=-238;
+
+// ---------- course generation ----------
+function genDoors(){
+  floors=[];plats=[];sweeps=[];bumps=[];crown=null;
+  const n=14;
+  for(let i=0;i<n;i++){
+    const lay=i%2?SLOTB:SLOTA;
+    const slots=lay.map(s=>({x0:s[0],x1:s[1],st:'fake',bonk:0}));
+    const idx=slots.map((s,k)=>k).sort(()=>random()-0.5);
+    for(let k=0;k<RI(1,Math.min(2,slots.length-1));k++)slots[idx[k]].st='shut'; // ≥1 real door per wall
+    floors.push({y:-26-i*26,slots,hue:i%HUES.length});
+  }
+  finishY=floors[n-1].y-30;
+}
+function genLadder(rows,sw,bp,hard){
+  floors=[];plats=[];sweeps=[];bumps=[];crown=null;
+  let cx=W/2;
+  const mains=[];
+  for(let i=0;i<rows;i++){
+    const y=-24-i*24;
+    const w=RI(hard?34:40,hard?52:64);
+    // random-walk the spine: |dcx|<=44 with these widths keeps every hop in reach
+    cx=clamp(cx+R(-44,44),w/2+9,W-9-w/2);
+    const p={x0:cx-w/2,x1:cx+w/2,y,hue:i%HUES.length,main:true};
+    plats.push(p);mains.push(p);
+    if(sw&&i>1&&i%3===(hard?0:1)&&random()<(hard?0.9:0.75))
+      sweeps.push({x:cx,y:y-13,len:RI(15,hard?24:20),a:R(0,6.28),
+        spd:(random()<0.5?1:-1)*R(0.022,hard?0.042:0.034)});
+    if(bp&&i>0&&random()<0.3)
+      bumps.push({x:clamp(cx+R(-55,55),13,W-13),y:y-12,r:6,t:0});
+  }
+  for(let i=0;i+1<mains.length;i++)if(random()<0.35){
+    // bonus ledge halfway between this main and the next, so it always has an exit
+    const a=mains[i],c=mains[i+1],w2=RI(24,36);
+    const c2=clamp(((a.x0+a.x1)/2+(c.x0+c.x1)/2)/2+R(-18,18),w2/2+9,W-9-w2/2);
+    if(c2-w2/2>a.x1+3||c2+w2/2<a.x0-3) // don't fuse with the main it shares a row with
+      plats.push({x0:c2-w2/2,x1:c2+w2/2,y:a.y,hue:(i+3)%HUES.length});
+  }
+  finishY=-24-(rows-1)*24-28;
+}
+function buildRound(){
+  type=plan[round];Q=QS[round];qCount=0;timer=0;
+  slimeY=40;slimeV=0.1;
+  if(type==='doors'){genDoors();tLimit=75*60;}
+  else if(type==='whirly'){genLadder(14,true,true,false);tLimit=75*60;}
+  else if(type==='slime'){genLadder(14,false,false,false);tLimit=0;}
+  else{ // final: short brutal climb, crown on top
+    genLadder(11,true,true,true);tLimit=60*60;
+    let top=null;for(const p of plats)if(p.main&&(!top||p.y<top.y))top=p;
+    crown={x:(top.x0+top.x1)/2,y:finishY-6,t:0};
+  }
+  beans.forEach((b,i)=>{
+    b.x=18+i*(W-36)/Math.max(1,beans.length-1)+R(-3,3);b.y=-3.01;
+    b.vx=0;b.vy=0;b.g=true;b.st='run';b.stun=0;b.dive=false;b.hitCd=0;b.jcd=RI(0,20);
+    b.doneT=0;b.pickF=null;b.pickS=0;b.mem=new Set();b.bias=R(-1,1)*(1.05-b.skill);b.minY=0;
+    b.watch.reset(0);
+  });
+  phase='intro';phT=0;
+  camY=-238;
+}
+// bean 0 is the camera/player bean: sharpest AI in the lobby; rivals a close second
+function newBean(i){const skill=i===0?1:R(0.8,0.95);
+  const bean={i,skill,col:PAL[i],x:0,y:-3,vx:0,vy:0,g:true,face:1,st:'run',stun:0,
+  dive:false,hitCd:0,jcd:0,doneT:0,pickF:null,pickS:0,mem:new Set(),
+  bias:R(-1,1)*(1.05-skill),minY:0};
+  bean.watch=progressWatchdog({timeout:561-Math.round(skill*260)});
+  return bean;
+}
+function newEpisode(){
+  episode++;winner=null;round=0;
+  const pool=['doors','whirly','slime'].sort(()=>random()-0.5);
+  plan=[pool[0],pool[1],'final'];
+  beans=[];for(let i=0;i<10;i++)beans.push(newBean(i));
+  buildRound();
+}
+function resetGame(){episode=0;newEpisode();}
+
+// ---------- physics ----------
+function collideDoors(b,py){
+  for(const f of floors){
+    const top=f.y,bot=f.y+8;
+    if(b.y+3<=top||b.y-3>=bot)continue;
+    const sl=f.slots.find(s=>b.x>s.x0+2&&b.x<s.x1-2);
+    // open doors are one-way trapdoors: rise through, land on top coming down
+    if(sl&&sl.st==='open'&&b.vy<0){b.x=clamp(b.x,sl.x0+3.2,sl.x1-3.2);continue;}
+    if(b.vy<0){
+      if(sl&&sl.st==='shut'){ // real door bursts open
+        sl.st='open';
+        burst(b.x,top+4,16,HUES[f.hue][0],1.8);shake(2);
+        texts.push({x:b.x,y:top-4,s:'CRASH!',c:'#fff',t:45});
+        continue;
+      }
+      if(sl){ // fake door: bonk (the star shakes it off quicker)
+        sl.bonk++;b.mem.add(f.y+'_'+sl.x0);b.pickF=null;
+        b.vy=1.3;b.stun=b.i===0?(b.clutch?10:16):30;
+        texts.push({x:b.x,y:bot+8,s:'FAKE!',c:'#ffe66d',t:40});
+        burst(b.x,bot,6,'#fff',0.9);
+      }else b.vy=0.4; // wall underside
+      b.y=bot+3.01;
+    }else{
+      if(py+3<=top+1){b.y=top-3.01;b.vy=0;b.g=true;}
+      else b.y=bot+3.01;
+    }
+  }
+}
+function collidePlats(b,py){ // one-way: solid from above only
+  if(b.vy<0)return;
+  for(const p of plats)
+    if(b.x>p.x0-2&&b.x<p.x1+2&&py+3<=p.y+0.6&&b.y+3>=p.y){
+      b.y=p.y-3.01;b.vy=0;b.g=true;return;
+    }
+}
+function phys(b,input,jump,diveIn){
+  if(b.stun>0){b.stun--;input=0;jump=0;diveIn=false;}
+  const acc=b.g?0.3:(b.i===0?0.19:0.15); // the star has cleaner air control
+  if(input!==0){b.vx+=acc*input;b.face=input;}
+  else b.vx*=b.g?0.72:0.99;
+  const cap=b.dive?2.7:(b.i===0?(b.clutch?1.75:1.5):1.45);
+  b.vx=clamp(b.vx,-cap,cap);
+  if(jump&&b.g){b.vy=jump;b.g=false;dust(b.x,b.y+3,3,'#fff');}
+  if(diveIn&&!b.g&&!b.dive){b.dive=true;b.vx=b.face*2.7;b.vy=Math.min(b.vy,0.4);}
+  b.vy+=GRAV;if(b.vy>3.4)b.vy=3.4;
+  b.x+=b.vx;
+  if(b.x<7){b.x=7;b.vx*=-0.5;}
+  if(b.x>W-7){b.x=W-7;b.vx*=-0.5;}
+  const py=b.y;b.y+=b.vy;b.g=false;
+  if(type==='doors')collideDoors(b,py);
+  collidePlats(b,py);
+  if(b.y>-3){b.y=-3.01;if(b.vy>0)b.vy=0;b.g=true;} // start floor
+  if(b.g&&b.dive){b.dive=false;b.stun=9;} // face-plant recovery
+}
+
+// ---------- hazards / outcomes ----------
+function hazards(b){
+  if(b.hitCd>0)b.hitCd--;
+  else for(const s of sweeps){
+    if(Math.abs(b.y-s.y)>s.len+6||Math.abs(b.x-s.x)>s.len+6)continue;
+    let hit=false;
+    for(const arm of[0,Math.PI]){
+      const ax=Math.cos(s.a+arm),ay=Math.sin(s.a+arm);
+      const t=clamp((b.x-s.x)*ax+(b.y-s.y)*ay,0,s.len);
+      if(Math.hypot(b.x-(s.x+ax*t),b.y-(s.y+ay*t))<4.5){
+        const d=Math.sign(s.spd);
+        b.vx=-ay*d*3;b.vy=Math.min(-1.4,ax*d*2.6-0.6);
+        b.stun=b.i===0?(b.clutch?8:14):26;b.hitCd=34;b.g=false;b.dive=false;
+        burst(b.x,b.y,6,'#fff',1.3);
+        if(b.i===0)shake(2);
+        hit=true;break;
+      }
+    }
+    if(hit)break;
+  }
+  for(const u of bumps){
+    const d=Math.hypot(b.x-u.x,b.y-u.y);
+    if(d<u.r+3.4&&d>0.01){
+      const nx=(b.x-u.x)/d,ny=(b.y-u.y)/d;
+      b.vx=nx*2.5;b.vy=ny*2.5-0.5;u.t=8;
+      ring(u.x,u.y,'#fff',1.2,12);
+    }
+  }
+  if(type==='slime'&&b.y+2>slimeY)eliminate(b,'SPLAT!');
+}
+function eliminate(b,s){
+  if(b.st!=='run')return;
+  b.st='out';
+  burst(b.x,b.y,20,b.col,2,0.06);
+  texts.push({x:b.x,y:b.y-6,s:s||'OUT!',c:'#ff5f6d',t:60});
+  if(b.i===0){shake(3);if(playing())gameOver('ROUND '+(round+1));}
+}
+function qualify(b){
+  if(b.st!=='run')return;
+  b.st='done';b.doneT=0;qCount++;
+  ring(b.x,b.y,b.col,1.5,20);
+  burst(b.x,b.y,10,'#fff',1.2);
+  texts.push({x:b.x,y:b.y-8,s:'GOAL!',c:'#fff',t:50});
+  if(b.i===0&&playing())addScore(100+round*50);
+}
+function winRound(b){
+  winner=b;b.st='win';
+  phase='win';phT=0;
+  burst(crown.x,crown.y,26,'#ffd166',2.4);
+  ring(crown.x,crown.y,'#ffd166',2,26);shake(3);
+  for(const o of beans)if(o!==b&&o.st==='run')o.st='sad';
+  if(playing()){
+    if(b.i===0){addScore(500);gameOver('CROWN!');}
+    else if(beans.some(x=>x.i===0&&x.st==='sad'))gameOver('SO CLOSE');
+  }
+}
+function endRound(){
+  if(qCount===0){ // slime ate the whole lobby: run it back
+    for(const b of beans)b.st='run';
+    buildRound();return;
+  }
+  for(const b of beans)if(b.st==='run')eliminate(b,'OUT!');
+  phase='result';phT=0;
+}
+
+// ---------- ai ----------
+function chooseSlot(b,f){
+  const pick=bestBy(f.slots.map((s,i)=>({s,i})),({s})=>{
+    let v=R(0,b.i===0?1:2)-Math.abs((s.x0+s.x1)/2-b.x)/34;
+    if(s.st==='open')v+=8;
+    else{v-=s.bonk*2.2;if(b.mem.has(f.y+'_'+s.x0))v-=9;
+      if(s.st==='shut')v+=b.i===0?5:(b.skill-0.85)*8;} // game sense: the star sniffs out real doors
+    return v;
+  });
+  return pick?pick.i:0;
+}
+function armDist(x,y,dt){ // nearest sweeper arm to a point, dt frames ahead
+  let m=1e9;dt=dt||0;
+  for(const s of sweeps){
+    if(Math.abs(x-s.x)>s.len+8||Math.abs(y-s.y)>s.len+8)continue;
+    for(const arm of[0,Math.PI]){
+      const ax=Math.cos(s.a+s.spd*dt+arm),ay=Math.sin(s.a+s.spd*dt+arm);
+      const t=clamp((x-s.x)*ax+(y-s.y)*ay,0,s.len);
+      const d=Math.hypot(x-(s.x+ax*t),y-(s.y+ay*t));
+      if(d<m)m=d;
+    }
+  }
+  return m;
+}
+function humanStep(b){
+  let input=0,jump=0,dive=false;
+  input=(keys.left?-1:0)+(keys.right?1:0);
+  if((tap('up')||tap('a'))&&b.g)jump=JUMP;
+  if(tap('down')||tap('b')||tap('c'))dive=true;
+  phys(b,input,jump,dive);
+}
+function botStep(b){
+  let input=0,jump=0,dive=false;
+  if(b.jcd>0)b.jcd--;
+  if(b.i===0){ // clutch mode: the star digs deep when it falls behind the pack
+    const above=beans.reduce((n,o)=>n+(o!==b&&o.st==='run'&&o.y<b.y-8?1:0),0);
+    b.clutch=above>=(crown?1:3)||(type==='slime'&&slimeY-b.y<70);
+    if(b.clutch&&b.jcd>2)b.jcd=2;
+  }
+  if(type==='doors'){
+    let f=null;
+    for(const fl of floors)if(fl.y+8<b.y-2){f=fl;break;} // nearest wall overhead
+    if(f){
+      if(b.pickF!==f){b.pickF=f;b.pickS=chooseSlot(b,f);}
+      else if(frame%30===(b.i*3)%30&&f.slots[b.pickS].st!=='open'){
+        // someone broke a door open — most beans funnel to it
+        for(let i=0;i<f.slots.length;i++)
+          if(f.slots[i].st==='open'&&random()<0.75){b.pickS=i;break;}
+      }
+      const s=f.slots[b.pickS],tx=(s.x0+s.x1)/2+b.bias*5;
+      if(Math.abs(b.x-tx)>2.5)input=Math.sign(tx-b.x);
+      else if(b.g&&b.jcd<=0){jump=JUMP*R(0.99,1.02);b.jcd=RI(6,12)+Math.round((1-b.skill)*16);}
+      if(!b.g)input=Math.abs(b.x-tx)>1.5?Math.sign(tx-b.x):0;
+    }else{ // past the last wall: sprint the line
+      input=b.x<W/2-4?1:b.x>W/2+4?-1:0;
+      if(b.g&&b.jcd<=0){jump=JUMP;b.jcd=14;}
+    }
+  }else{
+    const next=bestBy(plats,p=>{ // next platform up
+      const dy=b.y-p.y;
+      const cx2=clamp(b.x,p.x0+4,p.x1-4);
+      return Math.abs(cx2-b.x)+dy*0.3;
+    },{maximize:false,filter:p=>{const dy=b.y-p.y;return dy>=6&&dy<=30;}});
+    const best=next?{p:next,cx:clamp(b.x,next.x0+4,next.x1-4)}:null;
+    if(crown&&b.y<crown.y+34){ // summit: lunge
+      input=Math.sign(crown.x-b.x)||1;
+      if(b.g&&b.jcd<=0){jump=JUMP;b.jcd=b.i===0?8:12;}
+      if(!b.g&&(b.i===0
+        ?Math.abs(b.x-crown.x)<20&&b.y<crown.y+10&&random()<0.5 // star dives only when it connects
+        :Math.abs(b.x-crown.x)<15&&b.y-crown.y<20&&random()<0.1))dive=true;
+    }else if(best){
+      const tx=clamp(best.cx+b.bias*9,best.p.x0+3,best.p.x1-3);
+      if(Math.abs(b.x-tx)>2)input=Math.sign(tx-b.x);
+      if(b.i===0&&b.g&&input!==0&&armDist(b.x+input*9,b.y-3)<10)input=0; // star waits out a sweeping arm
+      if(b.g&&Math.abs(b.x-tx)<12&&b.jcd<=0){
+        // time the sweeper window — but never stall more than ~1s waiting for one
+        if(b.clutch||armDist(tx,best.p.y-8,22)>11||random()>b.skill||(b.wgT||0)>60){
+          jump=JUMP*R(0.96,1.03);b.jcd=RI(4,10)+Math.round((1-b.skill)*14);b.wgT=0;
+        }else b.wgT=(b.wgT||0)+1;
+      }
+      if(!b.g)input=Math.abs(b.x-tx)>1.5?Math.sign(tx-b.x):0;
+    }else{ // stranded between rows: drift back to the spine
+      input=b.x<W/2?1:-1;
+      if(b.g&&b.jcd<=0){jump=JUMP;b.jcd=18;}
+    }
+    if(!crown&&b.y<finishY+42&&!b.g&&b.vy<0&&random()<0.06)dive=true; // lunge the line
+    if(type==='slime'&&slimeY-b.y<24&&b.g&&b.jcd<=0){jump=JUMP;b.jcd=10;} // panic hop
+  }
+  phys(b,input,jump,dive);
+}
+const beanControl=controllerMux({human:humanStep,ai:botStep,
+  manual:b=>b.i===0&&(playing()||manual())});
+function aiStep(b){beanControl(b);}
+function watchdog(b){ // no upward progress for a while: quietly re-seat him
+  if(b.y<b.minY-2)b.minY=b.y;
+  const stalled=b.watch.observe(b.minY);
+  if(stalled.event){ // sharper beans have a shorter per-bean timeout
+    b.watch.reset(b.minY);b.bias=R(-0.4,0.4);b.mem.clear();b.pickF=null;
+    const best=bestBy(plats,p=>Math.abs(p.y-b.y)+Math.abs((p.x0+p.x1)/2-b.x)*0.2,
+      {maximize:false,filter:p=>p.y<=b.y+2});
+    if(best){b.x=(best.x0+best.x1)/2;b.y=best.y-3.01;b.vx=0;b.vy=0;dust(b.x,b.y,4,'#fff');}
+  }
+}
+function crowd(){ // beans shove each other — comedy at every doorway
+  for(let i=0;i<beans.length;i++)for(let j=i+1;j<beans.length;j++){
+    const a=beans[i],c=beans[j];
+    if(a.st!=='run'||c.st!=='run')continue;
+    const dx=c.x-a.x;
+    if(Math.abs(dx)<6&&Math.abs(c.y-a.y)<7){
+      const push=(dx===0?(random()<0.5?1:-1):Math.sign(dx))*0.25;
+      a.vx-=push*0.4;c.vx+=push*0.4;a.x-=push;c.x+=push;
+    }
+  }
+}
+
+// ---------- round flow ----------
+function step(){
+  frame++;
+  sessionStep({reset:resetGame});
+  for(const s of sweeps)s.a+=s.spd;
+  for(const u of bumps)if(u.t>0)u.t--;
+  if(crown)crown.t++;
+  if(phase==='intro'){
+    phT++;
+    for(const b of beans){
+      if(b.g&&random()<0.02){b.vy=-1.6;b.g=false;} // excited hops
+      phys(b,0,0,false);
+    }
+    if(phT>150)phase='play';
+  }else if(phase==='play'){
+    timer++;
+    for(const b of beans){
+      if(b.st==='run'){aiStep(b);hazards(b);watchdog(b);}
+      else if(b.st==='done')b.doneT++;
+    }
+    crowd();
+    if(type==='slime'){
+      slimeV=Math.min(0.26,slimeV+0.00012);slimeY-=slimeV;
+      if(frame%6===0)spawn({x:R(4,W-4),y:slimeY+R(2,20),vy:-R(0.2,0.6),t:RI(10,26),c:'#ff8ac4',drag:1});
+    }
+    for(const b of beans){
+      if(b.st!=='run')continue;
+      if(crown){if(Math.hypot(b.x-crown.x,b.y-crown.y)<7){winRound(b);break;}}
+      else if(b.y<finishY)qualify(b);
+    }
+    if(phase==='play'){
+      const running=beans.filter(b=>b.st==='run').length;
+      if(!crown&&(qCount>=Q||running===0))endRound();
+      else if(tLimit&&timer>tLimit){
+        if(crown){ // failsafe: highest bean takes it
+          let hb=null;for(const b of beans)if(b.st==='run'&&(!hb||b.y<hb.y))hb=b;
+          if(hb)winRound(hb);else{phase='result';phT=0;}
+        }else{
+          const rest=beans.filter(b=>b.st==='run').sort((a,c)=>a.y-c.y);
+          for(const b of rest)qCount<Q?qualify(b):eliminate(b,'TIME!');
+          endRound();
+        }
+      }
+    }
+  }else if(phase==='result'){
+    phT++;
+    for(const b of beans)if(b.st==='done')b.doneT++;
+    if(phT>170){
+      round++;
+      { // no ghost-town rounds: lucky losers refill a gutted field
+        const need=plan[round]==='final'?3:4;
+        const done=beans.filter(b=>b.st==='done');
+        const outs=beans.filter(b=>b.st==='out');
+        while(done.length<need&&outs.length){
+          const b=outs.pop();b.st='done';done.push(b);
+          texts.push({x:W/2,y:camY+40+done.length*10,s:'LUCKY LOSER!',c:'#ffe66d',t:80});
+        }
+      }
+      beans=beans.filter(b=>b.st==='done');
+      beans.forEach(b=>{b.st='run';});
+      buildRound();
+    }
+  }else{ // win: confetti rain, victory hops
+    phT++;
+    if(phT%3===0)spawn({x:R(0,W),y:camY-4,vx:R(-0.3,0.3),vy:R(0.4,1),t:RI(50,110),
+      c:PAL[RI(0,9)],drag:1,grav:0.015});
+    if(winner){
+      if(phT%30===0&&winner.g){winner.vy=-1.8;winner.g=false;}
+      phys(winner,0,0,false);
+    }
+    if(phT>420)newEpisode();
+  }
+  // camera: your bean, or the front-runner once you're out
+  let focus=null;
+  for(const b of beans)if(b.i===0&&b.st!=='out'){focus=b;break;}
+  if(!focus)for(const b of beans)if((b.st==='run'||b.st==='win')&&(!focus||b.y<focus.y))focus=b;
+  if(!focus&&beans.length)focus=beans[0];
+  if(focus)camY+=(focus.y-235-camY)*0.08;
+  stepParts();stepRings();
+  for(const t of texts){t.t--;t.y-=0.22;}
+  texts=texts.filter(t=>t.t>0);
+}
+
+// ---------- drawing ----------
+function drawBean(b){
+  if(b.st==='out')return;
+  let y=b.y-camY,al=1;
+  const x=b.x;
+  if(b.st==='done'){y-=b.doneT*0.55;al=Math.max(0,1-b.doneT/100);if(al<=0)return;}
+  if(y<-14||y>H+14)return;
+  ctx.globalAlpha=al;
+  const run=b.g&&Math.abs(b.vx)>0.25;
+  if(b.dive){ // mid-flop
+    rect(x-4,y-2,9,5,b.col);
+    ctx.globalAlpha=al*0.3;rect(x-4,y-2,9,1,'#fff');ctx.globalAlpha=al;
+    rect(x+(b.face>0?2:-4),y-1,2,2,'#fff');
+  }else{
+    const f1=run?Math.round(Math.sin(frame*0.5+b.i)*1.5):0;
+    rect(x-2+f1,y+4,2,2,b.col);rect(x+1-f1,y+4,2,2,b.col); // feet
+    rect(x-3,y-3,6,7,b.col);rect(x-2,y-4,4,1,b.col); // body
+    ctx.globalAlpha=al*0.3;rect(x-2,y+1,4,2,'#fff');ctx.globalAlpha=al; // belly sheen
+    rect(x-2,y-2,4,3,'#fff'); // visor
+    const px=b.face>0?1:0,ey=b.st==='sad'?0:-1;
+    if(b.stun>0){ // dazed
+      const blink=hash(frame>>3,b.i)>0.5?1:0;
+      rect(x-2+blink,y-1,1,1,'#20242e');rect(x+(1-blink),y-1,1,1,'#20242e');
+    }else{
+      rect(x-2+px,y-1+(ey+1),1,1,'#20242e');rect(x+px,y-1+(ey+1),1,1,'#20242e');
+    }
+  }
+  if(b.st==='win'){ // crown on the champ
+    rect(x-3,y-7,6,2,'#ffd166');
+    rect(x-3,y-9,1,2,'#ffd166');rect(x,y-9,1,2,'#ffd166');rect(x+2,y-9,1,2,'#ffd166');
+  }
+  ctx.globalAlpha=1;
+  if(b.i===0&&(b.st==='run'||b.st==='win')){ // your marker
+    const my=y-11+Math.sin(frame*0.15);
+    rect(x-2,my,5,2,'#fff');rect(x-1,my+2,3,1,'#fff');rect(x,my+3,1,1,'#fff');
+  }
+}
+function draw(){
+  // candy sky, gentle stepped gradient
+  const SKY=['#9ccff4','#94c8f1','#8cc1ee','#84baea','#7cb3e6'];
+  for(let i=0;i<5;i++)rect(0,i*72,W,72,SKY[i]);
+  for(let i=0;i<6;i++){ // drifting clouds, light parallax
+    const cy=md(i*67+40-camY*0.22,H+50)-25;
+    const cx2=md(hash(i,7)*W+frame*(0.04+0.02*(i%3))*(i%2?1:-1),W+56)-28;
+    ctx.globalAlpha=0.5;
+    rect(cx2-8,cy,16,5,'#eaf5fd');rect(cx2-4,cy-3,10,4,'#eaf5fd');rect(cx2+2,cy+2,10,3,'#eaf5fd');
+    ctx.globalAlpha=1;
+  }
+  preDraw();
+  for(let y=-md(camY,16)-16;y<H+16;y+=16){ // candy-stripe side rails
+    rect(0,y,4,8,'#ff8fb1');rect(0,y+8,4,8,'#fff7fa');
+    rect(W-4,y+8,4,8,'#ff8fb1');rect(W-4,y,4,8,'#fff7fa');
+  }
+  if(!crown){ // checkered finish line
+    const fy=finishY-camY;
+    if(fy>-10&&fy<H+10)for(let x=4;x<W-4;x+=8){
+      rect(x,fy,4,3,'#20242e');rect(x+4,fy,4,3,'#fff');
+      rect(x,fy+3,4,3,'#fff');rect(x+4,fy+3,4,3,'#20242e');
+    }
+  }
+  const gy=-camY; // start floor
+  if(gy<H+10){rect(0,gy,W,8,'#8a6fae');rect(0,gy,W,2,'#b79ad6');rect(0,gy+8,W,Math.max(0,H-gy-8),'#6e5591');}
+  for(const f of floors){ // door walls
+    const y=f.y-camY;if(y<-12||y>H+12)continue;
+    const[c1,c2]=HUES[f.hue];
+    rect(4,y,W-8,8,c1);rect(4,y,W-8,2,c2);
+    for(const s of f.slots){
+      if(s.st==='open'){
+        rect(s.x0,y,s.x1-s.x0,8,'#7fb5e6');
+        rect(s.x0,y,2,8,'#5a4a66');rect(s.x1-2,y,2,8,'#5a4a66');
+        rect(s.x0+2,y,3,2,c2);rect(s.x1-6,y+6,3,2,c2); // splinters
+      }else{
+        rect(s.x0+1,y+1,s.x1-s.x0-2,7,'#fdf6ee');
+        rect(s.x0+1,y+1,s.x1-s.x0-2,1,'#fff');
+        rect(s.x0+1,y+1,1,7,'#d9c2b8');rect(s.x1-2,y+1,1,7,'#d9c2b8');
+        rect(s.x0+18,y+4,2,2,'#8a7364'); // handle
+        if(s.bonk>0){rect(s.x0+6,y+2,1,4,'#b59a8e');rect(s.x0+10,y+3,4,1,'#b59a8e');} // dents
+      }
+    }
+  }
+  for(const p of plats){
+    const y=p.y-camY;if(y<-8||y>H+8)continue;
+    const[c1,c2]=HUES[p.hue];
+    rect(p.x0,y,p.x1-p.x0,6,c1);rect(p.x0,y,p.x1-p.x0,2,c2);
+    ctx.globalAlpha=0.25;rect(p.x0,y+5,p.x1-p.x0,1,'#20242e');ctx.globalAlpha=1;
+  }
+  for(const u of bumps){
+    const y=u.y-camY;if(y<-10||y>H+10)continue;
+    ctx.fillStyle=u.t>0?'#fff':'#ff5f6d';ctx.beginPath();ctx.arc(u.x,y,u.r,0,7);ctx.fill();
+    ctx.fillStyle='#ffd166';ctx.beginPath();ctx.arc(u.x,y,u.r-2.5,0,7);ctx.fill();
+    rect(u.x-1,y-1,2,2,'#fff');
+  }
+  for(const s of sweeps){
+    const y=s.y-camY;if(y<-40||y>H+40)continue;
+    for(const arm of[0,Math.PI]){
+      const ax=Math.cos(s.a+arm),ay=Math.sin(s.a+arm);
+      for(let t=2;t<s.len;t+=3)rect(s.x+ax*t-1,y+ay*t-1,3,3,'#f25f5c');
+      rect(s.x+ax*s.len-2,y+ay*s.len-2,4,4,'#ffe66d');
+    }
+    rect(s.x-2,y-2,5,5,'#20242e');rect(s.x-1,y-1,3,3,'#8b91a5');
+  }
+  if(crown){
+    const y=crown.y-camY+Math.sin(crown.t*0.07)*2;
+    rect(crown.x-4,y,8,3,'#ffd166');
+    rect(crown.x-4,y-3,2,3,'#ffd166');rect(crown.x-1,y-3,2,3,'#ffd166');rect(crown.x+2,y-3,2,3,'#ffd166');
+    rect(crown.x-3,y+1,6,1,'#ffb14a');
+    if(frame%9<3)rect(crown.x+Math.round(hash(frame>>2,1)*10-5),y+Math.round(hash(frame>>2,2)*7-5),1,1,'#fff');
+  }
+  let you=null;
+  for(const b of beans){if(b.i===0){you=b;continue;}drawBean(b);}
+  if(you)drawBean(you); // you draw on top of the pile
+  if(type==='slime'){ // slime over everything it has swallowed
+    const sy=slimeY-camY;
+    if(sy<H+8)for(let x=0;x<W;x+=4){
+      const yy=sy+Math.sin(frame*0.09+x*0.35)*1.6;
+      rect(x,yy,4,3,'#ff8ac4');
+      rect(x,yy+3,4,Math.max(0,H-yy-3),'#ff4fa0');
+    }
+  }
+  drawParts(camY);drawRings(camY);
+  ctx.font='bold 7px monospace';
+  for(const t of texts){
+    ctx.globalAlpha=Math.min(1,t.t/14);ctx.fillStyle=t.c;
+    ctx.fillText(t.s,t.x-t.s.length*2.2,t.y-camY);
+  }
+  ctx.globalAlpha=1;
+  postDraw();
+  // hud
+  ctx.globalAlpha=0.6;rect(0,0,W,13,'#3a2a4d');ctx.globalAlpha=1;
+  ctx.font='bold 8px monospace';ctx.fillStyle='#fff';
+  ctx.fillText('R'+(round+1)+' '+RNAMES[type],4,10);
+  const rs=crown?beans.filter(b=>b.st==='run').length+' LEFT':'Q '+qCount+'/'+Q;
+  ctx.fillStyle='#ffd166';ctx.fillText(rs,W-4-rs.length*5,10);
+  if(tLimit&&phase==='play'){
+    const left=Math.ceil((tLimit-timer)/60);
+    if(left<=15&&frame%30<20){
+      ctx.fillStyle='#ff5f6d';const s=left+'s';ctx.fillText(s,W/2-s.length*2.5,24);
+    }
+  }
+  if(phase==='play'&&!beans.some(b=>b.i===0&&b.st!=='out')&&frame%60<40){
+    ctx.fillStyle='#c8d2e0';ctx.font='bold 7px monospace';ctx.fillText('SPECTATING',4,22);
+  }
+  if(phase==='intro'){
+    const a=Math.min(1,phT/20);
+    ctx.globalAlpha=0.85*a;rect(10,140,W-20,58,'#3a2a4d');ctx.globalAlpha=a;
+    ctx.strokeStyle='#ffd166';ctx.strokeRect(10.5,140.5,W-21,57);
+    ctx.fillStyle='#ffd166';ctx.font='bold 9px monospace';
+    const n=RNAMES[type];ctx.fillText(n,W/2-n.length*2.7,160);
+    ctx.fillStyle='#fff';ctx.font='bold 7px monospace';
+    const sub=crown?'GRAB THE CROWN':type==='slime'?'SURVIVE · '+Q+' QUALIFY':'FIRST '+Q+' QUALIFY';
+    ctx.fillText(sub,W/2-sub.length*2.1,175);
+    ctx.fillStyle='#c8d2e0';
+    const s2='EP '+episode+' · '+beans.length+' BEANS';
+    ctx.fillText(s2,W/2-s2.length*2.1,189);
+    ctx.globalAlpha=1;
+  }else if(phase==='result'){
+    ctx.globalAlpha=0.85;rect(10,146,W-20,46,'#3a2a4d');ctx.globalAlpha=1;
+    ctx.strokeStyle='#ffd166';ctx.strokeRect(10.5,146.5,W-21,45);
+    ctx.fillStyle='#fff';ctx.font='bold 9px monospace';
+    let s='ROUND OVER';ctx.fillText(s,W/2-s.length*2.7,163);
+    ctx.font='bold 7px monospace';
+    const u=beans.find(b=>b.i===0);
+    if(u){ctx.fillStyle=u.st==='done'?'#57e389':'#ff5f6d';
+      s=u.st==='done'?'YOU ADVANCE':'ELIMINATED';}
+    else{ctx.fillStyle='#c8d2e0';s=qCount+' QUALIFIED';}
+    ctx.fillText(s,W/2-s.length*2.1,180);
+  }else if(phase==='win'&&winner){
+    if(frame%50<35){
+      ctx.fillStyle='#ffd166';ctx.font='bold 11px monospace';
+      const s='WINNER!';ctx.fillText(s,W/2-s.length*3.3,130);
+    }
+    ctx.font='bold 7px monospace';ctx.fillStyle='#fff';
+    const s2=winner.i===0?'YOU TAKE THE CROWN':'GG · NEXT SHOW SOON';
+    ctx.fillText(s2,W/2-s2.length*2.1,144);
+  }
+  drawSession();
+}
+
+// ---------- main ----------
+initSession('smallguys',[['ARROWS','MOVE'],['SPACE','JUMP'],['X','DIVE']]);
+newEpisode();
+start(()=>{step();},()=>{draw();});
+</script>
+</html>

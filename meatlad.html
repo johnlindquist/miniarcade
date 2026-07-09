@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MEAT LAD</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080c}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#000}
+</style>
+<canvas id="cv" width="320" height="720"></canvas>
+<script src="engine.js?v=435b484c"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,hash,rect,spawn,burst,stepParts,drawParts,start,keys,tap,manual,
+  initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+const T=8,COLS=20,TILE_STRIDE=32;
+
+// ---------- world ----------
+const solids=new Set(),bouncy=new Set(),icy=new Set(),spiky=new Set();
+// Numeric row-major keys avoid allocating "x,y" strings in collision probes.
+// TILE_STRIDE is wider than the 20-column world, so Math.floor also decodes
+// negative rows correctly: key(7,-1) === -25 -> row -1, column 7.
+const solidRows=new Map();
+const key=(tx,ty)=>ty*TILE_STRIDE+tx;
+const keyY=k=>Math.floor(k/TILE_STRIDE);
+const keyX=k=>k-keyY(k)*TILE_STRIDE;
+function addSolid(tx,ty){
+  const k=key(tx,ty);
+  if(solids.has(k))return false;
+  solids.add(k);
+  solidRows.set(ty,(solidRows.get(ty)||0)|(1<<tx));
+  return true;
+}
+function deleteSolidKey(k){
+  if(!solids.delete(k))return false;
+  const ty=keyY(k),tx=keyX(k),bits=(solidRows.get(ty)||0)&~(1<<tx);
+  if(bits)solidRows.set(ty,bits);else solidRows.delete(ty);
+  return true;
+}
+function clearSolids(){solids.clear();solidRows.clear();}
+const solid=(tx,ty)=>tx>=0&&tx<COLS&&!!((solidRows.get(ty)||0)&(1<<tx));
+const solidPx=(px,py)=>solid(Math.floor(px/T),Math.floor(py/T));
+let saws=[],stains=[],nodes=[],items=[],bandages=[],level=1,deaths=0,frame=0,camY=-230;
+let girl=null,lives=5,bandCt=0;
+
+// ---------- level generation ----------
+function plat(tx,ty,w){for(let i=0;i<w;i++)addSolid(tx+i,ty);}
+function rectClear(x0,y0,w,h){ // rows y0..y0+h-1 all empty
+  for(let i=0;i<w;i++)for(let j=0;j<h;j++)if(solid(x0+i,y0+j))return false;
+  // never build over an uncollected bandage (next levels grow into old airspace)
+  for(const b of bandages)if(!b.got&&
+    b.x>x0*T-5&&b.x<(x0+w)*T+5&&b.y>y0*T-5&&b.y<(y0+h)*T+5)return false;
+  return true;
+}
+function freeAround(px,py,r){ // no solid tiles within r of a point
+  for(let tx2=Math.floor((px-r)/T);tx2<=Math.floor((px+r)/T);tx2++)
+    for(let ty2=Math.floor((py-r)/T);ty2<=Math.floor((py+r)/T);ty2++)
+      if(solid(tx2,ty2))return false;
+  return true;
+}
+function genLevel(start){
+  // generate -> verify EVERY hop with the runtime AI's own simulator ->
+  // if anything is blocked (later structures can invade earlier corridors),
+  // roll the whole level back and redraw the blueprint
+  for(let attempt=0;attempt<40;attempt++){
+    const sawsBak=saws.slice(),added=[];
+    const ns=genOnce(start,added);
+    let ok=true;
+    for(let i=0;i+1<ns.length;i++){
+      const a=ns[i],b=ns[i+1];
+      if(a.type==='ch'||b.via==='pad')continue; // scripted moves, structurally sound
+      if(!hopSolvable(a,b)){ok=false;break;}
+    }
+    if(ok){
+      for(const k3 of[...bouncy])if(!solids.has(k3))bouncy.delete(k3);
+      for(const k3 of[...icy])if(!solids.has(k3))icy.delete(k3);
+      for(const k3 of[...spiky])if(!solids.has(k3))spiky.delete(k3);
+      // hazard top-up: filtering and retry-selection starve saws in dense
+      // levels, so deliberately add saws near hop apexes to a quota — each
+      // one individually proven not to block its neighboring hops
+      const D2=Math.min(60,level-1);
+      const want=Math.min(10,2+(D2/5|0)); // saw quota climbs toward absurd
+      let newSaws=saws.length-sawsBak.length;
+      for(let i2=1;i2<ns.length&&newSaws<want;i2++){
+        const a2=ns[i2-1],b2=ns[i2];
+        if(a2.type==='ch'||b2.via==='pad')continue;
+        const rec2=[];
+        if(!hopSolvable(a2,b2,rec2)||rec2.length<8)continue;
+        let ai2=0;
+        for(let q=1;q<rec2.length;q++)if(rec2[q][1]<rec2[ai2][1])ai2=q;
+        // dense late levels reject big saws everywhere — retry the hop with
+        // progressively smaller blades (small + fast is just as lethal)
+        for(let att=0;att<4;att++){
+          const p2=rec2[Math.max(1,Math.min(rec2.length-1,ai2+RI(-2,2)))];
+          const cnd_r=Math.max(5,Math.min(10,6+D2*0.15)*(1-att*0.18));
+          const off=R(cnd_r+6,cnd_r+10),ang=random()<0.7?-Math.PI/2+R(-0.5,0.5):R(0,6.28);
+          const osc2=random()<0.5;
+          const cnd={baseX:p2[0]+Math.cos(ang)*off,x:0,y:p2[1]+Math.sin(ang)*off,
+            r:cnd_r,range:osc2?5:0,spd:R(0.028+D2*0.0015,Math.min(0.13,0.05+D2*0.002)),ph:R(0,6)};
+          cnd.x=cnd.baseX;
+          const sw2=osc2?7.5:0;
+          if(!sawClear(cnd.baseX,cnd.y,cnd.r,sw2))continue;
+          let okS=true; // keep the kill zone off walking surfaces
+          for(const k4 of solids){
+            const tx4=keyX(k4),ty4=keyY(k4);
+            const cx4=tx4*T+4,cy4=ty4*T+4;
+            if(!solid(tx4,ty4-1)&&Math.hypot(cnd.baseX-cx4,cnd.y-(cy4-7))<cnd.r+5+sw2){okS=false;break;}
+            if(Math.hypot(cnd.baseX-cx4,cnd.y-cy4)<cnd.r+2){okS=false;break;}
+          }
+          if(!okS)continue;
+          saws.push(cnd);
+          const prevOk=hopSolvable(a2,b2);
+          const nextOk=i2+1>=ns.length||b2.type==='ch'||(ns[i2+1]&&ns[i2+1].via==='pad')||hopSolvable(b2,ns[i2+1]);
+          if(prevOk&&nextOk){newSaws++;break;}
+          else saws.pop();
+        }
+      }
+      // final safety sweep: corridors overlap, so a top-up saw can clip a
+      // NON-adjacent hop — re-verify everything and strip offenders
+      for(let i3=0;i3+1<ns.length;i3++){
+        const a3=ns[i3],b3=ns[i3+1];
+        if(a3.type==='ch'||b3.via==='pad')continue;
+        while(saws.length>sawsBak.length&&!hopSolvable(a3,b3)){
+          const midX=((a3.tx+a3.w/2)+(b3.tx+b3.w/2))/2*T,midY=(a3.ty+b3.ty)/2*T;
+          let bi=-1,bd=1e9;
+          for(let q=sawsBak.length;q<saws.length;q++){
+            const d3=Math.hypot(saws[q].baseX-midX,saws[q].y-midY);
+            if(d3<bd){bd=d3;bi=q;}
+          }
+          if(bi<0)break;
+          saws.splice(bi,1);
+        }
+      }
+      if(level>1&&random()<0.3){ // a spare rocket, in case of gravity
+        const n2=ns[1+RI(0,Math.max(0,ns.length-3))];
+        if(n2&&!n2.type)items.push({x:(n2.tx+n2.w/2)*T,y:n2.ty*T-7,taken:false});
+      }
+      // bandages on the full-send line: the apex of a max-power jump is only
+      // reachable when you take the hop with real momentum
+      let placedB=0;
+      for(let i=1;i<ns.length&&placedB<3;i++){
+        const a=ns[i-1],b=ns[i];
+        if(a.type==='ch'||b.via==='pad')continue;
+        if(Math.abs((b.tx+b.w/2)-(a.tx+a.w/2))<5||random()<0.5)continue;
+        const rec=[];
+        if(!hopSolvable(a,b,rec,[[-4.15,1]]))continue;
+        let apex=rec[0];
+        for(const p of rec)if(p[1]<apex[1])apex=p;
+        if(!freeAround(apex[0],apex[1]-4,7))continue; // keep it in open air
+        bandages.push({x:apex[0],y:apex[1]-4,got:false});
+        placedB++;
+      }
+      return ns;
+    }
+    for(const k3 of added)deleteSolidKey(k3);
+    for(const k3 of[...bouncy])if(!solids.has(k3))bouncy.delete(k3);
+    for(const k3 of[...icy])if(!solids.has(k3))icy.delete(k3);
+    for(const k3 of[...spiky])if(!solids.has(k3))spiky.delete(k3);
+    saws=sawsBak;
+  }
+  return genOnce(start,[]); // 25 misses in a row ~ never; ratchet copes
+}
+function genOnce(start,added){
+  const addT=(x2,y2)=>{const k3=key(x2,y2);if(addSolid(x2,y2))added.push(k3);};
+  let lastTraj=null; // the proven flight line of the last accepted placement
+  // a spot only counts if the tiles fit AND the hop onto it is provable
+  const tryPlace=(prev,x2,y2,w2)=>{
+    if(x2<1||x2+w2>19)return false;
+    if(!rectClear(x2-1,y2-3,w2+2,4))return false;
+    const n0=added.length;
+    const traj=[];
+    for(let q=0;q<w2;q++)addT(x2+q,y2);
+    if(hopSolvable(prev,{tx:x2,ty:y2,w:w2},traj)){lastTraj=traj;return true;}
+    while(added.length>n0)deleteSolidKey(added.pop());
+    return false;
+  };
+  const ns=[{...start,err:0}];
+  const sawCands=[];
+  let {tx,ty,w}=start;
+  // difficulty ramps with level: more/faster/bigger saws, narrower ledges,
+  // taller hops, more chimneys, longer levels — solvability is proven below
+  const D=Math.min(60,level-1); // uncapped ramp: ~5 min in should feel brutal,
+  const sawP=Math.min(1,0.55+D*0.05),oscP=Math.min(0.9,0.4+D*0.03); // ~10 absurd
+  const dy3P=Math.min(0.7,0.25+D*0.025),chimP=Math.min(0.35,0.12+D*0.012);
+  const sawR=Math.min(10,6+D*0.15);
+  const errF=Math.max(0,Math.min(0.3,(D-8)*0.018)); // nerves fray at depth
+  const steps=RI(7+Math.min(6,D>>1),9+Math.min(8,D>>1));
+  for(let s=0;s<steps;s++){
+    const last=(s===steps-1);
+    const canR=tx+w<=9,canL=tx>=10;
+    let built=false;
+    if(!last&&s>0&&random()<chimP&&(canR||canL)){
+      // chimney: cling to the tall wall, wall-jump over the short one
+      const goRight=canR&&canL?random()<0.5:canR;
+      const gapL=goRight?tx+w+3:tx-6; // keeps a real 1-tile gap to the wide floor
+      const wx1=gapL-1,wx2=gapL+3;
+      const fy=ty-RI(2,3);
+      const exitRight=gapL<8?true:random()<0.5;
+      const topRow=fy-6;
+      const ex=exitRight?wx2+1:wx1-3;
+      // only build when the whole structure and exit have empty space
+      if(rectClear(wx1-2,fy-9,9,10)&&rectClear(ex-1,topRow-3,5,4)){
+        for(let q=0;q<7;q++)addT(wx1-1+q,fy); // wide floor catches missed entries
+        const tallW=exitRight?wx1:wx2,shortW=exitRight?wx2:wx1;
+        for(let k=3;k<=9;k++)addT(tallW,fy-k);
+        for(let k=3;k<=6;k++)addT(shortW,fy-k);
+        for(let q=0;q<3;q++)addT(ex+q,topRow);
+        ns.push({tx:wx1-1,ty:fy,w:7,type:'ch',topY:topRow*T,cx:(gapL+1.5)*T,exDir:exitRight?1:-1,err:0.02});
+        ns.push({tx:ex,ty:topRow,w:3,err:Math.max(R(0.015,0.04),errF*R(0.7,1.3))});
+        tx=ex;ty=topRow;w=3;built=true;
+      }
+    }
+    if(!built&&!last&&s>1&&D>=1&&random()<0.14
+      // never put a pad where a SCRIPTED move lands (chimney dismounts and
+      // pad legs both land dead-center — a pad there bounce-loops forever)
+      &&ns[ns.length-1].via!=='pad'
+      &&!(ns.length>1&&ns[ns.length-2].type==='ch')){
+      // spring pad: the launch itself is scripted, so geometric checks
+      // suffice — a clear shaft above the pad plus a clear target ledge
+      const padTx=Math.floor(tx+w/2),padK=key(padTx,ty);
+      const bw=3,bty=ty-RI(4,5);
+      let bx=-1;
+      bouncy.add(padK); // present during the proof, removed if nothing works
+      for(const dx2 of[3,-3,2,-2,4,-4]){
+        const cx3=padTx-1+dx2;
+        if(cx3<1||cx3+bw>19)continue;
+        if(!rectClear(cx3-1,bty-3,bw+2,4))continue;
+        const n0=added.length;
+        for(let q=0;q<bw;q++)addT(cx3+q,bty);
+        if(padSolvable((padTx+0.5)*T,ty,{tx:cx3,ty:bty,w:bw})){bx=cx3;break;}
+        while(added.length>n0)deleteSolidKey(added.pop());
+      }
+      if(bx<0)bouncy.delete(padK);
+      if(bx>=0){
+        bouncy.add(padK);
+        ns.push({tx:bx,ty:bty,w:bw,via:'pad',padX:(padTx+0.5)*T,err:0});
+        tx=bx;ty=bty;w=bw;built=true;
+      }
+    }
+    if(!built){
+      const prev=ns[ns.length-1];
+      let dyt=2,nw=last?6:(random()<Math.min(0.6,Math.max(0,(D-8)*0.04))?2:RI(3,4)),gap=1,dir=1,ntx=-1,nty=ty-2;
+      let placed=false;
+      for(let tries=0;tries<8&&!placed;tries++){
+        dyt=2+(random()<dy3P?1:0);
+        gap=dyt===3?1:RI(1,2);
+        dir=tx<3?1:(tx+w+gap+nw>18?-1:(random()<0.5?1:-1));
+        ntx=dir>0?tx+w+gap:tx-gap-nw;
+        if(ntx<1||ntx+nw>19){dir=-dir;ntx=dir>0?tx+w+gap:tx-gap-nw;}
+        nty=ty-dyt;
+        placed=tryPlace(prev,ntx,nty,nw);
+      }
+      if(!placed){ // cramped: sweep every legal spot, nearest first (gap 0 = stair step)
+        sweep:
+        for(const dy2 of[2,3]){
+          const cand=[];
+          for(let x2=1;x2<=COLS-1-nw;x2++)cand.push(x2);
+          cand.sort((p2,q2)=>Math.abs(p2-tx)-Math.abs(q2-tx));
+          for(const x2 of cand){
+            const g=x2>=tx+w?x2-(tx+w):(x2+nw<=tx?tx-(x2+nw):-1);
+            if(g<0||g>2)continue;
+            if(tryPlace(prev,x2,ty-dy2,nw)){ntx=x2;nty=ty-dy2;dyt=dy2;gap=g;dir=x2>tx?1:-1;placed=true;break sweep;}
+          }
+        }
+      }
+      if(!placed){ // should never happen; take any clear spot and let the ratchet cope
+        nw=3;
+        for(let x2=1;x2<=COLS-1-nw&&!placed;x2++)
+          if(rectClear(x2-1,ty-5,nw+2,4)){
+            ntx=x2;nty=ty-2;dyt=2;gap=Math.abs(x2-tx);dir=x2>tx?1:-1;placed=true;
+            for(let q=0;q<nw;q++)addT(x2+q,ty-2);
+          }
+      }
+      if(!last&&placed&&lastTraj&&lastTraj.length>7&&random()<sawP){
+        // hang the saw around the apex of his proven flight line — high above
+        // any walking surface, squeezing the route without camping a platform
+        let ai=0;
+        for(let q=1;q<lastTraj.length;q++)if(lastTraj[q][1]<lastTraj[ai][1])ai=q;
+        const i5=Math.max(1,Math.min(lastTraj.length-1,ai+RI(-2,2)));
+        const p1=lastTraj[i5];
+        const up=random()<0.7; // mostly above the arc, sometimes beside it
+        const off=R(12,16),ang=up?-Math.PI/2+R(-0.5,0.5):R(0,6.28);
+        sawCands.push({gm:p1[0]+Math.cos(ang)*off,y:p1[1]+Math.sin(ang)*off,
+          osc:random()<oscP,r:sawR,spd:R(0.028+D*0.0015,Math.min(0.13,0.05+D*0.002))});
+      }
+      if(!last&&gap>=1&&D>=3&&random()<Math.min(0.5,0.08+D*0.02)){
+        // spiked ledge lurking under the gap: scan down for the first free spot
+        const gmT=Math.round((dir>0?(tx+w+ntx):(ntx+nw+tx))/2);
+        const sx0=Math.max(1,Math.min(COLS-4,gmT-1));
+        for(let sy0=ty+4;sy0<=ty+6;sy0++){
+          if(!rectClear(sx0-1,sy0-3,5,4))continue;
+          for(let q=0;q<3;q++){addT(sx0+q,sy0);spiky.add(key(sx0+q,sy0));}
+          break;
+        }
+      }
+      if(!last&&D>=3&&random()<0.15)for(let q=0;q<nw;q++)icy.add(key(ntx+q,nty)); // black ice
+      ns.push({tx:ntx,ty:nty,w:nw,err:Math.max(R(0.015,0.04),errF*R(0.7,1.3))});
+      tx=ntx;ty=nty;w=nw;
+    }
+  }
+  // second pass: keep saw kill zones off exposed walking surfaces
+  for(const c of sawCands){
+    const sweep=c.osc?7.5:0;
+    let ok=true;
+    for(const k2 of solids){
+      const tx2=keyX(k2),ty2=keyY(k2);
+      const cx2=tx2*T+4,cy2=ty2*T+4;
+      if(!solid(tx2,ty2-1)&&Math.hypot(c.gm-cx2,c.y-(cy2-7))<c.r+5+sweep){ok=false;break;}
+      if(Math.hypot(c.gm-cx2,c.y-cy2)<c.r+2){ok=false;break;} // don't embed in tiles
+    }
+    if(ok&&sawClear(c.gm,c.y,c.r,c.osc?7.5:0))
+      saws.push({baseX:c.gm,x:c.gm,y:c.y,r:c.r,range:c.osc?5:0,spd:c.spd,ph:R(0,6)});
+  }
+  // third pass: PROVE every hop with the same simulator the runtime AI uses;
+  // if a saw walls off the only route, strip saws around that gap until it opens
+  for(let i2=0;i2+1<ns.length;i2++){
+    const a2=ns[i2],b2=ns[i2+1];
+    if(a2.type==='ch'||b2.via==='pad')continue; // scripted moves, structurally validated
+    if(!hopSolvable(a2,b2)){
+      const midX=((a2.tx+a2.w/2)+(b2.tx+b2.w/2))/2*T,midY=(a2.ty+b2.ty)/2*T;
+      for(let t2=0;t2<6&&!hopSolvable(a2,b2);t2++){ // pull nearest saws one at a time
+        let bi=-1,bd2=120;
+        for(let q2=0;q2<saws.length;q2++){
+          const d2=Math.hypot(saws[q2].baseX-midX,saws[q2].y-midY);
+          if(d2<bd2){bd2=d2;bi=q2;}
+        }
+        if(bi<0)break;
+        saws.splice(bi,1);
+      }
+    }
+  }
+  return ns;
+}
+// generation-time proof that a hop is completable. Saws MOVE during the
+// simulated flight (frozen-phase checks approve hops with no real window),
+// so try six launch times across the slowest saw's full cycle.
+const HOP_CANDS=[[-3.45,1],[-3.45,0.55],[-3.45,0.25],[-3.7,1],[-3.7,0.55],[-3.7,0.25],
+  [-3.95,1],[-3.95,0.55],[-3.95,0.25],[-4.15,1],[-4.15,0.55],[-4.15,0.25]];
+// Candidate proofs are strictly sequential. Reusing one state object and a
+// fixed trajectory buffer removes thousands of short-lived allocations while
+// keeping physStep as the single source of truth for movement.
+const simState={x:0,y:0,vx:0,vy:0,onGround:false,wall:0,face:1};
+const traceX=new Float64Array(44),traceY=new Float64Array(44);
+function resetSim(x,y,vx,vy,onGround,wall,face){
+  const S=simState;
+  S.x=x;S.y=y;S.vx=vx;S.vy=vy;S.onGround=onGround;S.wall=wall;S.face=face;
+  return S;
+}
+// blades never stack: candidate must clear every existing saw even at the
+// closest approach of both oscillation sweeps
+function sawClear(bx,y,r,sw){
+  for(const s of saws)
+    if(Math.hypot(bx-s.baseX,y-s.y)<r+s.r+sw+(s.range>0?s.range*1.5:0)+4)return false;
+  return true;
+}
+function hopSolvable(a,b,rec,cands){
+  const dir=Math.sign((b.tx+b.w/2)-(a.tx+a.w/2))||1;
+  const take=dir>0?(a.tx+a.w)*T-3:a.tx*T+3;
+  for(const f0 of[0,40,80,120,160,200]){
+    for(const[jv,k2]of(cands||HOP_CANDS)){
+      const S=resetSim(take,a.ty*T-3.01,1.3*dir*k2,0,true,0,dir);
+      let jumped=false,ok=false,dead=false,traceLen=0;
+      for(let s3=0;s3<130&&!dead;s3++){
+        physStep(S,jumped?airSteer(S,b):0,jumped?0:jv);jumped=true;
+        if(rec&&s3%3===0){traceX[traceLen]=S.x;traceY[traceLen]=S.y;traceLen++;}
+        for(let q=0;q<saws.length;q++)
+          if(Math.hypot(S.x-sawAt(saws[q],f0+s3),S.y-saws[q].y)<saws[q].r+4){dead=true;break;}
+        if(dead)break;
+        if(S.y>a.ty*T+40)break;
+        if(S.onGround){
+          ok=Math.floor((S.y+3.5)/T)===b.ty&&S.x>=b.tx*T-3&&S.x<=(b.tx+b.w)*T+3;
+          break;
+        }
+      }
+      if(ok){
+        if(rec){
+          rec.length=traceLen;
+          for(let i=0;i<traceLen;i++){
+            const p=rec[i]||(rec[i]=[0,0]);p[0]=traceX[i];p[1]=traceY[i];
+          }
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ---------- player ----------
+const P={x:0,y:0,vx:0,vy:0,onGround:false,wall:0,face:1,idx:0,wjCd:0,airLock:0,squash:0,trail:[],stall:0,stuck:0};
+function placeAt(n){P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;P.vx=0;P.vy=0;P.idx=0;P.best=0;P.stall=0;P.airLock=0;P.eFlip=false;P.waitT=0;P.rocketT=0;P.lostG=false;P.lostT=0;P.bounceCt=0;}
+function startRun(){
+  const base={tx:7,ty:0,w:6};
+  plat(base.tx,base.ty,base.w);
+  plat(5,1,10);plat(3,2,14);
+  nodes=genLevel(base);
+  girl={n:nodes[nodes.length-1],t:0,gone:false};
+  placeAt(nodes[0]);
+}
+function resetGame(){ // fresh tower for a new run (player or attract)
+  clearSolids();bouncy.clear();icy.clear();spiky.clear();
+  saws=[];stains=[];items=[];bandages=[];
+  level=1;deaths=0;lives=5;bandCt=0;camY=-230;
+  P.rocket=false;P.rocketT=0;
+  startRun();
+}
+function blood(x,y,n){
+  for(let i=0;i<n;i++){const a=R(0,6.28);
+    spawn({x,y,vx:Math.cos(a)*R(0.4,2.2),vy:Math.sin(a)*R(0.4,2.2)-1,t:RI(30,70),c:'#c11c2a',drag:1,grav:0.14});}
+}
+function die(){
+  if(playing()){ // player run: lives instead of AI bookkeeping
+    deaths++;lives--;blood(P.x,P.y,26);
+    placeAt(nodes[0]);
+    if(lives<=0)gameOver('LVL '+level);
+    return;
+  }
+  deaths++;blood(P.x,P.y,26);
+  const k=Math.min(P.idx+1,nodes.length-1);
+  nodes[k].err*=0.4;
+  for(let m=0;m<=Math.min(P.best||0,nodes.length-1);m++)nodes[m].err=0; // mastered ground stays mastered
+  nodes[k].fails=(nodes[k].fails||0)+1;
+  if(nodes[k].fails>=2){ // this jump keeps eating him — hop him past it
+    placeAt(nodes[0]);P.idx=k;P.best=k;
+    const n=nodes[k];P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;
+    checkClear();}
+  else placeAt(nodes[0]);
+}
+
+function physStep(S,input,jump){
+  // ice underfoot: barely any grip; airborne: momentum carries (Mario rules)
+  const supK=S.onGround?key(Math.floor(S.x/T),Math.floor((S.y+4)/T)):null;
+  const ice=supK!==null&&icy.has(supK);
+  const acc=S.onGround?(ice?0.09:0.22):0.16;
+  if(input!==0){S.vx+=acc*input;S.face=input;}
+  else S.vx*=S.onGround?(ice?0.985:0.7):0.99;
+  const cap=S.onGround?1.3:2.2;
+  S.vx=Math.max(-cap,Math.min(cap,S.vx));
+  if(jump&&S.onGround){S.vy=jump;if(S===P)P.squash=-5;}
+  S.vy+=0.22;
+  S.wall=0;
+  // probe walls
+  if(solidPx(S.x+3.6,S.y-2)||solidPx(S.x+3.6,S.y+2))S.wall=1;
+  else if(solidPx(S.x-3.6,S.y-2)||solidPx(S.x-3.6,S.y+2))S.wall=-1;
+  if(!S.onGround&&S.wall!==0&&S.vy>0)S.vy=Math.min(S.vy,0.85);
+  S.vy=Math.min(S.vy,3.6);
+  // move X
+  S.x+=S.vx;
+  for(const sy of[-2.9,0,2.9]){
+    if(S.vx>0&&solidPx(S.x+3,S.y+sy)){S.x=Math.floor((S.x+3)/T)*T-3.01;S.vx=0;}
+    if(S.vx<0&&solidPx(S.x-3,S.y+sy)){S.x=(Math.floor((S.x-3)/T)+1)*T+3.01;S.vx=0;}
+  }
+  // move Y
+  S.y+=S.vy;S.onGround=false;
+  for(const sx of[-2.9,2.9]){
+    if(S.vy>0&&solidPx(S.x+sx,S.y+3)){S.y=Math.floor((S.y+3)/T)*T-3.01;
+      const rw=Math.floor((S.y+4)/T);
+      if(bouncy.has(key(Math.floor((S.x-2.9)/T),rw))||bouncy.has(key(Math.floor((S.x+2.9)/T),rw))){
+        S.vy=-5.2; // spring pad
+        if(S===P){P.squash=6;P.bounceCt=(P.bounceCt||0)+1;
+          for(let q=0;q<6;q++)spawn({x:P.x+R(-4,4),y:P.y+3,vx:R(-0.5,0.5),vy:R(-1.2,-0.4),t:14,c:'#57e389'});}
+      }else{
+        if(S===P&&S.vy>2.2)P.squash=6;
+        S.vy=0;S.onGround=true;
+      }
+    }
+    if(S.vy<0&&solidPx(S.x+sx,S.y-3)){S.y=(Math.floor((S.y-3)/T)+1)*T+3.01;S.vy=0;}
+  }
+  S.x=Math.max(4,Math.min(W-4,S.x));
+}
+function physics(input,jump){physStep(P,input,jump);}
+// shared air-steering policy: commit below the lip, brake to center above it
+function airSteer(S,nxt){
+  const tcx=(nxt.tx+nxt.w/2)*T,dx=tcx-S.x;
+  if(S.y>nxt.ty*T-3)return Math.sign(dx)||1;
+  const stop=S.vx*Math.abs(S.vx)/(2*0.16);
+  return Math.abs(dx)<2&&Math.abs(S.vx)<0.4?0:(stop>dx+1?-1:stop<dx-1?1:0);
+}
+function sawAt(sw,fr){return sw.range>0?sw.baseX+Math.sin(fr*sw.spd+sw.ph)*sw.range*1.5:sw.baseX;}
+// the pad move is scripted and deterministic, so ONE simulation of the exact
+// controller is ground truth: hop in place, ride the bounce, steer to target
+function padSolvable(padX,padTy,b){
+  const S=resetSim(padX,padTy*T-3.01,0,0,true,0,1);
+  let hops=0;
+  for(let s=0;s<240;s++){
+    let inp=0,jmp=0;
+    if(S.onGround){
+      const fr2=Math.floor((S.y+3.5)/T);
+      if(fr2===b.ty&&S.x>=b.tx*T-3&&S.x<=(b.tx+b.w)*T+3)return true;
+      if(fr2!==padTy)return false; // strayed off the launch platform
+      if(++hops>3)return false;
+      jmp=-3.45;
+    }else inp=airSteer(S,b);
+    physStep(S,inp,jmp);
+  }
+  return false;
+}
+// try candidate jumps in simulation; return one that verifiably lands clean
+const BOLD_CANDS=[[-4.15,1],[-3.95,1],[-3.7,1],[-3.45,1],[-4.15,0.55],[-3.95,0.55],
+  [-3.7,0.55],[-3.45,0.55],[-4.15,0.25],[-3.95,0.25],[-3.7,0.25],[-3.45,0.25]];
+function planJump(cur,nxt){
+  const tcx0=(nxt.tx+nxt.w/2)*T;
+  const dir2=Math.sign(tcx0-P.x)||1;
+  // a bandage on this hop? go for the full-send line that reaches it
+  const lure=bandages.some(b=>!b.got&&
+    b.x>Math.min(P.x,tcx0)-14&&b.x<Math.max(P.x,tcx0)+14&&
+    b.y>cur.ty*T-48&&b.y<cur.ty*T+4);
+  for(const[jv,k]of(lure?BOLD_CANDS:HOP_CANDS)){
+    const vx0=1.3*dir2*k; // absolute launch speeds, same candidates the proof used
+    const S=resetSim(P.x,P.y,vx0,0,true,0,P.face);
+    let jumped=false,ok=false,done=false;
+    for(let s=0;s<130&&!done;s++){
+      physStep(S,jumped?airSteer(S,nxt):0,jumped?0:jv);jumped=true;
+      for(const sw of saws)
+        if(Math.hypot(S.x-sawAt(sw,frame+s),S.y-sw.y)<sw.r+4){done=true;break;}
+      if(done)break;
+      if(S.y>cur.ty*T+40)break; // fell
+      if(S.onGround){ // success = landed on any node past the current one
+        const fr2=Math.floor((S.y+3.5)/T);
+        for(let j=P.idx+1;j<nodes.length;j++){const n=nodes[j];
+          if(n.ty===fr2&&S.x>=n.tx*T-3&&S.x<=(n.tx+n.w)*T+3){ok=true;break;}}
+        break;
+      }
+    }
+    if(ok)return{jv,vx0};
+  }
+  return null;
+}
+
+// ---------- ai ----------
+function think(){
+  P.wjCd--;if(P.airLock>0)P.airLock--;
+  const cur=nodes[P.idx],nxt=nodes[P.idx+1];
+  if(!nxt){checkClear();return;}
+  // relocalize: figure out which node platform he's actually standing on
+  const scripted=cur.type==='ch'||nxt.via==='pad';
+  if(P.onGround){
+    const footRow=Math.floor((P.y+3.5)/T);
+    let onNode=false;
+    for(let j=nodes.length-1;j>=0;j--){const n=nodes[j];
+      if(n.ty===footRow&&P.x>=n.tx*T-4&&P.x<=(n.tx+n.w)*T+4){
+        onNode=true;
+        P.bounceCt=0;P.lostG=false;P.lostT=0; // on real course ground
+        if(j!==P.idx){
+          if(j>P.idx)for(let m=P.idx+1;m<=j;m++){nodes[m].err*=0.5;nodes[m].stuckT=0;}
+          else{ // fell back below a hop that keeps rejecting him: it owes us
+            const t2=nodes[Math.min(P.idx+1,nodes.length-1)];
+            t2.err*=0.65;t2.fails=(t2.fails||0)+0.5;
+          }
+          P.idx=j;
+          if(j>(P.best||0)){
+            if(playing())addScore((j-(P.best||0))*10);
+            P.best=j;P.stall=0; // only real progress calms the watchdog
+          }
+          checkClear();return;
+        }
+        break;
+      }}
+    if(!onNode&&!scripted)P.lostG=true; // parked on scenery, not the course
+  }
+  if(P.lostG&&!scripted&&!playing()&&!manual()){
+    // stranded off-course (leftover platform, stray shelf): the planner's
+    // geometry is meaningless from here, so jumps loop forever — bail out
+    P.lostT=(P.lostT||0)+1;
+    if(P.lostT>180){P.lostT=0;P.lostG=false;die();return;}
+  }
+  if(playing()||manual()){ // player at the controls, Mario rules
+    P.stall=0;P.waitT=0;
+    P.coyote=P.onGround?7:Math.max(0,(P.coyote|0)-1);   // grace after leaving a ledge
+    P.jbuf=Math.max(0,(P.jbuf|0)-1);                    // jump pressed just before landing
+    if(tap('up')||tap('a'))P.jbuf=7;
+    let mi=(keys.left?-1:0)+(keys.right?1:0),mj=0;
+    if(P.jbuf>0){
+      if(P.onGround||P.coyote>0){mj=-3.7;P.jbuf=0;P.coyote=0;}
+      else if(P.wall!==0&&P.wjCd<=0){P.vy=-3.35;P.vx=-P.wall*2.2;P.wjCd=10;P.face=-P.wall;
+        blood(P.x+P.wall*3,P.y,2);P.jbuf=0;}
+    }
+    // release jump early to cut it short (pad launches are uncuttable)
+    if(!keys.up&&!keys.a&&P.vy<-1.6&&P.vy>-4.2)P.vy=-1.6;
+    physics(mi,mj);
+    return;
+  }
+  P.stall++;
+  if(P.stall>200){P.stall=0;die();return;}
+  // reset-proof per-hop escalation: no matter which sub-loop he's wedged in
+  // (planless waits, fumble cycles, head-bump geometry), time pinned at one
+  // hop keeps counting — rocket help twice, then a warp as last resort
+  nxt.stuckT=(nxt.stuckT||0)+1;
+  if(nxt.stuckT>420&&(P.onGround||(nxt.rescues||0)>=2)){
+    nxt.stuckT=60;
+    nxt.rescues=(nxt.rescues||0)+1;
+    if(nxt.rescues<=2){ // emergency booster carries him over the blockage
+      P.rocketT=55;
+      burst(P.x,P.y-2,12,'#ffd166',1.8);
+      for(let q=0;q<6;q++)spawn({x:P.x+R(-3,3),y:P.y+4,vx:R(-0.4,0.4),vy:R(0.6,1.6),t:16,c:'#ff8a2a'});
+      P.vy=-2;
+    }else{ // help twice ignored: last-resort warp
+      const k=Math.min(P.idx+1,nodes.length-1);
+      const n=nodes[k];
+      for(let q=0;q<10;q++)spawn({x:P.x+R(-3,3),y:P.y+R(-3,3),vx:R(-0.5,0.5),vy:R(-0.5,0.2),t:14,c:'#6e6878'});
+      P.idx=k;P.best=Math.max(P.best||0,k);
+      P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;P.vx=0;P.vy=0;
+      checkClear();return;
+    }
+  }
+  let input=0,jump=0;
+  if(nxt.via==='pad'&&cur.type!=='ch'){
+    // scripted spring route: stand on the pad, let it launch, steer to the target
+    if(P.onGround){
+      if(Math.abs(P.x-nxt.padX)>1.5)input=Math.sign(nxt.padX-P.x);
+      else{jump=-3.45;input=0;}
+    }else input=airSteer(P,nxt);
+  }else if(cur.type==='ch'){
+    // scripted climb: hop up hugging the tall wall, one wall-jump over the short one
+    const spot=cur.cx-cur.exDir*8; // resting spot at the tall wall's foot
+    if(P.y<cur.topY-2){input=airSteer(P,nxt);} // above the short wall: land on the exit
+    else if(P.onGround){
+      if(Math.abs(P.x-spot)>1.5)input=Math.sign(spot-P.x);
+      else if(Math.abs(P.vx)>0.3)input=0; // kill momentum so the hop is dead vertical
+      else{jump=-3.7*R(0.98,1.05);input=0;}
+    }else if(P.wall===-cur.exDir&&P.vy>-0.5&&P.wjCd<=0){ // clung to the tall wall near apex
+      P.vy=-3.6;P.vx=cur.exDir*2.2;P.wjCd=14;P.face=cur.exDir;
+      blood(P.x-cur.exDir*3,P.y,2);input=cur.exDir;
+    }else{
+      // rise clear of the door before pressing into the tall wall; ride the bounce out
+      input=(P.vx*cur.exDir>0.3)?cur.exDir:(P.y<cur.ty*T-18?-cur.exDir:0);
+    }
+  }else{
+    const tcx=(nxt.tx+nxt.w/2)*T;
+    if(P.onGround){
+      const dir=Math.sign(tcx-(cur.tx+cur.w/2)*T)||1;
+      const edgeRight=P.eFlip?dir<0:dir>0; // flip to the far edge if the near one is a dead end
+      const takeoff=edgeRight?(cur.tx+cur.w)*T-3:cur.tx*T+3;
+      const tdir=edgeRight?1:-1;
+      input=Math.sign(takeoff-P.x)||tdir;
+      if(!(tdir*(P.x-takeoff)>=-1)){ // walking to the edge: bail out if a wall pins him
+        if(Math.abs(P.x-(P.lx===undefined?P.x:P.lx))<0.05){
+          P.wstall=(P.wstall|0)+1;
+          if(P.wstall>40){P.wstall=0;P.eFlip=!P.eFlip;}
+        }else P.wstall=0;
+      }
+      P.lx=P.x;
+      if(tdir*(P.x-takeoff)>=-1){
+        if(random()<nxt.err){ // deliberate fumble, for the fans
+          jump=-3.6*R(0.75,0.9);P.airLock=22;input=tdir;P.waitT=0;
+        }else{
+          P.waitT=P.waitT|0;
+          const plan=(P.waitT%6===0)?planJump(cur,nxt):null;
+          if(plan){P.vx=plan.vx0;jump=plan.jv;input=0;P.waitT=0;P.eFlip=false;}
+          else{input=0;P.waitT++;P.stall=0; // patience: saw windows take a while
+            if(P.waitT%100===50)P.eFlip=!P.eFlip;} // try the other edge periodically
+        }
+      }
+    }else if(P.airLock<=0){
+      input=airSteer(P,nxt);
+    }
+  }
+  physics(input,jump);
+}
+function checkClear(){
+  if(P.idx===nodes.length-1){
+    girl.gone=true;girl.t=0;
+    if(playing())addScore(100);
+    level++;
+    const start=nodes[nodes.length-1];
+    nodes=genLevel({tx:start.tx,ty:start.ty,w:start.w});
+    girl={n:nodes[nodes.length-1],t:0,gone:false};
+    P.idx=0;P.best=0;P.stall=0;
+  }
+}
+
+// ---------- hazards / cleanup ----------
+function hazards(){
+  if((P.bounceCt||0)>5){P.bounceCt=0;die();return;} // trampoline purgatory escape hatch
+  if(P.rocketT>0){ // booster burn: climb back to safety
+    P.rocketT--;
+    P.vy=Math.max(P.vy-0.5,-3.0);
+    spawn({x:P.x+R(-2,2),y:P.y+4,vx:R(-0.3,0.3),vy:R(0.5,1.4),t:12,c:random()<0.5?'#ffd166':'#ff8a2a'});
+  }else if(P.rocket&&P.vy>2.6&&P.y>nodes[P.idx].ty*T+22){ // falling to his death: fire it
+    P.rocket=false;P.rocketT=55;
+    burst(P.x,P.y+4,10,'#ffd166',1.6);
+  }
+  for(const s of saws){
+    if(s.range>0)s.x=s.baseX+Math.sin(frame*s.spd+s.ph)*s.range*1.5;
+    if(Math.hypot(P.x-s.x,P.y-s.y)<s.r+3){die();return;}
+  }
+  if(P.onGround){ // spiked ledges kill on contact
+    const rw=Math.floor((P.y+4)/T);
+    if(spiky.has(key(Math.floor((P.x-2.9)/T),rw))||spiky.has(key(Math.floor((P.x+2.9)/T),rw))){die();return;}
+  }
+  if(P.rocketT>0)return; // fall-immune while boosting
+  if(P.y>nodes[P.idx].ty*T+46)die();
+  else if(P.y-camY>H+16)die();
+}
+function prune(){
+  const cut=camY+H+240;
+  for(const k of solids)if(keyY(k)*T>cut)deleteSolidKey(k);
+  for(const k of bouncy)if(keyY(k)*T>cut)bouncy.delete(k);
+  for(const k of icy)if(keyY(k)*T>cut)icy.delete(k);
+  for(const k of spiky)if(keyY(k)*T>cut)spiky.delete(k);
+  saws=saws.filter(s=>s.y<cut);
+  stains=stains.filter(s=>s.y<cut);
+  items=items.filter(i=>i.y<cut&&!i.taken);
+  bandages=bandages.filter(b=>b.y<cut&&!b.got);
+}
+
+// ---------- drawing ----------
+function draw(){
+  rect(0,0,W,H,'#1a161d');
+  // background chains, parallax
+  for(let cx=10;cx<W;cx+=36){
+    const off=(camY*0.5)%16;
+    for(let y=-16;y<H+16;y+=16)rect(cx+((cx*7)%3),y-off,2,9,'#241f29');
+  }
+  // tiles
+  const ty0=Math.floor(camY/T)-1,ty1=Math.floor((camY+H)/T)+1;
+  for(let ty=ty0;ty<=ty1;ty++){
+    let bits=solidRows.get(ty)||0;
+    while(bits){
+      const bit=bits&-bits,tx=31-Math.clz32(bit),k=key(tx,ty);
+      bits&=bits-1;
+      const x=tx*T,y=ty*T-camY,v=hash(tx,ty);
+      rect(x,y,T,T,v>0.5?'#48434f':'#443f4b');
+      if(!solid(tx,ty-1))rect(x,y,T,2,'#6e6878');
+      if(!solid(tx,ty+1))rect(x,y+T-1,T,1,'#2c2833');
+      if(bouncy.has(k)){ // spring pad
+        rect(x,y-1,T,3,'#57e389');rect(x+1,y-2,T-2,1,'#9ff2bb');
+      }else if(icy.has(k)){ // black ice
+        rect(x,y,T,2,'#bfe8ff');
+        ctx.globalAlpha=0.22;rect(x,y+2,T,T-3,'#bfe8ff');ctx.globalAlpha=1;
+      }else if(spiky.has(k)){ // spiked ledge
+        ctx.fillStyle='#9aa2ad';
+        for(const ox of[2,6]){
+          ctx.beginPath();
+          ctx.moveTo(x+ox-2,y);ctx.lineTo(x+ox+2,y);ctx.lineTo(x+ox,y-4);
+          ctx.closePath();ctx.fill();
+        }
+      }
+    }
+  }
+  // stains
+  for(const s of stains)rect(s.x,s.y-camY,2,2,'#7a1119');
+  // saws
+  for(const s of saws){
+    const y=s.y-camY;if(y<-12||y>H+12)continue;
+    if(s.range>0)rect(s.baseX-s.range*1.5,y-1,s.range*3,2,'#141117');
+    ctx.fillStyle='#b9c1c9';ctx.beginPath();ctx.arc(s.x,y,s.r,0,7);ctx.fill();
+    ctx.fillStyle='#e6ecf1';
+    for(let i=0;i<8;i++){const a=frame*0.25+s.ph+i*Math.PI/4;
+      ctx.fillRect(s.x+Math.cos(a)*s.r-1,y+Math.sin(a)*s.r-1,2,2);}
+    rect(s.x-1,y-1,3,3,'#5a626b');
+  }
+  // bandages: skill-line collectibles
+  for(const b of bandages){
+    if(b.got)continue;
+    const y=b.y-camY+Math.sin(frame*0.1+b.x)*1.2;
+    if(y<-10||y>H+10)continue;
+    rect(b.x-2,y-1,5,2,'#ff9ecb');rect(b.x-1,y-2,3,4,'#ff9ecb');
+    rect(b.x,y-1,1,2,'#ffd9ea');
+  }
+  // rocket pickups
+  for(const it of items){
+    if(it.taken)continue;
+    const y=it.y-camY+Math.sin(frame*0.12+it.x);
+    if(y<-10||y>H+10)continue;
+    rect(it.x-1,y-4,3,6,'#e8ecf2');rect(it.x-1,y-6,3,2,'#e63946');
+    rect(it.x-3,y+1,2,2,'#e63946');rect(it.x+2,y+1,2,2,'#e63946');
+  }
+  // bandage girl
+  if(girl){
+    const n=girl.n,gx=(n.tx+n.w/2)*T,gy=n.ty*T-camY;
+    let oy=Math.sin(frame*0.1)*1.2,al=1;
+    if(girl.gone){girl.t++;oy-=girl.t*girl.t*0.05;al=Math.max(0,1-girl.t/40);}
+    if(al>0){ctx.globalAlpha=al;
+      rect(gx-2,gy-7+oy,5,4,'#ff9ecb');rect(gx-1,gy-3+oy,3,3,'#ffd9ea');
+      rect(gx-3,gy-8+oy,2,2,'#ff5fa8');ctx.globalAlpha=1;}
+  }
+  // trail
+  for(let i=0;i<P.trail.length;i++){const t=P.trail[i];
+    ctx.globalAlpha=0.05+i*0.02;rect(t.x-3,t.y-camY-3,6,6,'#e63946');}
+  ctx.globalAlpha=1;
+  // player
+  const sq=P.squash>0?P.squash:0,st=P.squash<0?-P.squash:0;
+  const pw=6+sq*0.5-st*0.3,ph=6-sq*0.5+st*0.3;
+  rect(P.x-pw/2,P.y-camY-ph/2+sq*0.25,pw,ph,'#e63946');
+  rect(P.x-pw/2,P.y-camY-ph/2+sq*0.25,pw,1,'#f4707b');
+  ctx.fillStyle='#fff';
+  ctx.fillRect(Math.round(P.x-2+P.face),Math.round(P.y-camY-1),1,2);
+  ctx.fillRect(Math.round(P.x+1+P.face),Math.round(P.y-camY-1),1,2);
+  if(P.squash>0)P.squash--;if(P.squash<0)P.squash++;
+  drawParts(camY);
+  // hud
+  ctx.globalAlpha=0.55;rect(0,0,W,13,'#0d0b10');ctx.globalAlpha=1;
+  ctx.fillStyle='#f0e9ee';ctx.font='bold 8px monospace';
+  ctx.fillText('LVL '+level,4,10);
+  const ds='DEATHS '+deaths;
+  ctx.fillStyle='#e66';ctx.fillText(ds,W-4-ds.length*5,10);
+  if(playing())for(let i=0;i<lives;i++)rect(58+i*7,4,5,5,'#e63946'); // lives
+  if(P.rocket){rect(46,4,3,5,'#e8ecf2');rect(46,2,3,2,'#e63946');} // booster in pocket
+  if(bandCt>0){ // bandage tally
+    rect(4,15,5,2,'#ff9ecb');rect(5,14,3,4,'#ff9ecb');
+    ctx.fillStyle='#ff9ecb';ctx.font='bold 7px monospace';
+    ctx.fillText('x'+bandCt,11,20);
+  }
+  drawSession();
+}
+
+// ---------- main ----------
+function step(){
+  frame++;
+  sessionStep({reset:resetGame});
+  think();
+  hazards();
+  for(const it of items)if(!it.taken&&!P.rocket&&Math.hypot(it.x-P.x,it.y-P.y)<8){
+    it.taken=true;P.rocket=true;burst(it.x,it.y,8,'#ffd166',1.2);
+  }
+  for(const b of bandages)if(!b.got&&Math.hypot(b.x-P.x,b.y-P.y)<7){
+    b.got=true;bandCt++;if(playing())addScore(50);
+    burst(b.x,b.y,10,'#ff9ecb',1.4);
+  }
+  stepParts(p=>{ // blood settles into permanent stains
+    if(solidPx(p.x,p.y+1)){if(stains.length<800)stains.push({x:p.x,y:p.y});return false;}
+  });
+  P.trail.push({x:P.x,y:P.y});if(P.trail.length>8)P.trail.shift();
+  camY+=((P.y-225)-camY)*0.1;
+  if(frame%240===0)prune();
+}
+initSession('meatlad',[['ARROWS','MOVE'],['SPACE','JUMP \u00b7 WALL-JUMP']]);
+resetGame();
+start(()=>{step();},()=>{draw();});
+</script>
+</html>

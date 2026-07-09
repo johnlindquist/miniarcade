@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POCKET LEAGUE</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080c}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#000}
+</style>
+<canvas id="cv" width="320" height="720"></canvas>
+<script src="engine.js?v=435b484c"></script>
+<script src="autoplay.js?v=1acff4bb"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,rect,spawn,burst,stepParts,drawParts,ring,stepRings,drawRings,shake,preDraw,postDraw,start,keys,manual,axis2,
+  initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+const FL={x0:10,x1:150,y0:28,y1:332,gx0:59,gx1:101}; // field + goal mouth
+const TEAM=[{c:'#3b7bff',c2:'#7fa8ff',name:'BLU'},{c:'#ff8a2a',c2:'#ffc37f',name:'ORG'}];
+const angDiff=d=>((d+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+
+const ball={x:80,y:180,vx:0,vy:0,r:5,trail:[],ox:0,oy:0};
+const pads=[
+  {x:22,y:75,big:0},{x:138,y:75,big:0},{x:22,y:285,big:0},{x:138,y:285,big:0},
+  {x:80,y:62,big:0},{x:80,y:298,big:0},
+  {x:16,y:180,big:1},{x:144,y:180,big:1},
+].map(p=>({...p,t:0}));
+function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:false,boosting:false,launch:0,spinV:0};}
+const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
+let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
+const readDrive=axis2({stickyFrames:2});
+const driveController=AI.controllerMux({
+  human:playerDrive,ai:decide,manual:c=>c.i===0&&(playing()||manual())
+});
+
+function kickoffPos(){
+  ball.x=80;ball.y=180;ball.vx=0;ball.vy=0;ball.trail=[];
+  const KO=[[80,300,-Math.PI/2],[52,326,-Math.PI/2],[80,60,Math.PI/2],[108,34,Math.PI/2]];
+  cars.forEach((c,i)=>{const k=KO[i];
+    c.x=k[0];c.y=k[1];c.a=k[2];c.vx=0;c.vy=0;c.dead=0;c.launch=0;c.boost=Math.max(c.boost,34);});
+}
+function resetGame(){ // fresh match for a new run (player or attract)
+  score=[0,0];clock=180*60;overtime=false;winner=0;
+  kickoffPos();state='countdown';stateT=100;
+}
+
+// ---------- ai ----------
+function decide(c){
+  const atkUp=c.team===0; // blue attacks the top goal
+  const oppY=atkUp?20:340,ownY=atkUp?340:20;
+  const behind=atkUp?c.y>ball.y+4:c.y<ball.y-4;
+  const ballNearOwn=Math.abs(ball.y-ownY)<110;
+  // role split: best-positioned teammate attacks, the other holds the net
+  const mate=cars.find(o=>o!==c&&o.team===c.team&&o.dead<=0);
+  const posScore=o=>((atkUp?o.y>ball.y+4:o.y<ball.y-4)?90:0)-Math.hypot(ball.x-o.x,ball.y-o.y);
+  const attacker=!mate||posScore(c)+(c.i<mate.i?0.01:0)>=posScore(mate);
+  let tx,ty;
+  if(attacker){
+    if(behind){ // line up the shot from goal-side
+      const gx=80-ball.x,gy=oppY-ball.y,gl=Math.hypot(gx,gy)||1;
+      tx=ball.x-gx/gl*9;ty=ball.y-gy/gl*9;
+    }else{ // loop around to get goal-side
+      tx=ball.x+(c.x<ball.x?-24:24);
+      ty=ball.y+(atkUp?28:-28);
+    }
+    if(c.boost<24&&!ballNearOwn){ // top up when dry and safe
+      let bp=null,bd=70;
+      for(const p of pads){if(p.t>0)continue;
+        const d=Math.hypot(p.x-c.x,p.y-c.y);if(d<bd){bd=d;bp=p;}}
+      if(bp){tx=bp.x;ty=bp.y;}
+    }
+  }else{
+    if(behind&&ballNearOwn){ // danger at the doorstep: clear it
+      const gx=80-ball.x,gy=oppY-ball.y,gl=Math.hypot(gx,gy)||1;
+      tx=ball.x-gx/gl*9;ty=ball.y-gy/gl*9;
+    }else{ // hold the mouth, shadowing the ball's x
+      tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,ball.x));
+      ty=atkUp?Math.min(326,ownY-12):Math.max(34,ownY+12);
+      if(c.boost<40){ // sip a pad on the way home
+        let bp=null,bd=44;
+        for(const p of pads){if(p.t>0)continue;
+          const d=Math.hypot(p.x-c.x,p.y-c.y);if(d<bd){bd=d;bp=p;}}
+        if(bp){tx=bp.x;ty=bp.y;}
+      }
+    }
+  }
+  const da=angDiff(Math.atan2(ty-c.y,tx-c.x)-c.a);
+  const dist=Math.hypot(tx-c.x,ty-c.y);
+  return{steer:Math.max(-1,Math.min(1,da*2.6+R(-0.15,0.15))),
+    throttle:Math.abs(da)>2.3?0.35:R(0.85,1),
+    boosting:c.boost>6&&Math.abs(da)<0.3&&(dist>40||(attacker&&behind&&ballNearOwn))};
+}
+// ---------- physics ----------
+function playerDrive(c){ // arrows/WASD steer+throttle, space boosts
+  const move=readDrive();
+  const boosting=keys.a&&c.boost>0; // boost IS full throttle — never gated on the
+  return{steer:move.x, // sticky shared axis bridges keyboard ghosting
+    throttle:boosting||move.y<0?1:(move.y>0?-0.6:0.15),
+    boosting};
+}
+function carStep(c){
+  if(c.launch>0){ // sent tumbling by the goal blast
+    c.launch--;
+    c.x+=c.vx;c.y+=c.vy;c.a+=c.spinV;
+    c.vx*=0.96;c.vy*=0.96;c.spinV*=0.98;
+    if(c.x<FL.x0){c.x=FL.x0;c.vx=Math.abs(c.vx)*0.6;}
+    if(c.x>FL.x1){c.x=FL.x1;c.vx=-Math.abs(c.vx)*0.6;}
+    if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy=Math.abs(c.vy)*0.6;}
+    if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy=-Math.abs(c.vy)*0.6;}
+    // per-car flair while flying (dense: slow-mo eats particles fast)
+    if(c.i===0){for(let k=0;k<2;k++)spawn({x:c.x+R(-2,2),y:c.y+R(-2,2),vx:R(-0.5,0.5),vy:R(-0.5,0.5),t:16,c:k?'#ffffff':'#cfe0ff'});}
+    else if(c.i===1){const a=c.launch*0.55;
+      spawn({x:c.x+Math.cos(a)*7,y:c.y+Math.sin(a)*7,t:20,c:'#7fa8ff'});
+      spawn({x:c.x-Math.cos(a)*7,y:c.y-Math.sin(a)*7,t:20,c:'#cfe0ff'});}
+    else if(c.i===2){if(c.launch%5===0)burst(c.x,c.y,10,['#ffd166','#ff8a2a','#ff5a8a'][RI(0,2)],1.8);}
+    else{for(let k=0;k<2;k++)spawn({x:c.x+R(-6,6),y:c.y+R(-6,6),t:11,c:'#7ef0ff'});}
+    return;
+  }
+  if(c.dead>0){c.dead--;
+    if(c.dead===0){c.x=c.i%2?130:30;c.y=c.team?50:310;c.a=c.team?Math.PI/2:-Math.PI/2;c.vx=0;c.vy=0;}
+    return;}
+  const d=driveController(c);
+  c.boosting=d.boosting&&c.boost>0;
+  const sp0=Math.hypot(c.vx,c.vy);
+  c.a+=d.steer*0.068*Math.min(1,sp0*0.9+0.35);
+  const th=c.boosting?0.15:0.08*d.throttle;
+  c.vx+=Math.cos(c.a)*th;c.vy+=Math.sin(c.a)*th;
+  if(c.boosting){c.boost-=0.45;
+    spawn({x:c.x-Math.cos(c.a)*6,y:c.y-Math.sin(c.a)*6,
+      vx:-Math.cos(c.a)*1.2+R(-0.3,0.3),vy:-Math.sin(c.a)*1.2+R(-0.3,0.3),t:R(6,14),c:random()<0.5?'#ffd166':'#ff8a2a'});}
+  // grip: damp lateral velocity
+  const fx=Math.cos(c.a),fy=Math.sin(c.a);
+  const fwd=c.vx*fx+c.vy*fy;
+  let lx=c.vx-fwd*fx,ly=c.vy-fwd*fy;
+  lx*=0.87;ly*=0.87;
+  c.vx=fx*fwd*0.985+lx;c.vy=fy*fwd*0.985+ly;
+  const max=c.boosting?2.9:2.3,sp=Math.hypot(c.vx,c.vy);
+  if(sp>max){c.vx*=max/sp;c.vy*=max/sp;}
+  c.sup=sp>2.5;
+  c.x+=c.vx;c.y+=c.vy;
+  if(c.x<FL.x0){c.x=FL.x0;c.vx*=-0.4;}
+  if(c.x>FL.x1){c.x=FL.x1;c.vx*=-0.4;}
+  if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy*=-0.4;}
+  if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy*=-0.4;}
+  // boost pads
+  for(const p of pads){
+    if(p.t>0)continue;
+    if(Math.hypot(p.x-c.x,p.y-c.y)<8){c.boost=Math.min(100,c.boost+(p.big?100:12));p.t=p.big?600:300;}
+  }
+}
+function ballStep(){
+  ball.x+=ball.vx;ball.y+=ball.vy;
+  ball.vx*=0.985;ball.vy*=0.985;
+  const inMouth=ball.x>FL.gx0&&ball.x<FL.gx1;
+  if(ball.x<FL.x0+ball.r){ball.x=FL.x0+ball.r;ball.vx=Math.abs(ball.vx)*0.8;}
+  if(ball.x>FL.x1-ball.r){ball.x=FL.x1-ball.r;ball.vx=-Math.abs(ball.vx)*0.8;}
+  if(!inMouth){
+    if(ball.y<FL.y0+ball.r){ball.y=FL.y0+ball.r;ball.vy=Math.abs(ball.vy)*0.8;}
+    if(ball.y>FL.y1-ball.r){ball.y=FL.y1-ball.r;ball.vy=-Math.abs(ball.vy)*0.8;}
+  }
+  const sp=Math.hypot(ball.vx,ball.vy);
+  if(sp>2.4){ball.vx*=2.4/sp;ball.vy*=2.4/sp;}
+  ball.trail.push({x:ball.x,y:ball.y});if(ball.trail.length>7)ball.trail.shift();
+  ball.ox+=ball.vx*0.55;ball.oy+=ball.vy*0.55; // texture roll
+  // goals (only count during live play, not slow-mo replay)
+  if(state==='play'){
+    if(ball.y<FL.y0-9)goal(0);       // into top goal -> blue scores
+    else if(ball.y>FL.y1+9)goal(1);  // into bottom goal -> orange scores
+  }
+}
+function collisions(){
+  // rotate processing order so no car's impulse always wins ties
+  const n=cars.length,s=frame%n;
+  for(let k=0;k<n;k++){
+    const c=cars[(s+k)%n];
+    if(c.dead>0)continue;
+    const dx=ball.x-c.x,dy=ball.y-c.y,d=Math.hypot(dx,dy);
+    if(d<ball.r+6.5){
+      const nx=dx/(d||1),ny=dy/(d||1);
+      const cs=Math.hypot(c.vx,c.vy);
+      ball.vx=ball.vx*0.25+nx*(0.6+cs*0.45)+c.vx*0.25;
+      ball.vy=ball.vy*0.25+ny*(0.6+cs*0.45)+c.vy*0.25;
+      ball.x=c.x+nx*(ball.r+7);ball.y=c.y+ny*(ball.r+7);
+      burst(ball.x,ball.y,4,'#e8ecf2',0.9);
+    }
+  }
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+    const a=cars[i],b=cars[j];
+    if(a.dead>0||b.dead>0)continue;
+    const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
+    if(d<11){
+      const nx=dx/(d||1),ny=dy/(d||1);
+      if(a.team!==b.team&&a.sup&&!b.sup)demo(b,a);
+      else if(a.team!==b.team&&b.sup&&!a.sup)demo(a,b);
+      else{a.x-=nx*(11-d)/2;a.y-=ny*(11-d)/2;b.x+=nx*(11-d)/2;b.y+=ny*(11-d)/2;
+        const tvx=a.vx;a.vx=b.vx*0.7;b.vx=tvx*0.7;
+        const tvy=a.vy;a.vy=b.vy*0.7;b.vy=tvy*0.7;}
+    }
+  }
+}
+function demo(victim,by){
+  victim.dead=130;shake(8);
+  burst(victim.x,victim.y,24,TEAM[victim.team].c,2.4);
+  burst(victim.x,victim.y,10,'#ffd166',1.6);
+}
+function goal(team){
+  score[team]++;shake(12);
+  if(playing()&&team===0)addScore(1); // player runs the blue side
+  const gy=Math.max(FL.y0,Math.min(FL.y1,ball.y));
+  burst(ball.x,gy,40,TEAM[team].c,3);
+  burst(ball.x,gy,20,'#ffffff',2);
+  ring(ball.x,gy,TEAM[team].c2,2.4,34);
+  for(const c of cars)launchCar(c,ball.x,gy); // the blast clears the field
+  state='goal';stateT=85;
+  if(overtime)matchOver(team);
+}
+function launchCar(c,bx,by){
+  if(c.dead>0)return;
+  const dx=c.x-bx,dy=c.y-by,l=Math.hypot(dx,dy)||1;
+  c.launch=80;c.spinV=R(-0.45,0.45);
+  const p=1.6+140/Math.max(35,l);
+  c.vx=dx/l*p+R(-0.6,0.6);c.vy=dy/l*p+R(-0.6,0.6);
+  carBoom(c);
+}
+function carBoom(c){ // every car gets its own signature blast
+  if(c.i===0){ // supernova
+    burst(c.x,c.y,24,'#ffffff',2.6);ring(c.x,c.y,'#7fa8ff',2.4,30);ring(c.x,c.y,'#ffffff',1.5,22);
+  }else if(c.i===1){ // vortex swirl
+    for(let k=0;k<20;k++){const a=k/20*6.283;
+      spawn({x:c.x+Math.cos(a)*4,y:c.y+Math.sin(a)*4,
+        vx:Math.cos(a)*0.9-Math.sin(a)*1.7,vy:Math.sin(a)*0.9+Math.cos(a)*1.7,
+        t:40,c:k%2?'#7fa8ff':'#cfe0ff'});}
+    ring(c.x,c.y,'#3b7bff',1.2,40);
+  }else if(c.i===2){ // firework (keeps crackling while airborne)
+    burst(c.x,c.y,18,'#ffd166',2.2);ring(c.x,c.y,'#ff8a2a',2,26);
+  }else{ // electro: forked zaps
+    for(let k=0;k<4;k++){const a=R(0,6.283);
+      for(let s2=0;s2<5;s2++)spawn({x:c.x+Math.cos(a)*s2*2.5,y:c.y+Math.sin(a)*s2*2.5,
+        vx:R(-0.3,0.3),vy:R(-0.3,0.3),t:18+s2*3,c:'#7ef0ff'});}
+    ring(c.x,c.y,'#7ef0ff',2.8,20);
+  }
+}
+function matchOver(w){
+  winner=w;state='over';overtime=false;
+  if(playing()){stateT=100000;gameOver((w===0?'WIN':'LOSS')+' '+score[0]+'-'+score[1]);}
+  else stateT=260;
+}
+function physicsStep(){
+  for(const c of cars)carStep(c);
+  ballStep();
+  if(state!=='play'&&state!=='goal')return;
+  collisions();
+  for(const p of pads)if(p.t>0)p.t--;
+  if(state==='play'){
+    clock--;
+    if(clock<=0&&!overtime){
+      if(score[0]!==score[1]){matchOver(score[0]>score[1]?0:1);}
+      else overtime=true;
+    }
+  }
+}
+
+// ---------- drawing ----------
+function makeStaticLayer(paint){
+  let cv2=null;
+  if(typeof OffscreenCanvas==='function')cv2=new OffscreenCanvas(W*2,H*2);
+  else if(typeof document!=='undefined'&&typeof document.createElement==='function'){
+    cv2=document.createElement('canvas');cv2.width=W*2;cv2.height=H*2;
+  }
+  if(!cv2||typeof cv2.getContext!=='function')return null;
+  const c=cv2.getContext('2d',{alpha:false});if(!c)return null;
+  c.scale(2,2);
+  const box=(x,y,w,h,col)=>{c.fillStyle=col;c.fillRect(Math.round(x),Math.round(y),w,h);};
+  paint(c,box);return cv2;
+}
+function line(c,x0,y0,x1,y1,col,a){c.globalAlpha=a;c.strokeStyle=col;c.beginPath();c.moveTo(x0,y0);c.lineTo(x1,y1);c.stroke();c.globalAlpha=1;}
+function drawFieldStatic(c,box){
+  box(0,0,W,H,'#0b0e2a');
+  box(FL.x0,FL.y0,FL.x1-FL.x0,FL.y1-FL.y0,'#101538');
+  // neon lines
+  const NC='#2de2e6';
+  line(c,FL.x0,180,FL.x1,180,NC,0.35);
+  c.globalAlpha=0.35;c.strokeStyle=NC;c.beginPath();c.arc(80,180,22,0,7);c.stroke();c.globalAlpha=1;
+  c.globalAlpha=0.45;c.strokeStyle=NC;c.strokeRect(FL.x0,FL.y0,FL.x1-FL.x0,FL.y1-FL.y0);c.globalAlpha=1;
+  // goal boxes
+  c.globalAlpha=0.3;c.strokeStyle=NC;
+  c.strokeRect(FL.gx0-8,FL.y0,FL.gx1-FL.gx0+16,26);
+  c.strokeRect(FL.gx0-8,FL.y1-26,FL.gx1-FL.gx0+16,26);
+  c.globalAlpha=1;
+}
+const fieldLayer=makeStaticLayer(drawFieldStatic);
+function drawField(){
+  if(fieldLayer&&typeof ctx.drawImage==='function')ctx.drawImage(fieldLayer,0,0,W,H);
+  else drawFieldStatic(ctx,rect);
+  // goal mouths (orange defends top, blue defends bottom)
+  const pulse=0.55+Math.sin(frame*0.08)*0.2;
+  ctx.globalAlpha=pulse;
+  rect(FL.gx0,FL.y0-6,FL.gx1-FL.gx0,3,TEAM[1].c);
+  rect(FL.gx0,FL.y1+3,FL.gx1-FL.gx0,3,TEAM[0].c);
+  ctx.globalAlpha=0.18;
+  rect(FL.gx0,FL.y0,FL.gx1-FL.gx0,14,TEAM[1].c);
+  rect(FL.gx0,FL.y1-14,FL.gx1-FL.gx0,14,TEAM[0].c);
+  ctx.globalAlpha=1;
+  // boost pads
+  for(const p of pads){
+    if(p.big){
+      ctx.globalAlpha=p.t>0?0.15:0.5+Math.sin(frame*0.12)*0.25;
+      ctx.strokeStyle='#ffd166';ctx.beginPath();ctx.arc(p.x,p.y,5,0,7);ctx.stroke();
+      ctx.globalAlpha=p.t>0?0.15:1;
+      ctx.fillStyle='#ffd166';ctx.fillRect(p.x-1.5,p.y-1.5,3,3); // unrounded: dead-center in the ring
+    }else{
+      ctx.globalAlpha=p.t>0?0.15:0.9;rect(p.x-1,p.y-1,2,2,'#ffe9a8');
+    }
+    ctx.globalAlpha=1;
+  }
+}
+function drawCar(c){
+  if(c.dead>0)return;
+  ctx.save();ctx.translate(Math.round(c.x),Math.round(c.y));ctx.rotate(c.a);
+  if(c.sup){ctx.globalAlpha=0.35;rect(-11,-2,4,1,'#fff');rect(-13,1,4,1,'#fff');ctx.globalAlpha=1;}
+  rect(-5,-3,10,6,TEAM[c.team].c);
+  rect(3,-2,2,4,TEAM[c.team].c2);
+  rect(0,-2,3,4,'#141a2e');
+  rect(-5,-3,2,6,TEAM[c.team].c2);
+  ctx.restore();
+}
+function drawBall(){
+  const sp=Math.hypot(ball.vx,ball.vy);
+  for(let i=0;i<ball.trail.length;i++){
+    if(sp<1.6)break;
+    const t=ball.trail[i];ctx.globalAlpha=0.04+i*0.03;
+    ctx.fillStyle='#e8ecf2';ctx.beginPath();ctx.arc(t.x,t.y,ball.r*0.8,0,7);ctx.fill();}
+  ctx.globalAlpha=1;
+  if(sp>2){ctx.globalAlpha=0.25;ctx.fillStyle='#2de2e6';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r+3,0,7);ctx.fill();ctx.globalAlpha=1;}
+  ctx.fillStyle='#e8ecf2';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,7);ctx.fill();
+  // rolling pattern: patches scroll with velocity and wrap across the disc
+  ctx.fillStyle='#9aa5b1';
+  for(let gx=-1;gx<=1;gx++)for(let gy=-1;gy<=1;gy++){
+    if((gx+gy)%2===0)continue; // checker spacing
+    let dx=(((gx*4+ball.ox)%8)+12)%8-4,dy=(((gy*4+ball.oy)%8)+12)%8-4;
+    if(dx*dx+dy*dy<(ball.r-1.6)*(ball.r-1.6))
+      ctx.fillRect(Math.round(ball.x+dx-1),Math.round(ball.y+dy-1),2,2);
+  }
+  // sphere shading: fixed highlight and shadow crescent
+  ctx.globalAlpha=0.5;ctx.fillStyle='#ffffff';
+  ctx.fillRect(Math.round(ball.x-2),Math.round(ball.y-3),2,1);
+  ctx.globalAlpha=0.25;ctx.fillStyle='#38405a';
+  ctx.beginPath();ctx.arc(ball.x+1,ball.y+1,ball.r-0.5,0.3,2.4);ctx.lineTo(ball.x+1,ball.y+1);ctx.fill();
+  ctx.globalAlpha=1;
+}
+function drawHUD(){
+  rect(0,0,W,24,'#0a0d20');
+  rect(6,4,30,16,'#16224d');rect(6,4,3,16,TEAM[0].c);
+  rect(W-36,4,30,16,'#3d2410');rect(W-9,4,3,16,TEAM[1].c);
+  ctx.font='bold 11px monospace';
+  ctx.fillStyle='#fff';
+  ctx.fillText(score[0],18,17);
+  ctx.fillText(score[1],W-26,17);
+  const s=Math.max(0,Math.ceil(clock/60)),mm=Math.floor(s/60),ss=(''+(s%60)).padStart(2,'0');
+  ctx.font='bold 9px monospace';
+  ctx.fillStyle=overtime?'#ffd166':(s<=30?'#ff6b5e':'#c8d2e0');
+  const ts=overtime?'+OT':mm+':'+ss;
+  ctx.fillText(ts,(W-ts.length*5.4)/2,16);
+  // team boost bars (avg of both cars)
+  rect(0,H-16,W,16,'#0a0d20');
+  for(let i=0;i<2;i++){
+    const t=cars.filter(c=>c.team===i),bx=i===0?8:W-48;
+    const avg=(t[0].boost+t[1].boost)/2;
+    rect(bx,H-10,40,4,'#1a2038');
+    rect(bx,H-10,Math.max(0,avg*0.4),4,TEAM[i].c);
+  }
+  if(state==='over'){ // pulse the winner's score box
+    ctx.globalAlpha=0.4+Math.sin(frame*0.15)*0.3;
+    ctx.strokeStyle=TEAM[winner].c2;
+    ctx.strokeRect(winner===0?5:W-37,3,32,18);ctx.globalAlpha=1;
+  }
+  if(state==='countdown'){
+    const n=Math.ceil(stateT/34);
+    if(n>0){ // dark stroke so the digit reads over the ball
+      ctx.font='bold 22px monospace';
+      ctx.lineWidth=3;ctx.lineJoin='round';ctx.strokeStyle='#0a0d20';
+      ctx.strokeText(n,74,190);
+      ctx.fillStyle='#ffd166';ctx.fillText(n,74,190);
+      ctx.lineWidth=1;
+    }
+  }
+}
+function draw(){
+  preDraw();
+  drawField();
+  drawParts();
+  drawRings();
+  drawBall();
+  for(const c of cars)drawCar(c);
+  postDraw();
+  drawHUD();
+  drawSession(false); // match score is already the scoreboard
+}
+// ---------- main ----------
+function step(){
+  frame++;
+  sessionStep({reset:resetGame});
+  if(state==='countdown'){stateT--;if(stateT<=-15)state='play';}
+  else if(state==='goal'){stateT--;
+    if(frame%3===0)physicsStep();
+    if(stateT<=0){
+      if(score[0]>=7||score[1]>=7)matchOver(score[0]>score[1]?0:1);
+      else{kickoffPos();state='countdown';stateT=100;}
+    }
+  }else if(state==='over'){stateT--;
+    if(frame%3===0)spawn({x:R(FL.gx0-8,FL.gx1+8),y:winner===0?FL.y0+2:FL.y1-2, // victory confetti
+      vx:R(-0.5,0.5),vy:winner===0?R(0.4,1.4):R(-1.4,-0.4),t:R(30,70),drag:1,
+      c:random()<0.7?TEAM[winner].c:'#ffffff'});
+    if(stateT<=0){score=[0,0];clock=180*60;overtime=false;kickoffPos();state='countdown';stateT=100;}
+  }else physicsStep();
+  stepParts();stepRings();
+}
+initSession('rocket',[['UP / DOWN','GAS · REVERSE'],['LEFT / RIGHT','STEER'],['SPACE','BOOST']]);
+kickoffPos();
+start(()=>{step();},()=>{draw();});
+</script>
+</html>
