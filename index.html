@@ -294,7 +294,10 @@
       cards.forEach((card,i)=>card.classList.toggle('is-active',i===nextIndex));
       activeIndex=nextIndex;select.value=SIDEQUEST_GAMES[nextIndex].id;updateControls();refreshPreviews();
       const card=cards[nextIndex];
-      if(reveal)card.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth',block:'nearest',inline:'center'});
+      if(reveal){
+        hoverLockUntil=Math.max(hoverLockUntil,performance.now()+800);
+        card.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth',block:'nearest',inline:'center'});
+      }
       if(focus)card.querySelector('.game-title').focus({preventScroll:true});
     }
     function updateGeometry(){
