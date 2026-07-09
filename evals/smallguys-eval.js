@@ -87,5 +87,64 @@ console.log(`  bean 0 overall: ${b0finals}/${finals} finals, ${b0wins}/${wins} c
 if(finals>0&&b0finals/finals<0.55)fail(`bean 0 reached only ${b0finals}/${finals} finals (limit 55%)`);
 if(finals>0&&b0wins/finals<0.2)fail(`bean 0 won only ${b0wins}/${finals} episodes (limit 20%)`);
 
+// ---- 3. episode modifiers + show ladder
+console.log('3) episode modifiers + show ladder: announced, wired exactly, crown budgets exact');
+{
+  const ACT_FOOTER=`
+;globalThis.__wins=0;
+const _wr=winRound;winRound=b=>{globalThis.__wins++;_wr(b);};
+globalThis.__notes=[];
+{const __n0=SHOW.note;SHOW.note=e=>{globalThis.__notes.push({kind:e.kind,id:e.id,tag:e.tag});return __n0(e);};}
+globalThis.__mod=()=>({mod,type,phase,wins:globalThis.__wins,
+  maxSpd:sweeps.reduce((m,s)=>Math.max(m,Math.abs(s.spd)),0),slimeV});
+globalThis.__showP=()=>SHOW.probe();
+globalThis.__modFixture=()=>{
+  beans=[];for(let i=0;i<10;i++)beans.push(newBean(i));
+  episode=101;plan=['slime','whirly','final'];round=0;buildRound();
+  const s={mod,slimeV};
+  episode=101;plan=['doors','whirly','final'];round=0;buildRound();
+  const d={mod,tLimit};
+  return{s,d};
+};
+globalThis.__sig=()=>Math.round(beans.reduce((a,b2)=>a+b2.x*3+b2.y*7,0))+episode*31337+round*997;`;
+  const a=bootGame('smallguys',{seed:0x5a114001,footer:ACT_FOOTER});
+  const b=bootGame('smallguys',{seed:0x5a114001,footer:ACT_FOOTER});
+  b.sandbox.__NO_ACTS=1;
+  let frenzyMax=0,frenzySeen=false,hungryFast=false;
+  for(let f=0;f<18000;f+=10){
+    a.frames(10,false);b.frames(10,false);
+    const g=a.sandbox.__mod();
+    if(g.mod==='frenzy'){frenzySeen=true;frenzyMax=Math.max(frenzyMax,g.maxSpd);}
+    if(g.mod==='hungry'&&g.slimeV>=0.14)hungryFast=true;
+  }
+  const notesA=a.sandbox.__notes.filter(e=>e.kind==='modifier'&&e.id!=='none').length;
+  const notesB=b.sandbox.__notes.filter(e=>e.kind==='modifier'&&e.id!=='none').length;
+  const p=a.sandbox.__showP(),o=p.offeredByTier,s3=p.shownByTier[3]||0;
+  const wins=a.sandbox.__mod().wins;
+  console.log(`  ${notesA} modified rounds announced (unaware twin ${notesB}), frenzy max spin ${frenzyMax.toFixed(4)}, `+
+    `hungry slime seen ${hungryFast}, tiers ${JSON.stringify(o)}, crowns ${wins}/${s3} shown `+
+    `(held ${p.heldFrames}f, slowed ${p.slowedFrames}f)`);
+  if(notesA<3)fail(`only ${notesA} modified rounds in 5 minutes`);
+  if(notesB!==0)fail(`__NO_ACTS run still rolled ${notesB} modifiers`);
+  if(!frenzySeen)fail('no FRENZY GEARS round observed in 5 minutes');
+  else if(frenzyMax<=0.0345)fail(`frenzy never spun sweeps past the base cap (max ${frenzyMax.toFixed(4)})`);
+  if(!hungryFast)fail('no HUNGRY SLIME round reached the boosted rise speed');
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==6*s3)fail(`crown hitstop ${p.heldFrames}f != 6f per crown (${s3})`);
+  if(p.slowedFrames>24*s3)fail(`slow-mo overspent: ${p.slowedFrames}f for ${s3} crowns (budget 24f each)`);
+  if(wins<1)fail(`no episode crowned in 5 minutes with modifiers on`);
+  const fx=bootGame('smallguys',{seed:0x5a114002,footer:ACT_FOOTER});
+  const mf=fx.sandbox.__modFixture();
+  console.log(`  wiring: slime -> ${mf.s.mod} v${mf.s.slimeV}, doors -> ${mf.d.mod} ${mf.d.tLimit/60}s`);
+  if(mf.s.mod!=='hungry'||Math.abs(mf.s.slimeV-0.145)>1e-9)fail(`HUNGRY SLIME wiring regressed: ${JSON.stringify(mf.s)}`);
+  if(mf.d.mod!=='blitz'||mf.d.tLimit!==3120)fail(`DOOR BLITZ wiring regressed: ${JSON.stringify(mf.d)}`);
+  const c=bootGame('smallguys',{seed:0x5a114011,footer:ACT_FOOTER});
+  const d=bootGame('smallguys',{seed:0x5a114011,footer:ACT_FOOTER});
+  d.sandbox.__NO_PAYOFF_FX=1;
+  c.frames(10800,false);d.frames(10800,false);
+  if(c.sandbox.__sig()!==d.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);

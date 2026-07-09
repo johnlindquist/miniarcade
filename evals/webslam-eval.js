@@ -131,5 +131,73 @@ if(jumped.fighter.ground||jumped.fighter.vy>=0)fail('manual jump input did not l
 if(swung.fighter.swing<=0||swung.fighter.swingCd<=0)fail('manual racket input did not start swing');
 if(!swung.finite)fail('manual fighter produced non-finite state');
 
+console.log('4) gale act + show ladder: telegraphed, bots shade the wind, apex slow-mo budgeted');
+{
+  const GALE_FOOTER=FOOTER+`
+;globalThis.__gale=()=>({phase:galePhase,ax:galeAx,dir:galeDir,t:120*60-clock,state});
+globalThis.__showP=()=>SHOW.probe();globalThis.__showE=()=>SHOW.events();
+globalThis.__sig=()=>Math.round(ball.x*31+ball.y*7+fighters[0].x*13+fighters[1].x*17+
+  fighters[0].y*3+fighters[1].y*5)+score[0]*1009+score[1]*2003;`;
+  const SEED=0x730401;
+  const a=bootGame('webslam',{seed:SEED,footer:GALE_FOOTER});
+  const b=bootGame('webslam',{seed:SEED,footer:GALE_FOOTER});
+  b.sandbox.__NO_ACTS=1;
+  let firstDiverge=-1,divergePhase='',warnLeak=false,warnSamples=0;
+  for(let f=0;f<10800;f+=10){
+    a.frames(10,false);b.frames(10,false);
+    const g=a.sandbox.__gale();
+    if(g.phase==='warn'){warnSamples++;if(g.ax!==0)warnLeak=true;}
+    if(firstDiverge<0&&a.sandbox.__sig()!==b.sandbox.__sig()){firstDiverge=f+10;divergePhase=g.phase;}
+  }
+  const ev=a.sandbox.__showE(),p=a.sandbox.__showP();
+  const gales=[];let pend=null;
+  for(const e of ev){
+    if(e.kind==='act-warning'&&e.id==='gale')pend=e;
+    else if(e.kind==='act-land'&&e.id==='gale'&&pend){gales.push(e.tag-pend.tag);pend=null;}
+  }
+  const o=p.offeredByTier,s3=p.shownByTier[3]||0;
+  const pa=a.sandbox.__probe(),pb=b.sandbox.__probe();
+  const goalsA=pa.goals[0]+pa.goals[1],goalsB=pb.goals[0]+pb.goals[1];
+  console.log(`  ${gales.length} gales landed (telegraphs ${gales.join(',')} play-frames), `+
+    `diverged at ${firstDiverge} during '${divergePhase}', goals A ${goalsA} / B ${goalsB}, `+
+    `tiers ${JSON.stringify(o)}, apexes ${s3} (slowed ${p.slowedFrames}f, held ${p.heldFrames}f)`);
+  if(gales.length<1)fail('no telegraphed gale landed in 3 minutes');
+  for(const t of gales)if(t<180||t>300)fail(`gale telegraph ${t} play-frames outside 180..300`);
+  if(warnLeak)fail('gale accelerated the ball during the warning phase');
+  if(warnSamples<6)fail(`warning phase barely observable (${warnSamples} samples)`);
+  if(firstDiverge<0)fail('bots never responded to the gale (A/B identical)');
+  else if(divergePhase!=='warn')fail(`bots first diverged during '${divergePhase}', not the telegraph`);
+  if(goalsA<2||goalsA>12)fail(`gale run breach count ${goalsA} left watchable band 2..12`);
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==0)fail(`hitstop not configured yet counted ${p.heldFrames} held frames`);
+  if(p.slowedFrames>24*s3)fail(`slow-mo overspent: ${p.slowedFrames}f for ${s3} apexes (budget 24f each)`);
+  const c=bootGame('webslam',{seed:0x730411,footer:GALE_FOOTER});
+  const d=bootGame('webslam',{seed:0x730411,footer:GALE_FOOTER});
+  d.sandbox.__NO_PAYOFF_FX=1;
+  c.frames(10800,false);d.frames(10800,false);
+  if(c.sandbox.__sig()!==d.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
+console.log('5) ten-minute soak: moving, happening, progressing');
+{
+  const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+  const SOAK_FOOTER=`
+;globalThis.__soakN={events:0,progress:0};
+{const d0=damageWall;damageWall=(s,i,p)=>{const out=d0(s,i,p);
+   if(out.damaged){globalThis.__soakN.events++;globalThis.__soakN.progress+=out.opened;}return out;};
+ const p0=scorePoint;scorePoint=(by,r)=>{globalThis.__soakN.progress++;return p0(by,r);};
+ const a0=attachWeb;attachWeb=(f,a)=>{const had=!!f.web,out=a0(f,a);if(!had&&f.web)globalThis.__soakN.events++;return out;};}
+globalThis.__soakProbe=()=>({
+  sig:Math.round(ball.x*3+ball.y*7+fighters[0].x+fighters[0].y*5+fighters[1].x*13+fighters[1].y*11),
+  events:globalThis.__soakN.events,progress:globalThis.__soakN.progress,
+  finite:[ball,...fighters].every(o=>['x','y','vx','vy'].every(k=>Number.isFinite(o[k])))});`;
+  const{samples}=runSoak('webslam',{seed:0x730501,footer:SOAK_FOOTER,minutes:10});
+  const report=analyzeSoak(samples);
+  console.log('  '+soakLine(report));
+  // measured seeds 0x730501/02: still 3s, quiet 12-16s, stall 36-55s, 292-327 ev, 65-80 prog
+  assertSoak('soak',report,{still:10,quiet:40,stall:120,minEvents:180,minProgress:40},fail);
+}
+
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);

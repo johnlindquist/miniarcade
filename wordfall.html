@@ -15,7 +15,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,clamp,dist,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 
 // TowerFall movement + Vampire Survivors swarms + Wordle-powered upgrades.
 const GRAV=0.18,MAX_FALL=4.2,JUMP_V=-4.25,AIR_JUMP_V=-3.85;
@@ -43,6 +44,56 @@ let frame=0,kills=0,floorNo=0,charge=0,chargeNeed=18,combatT=0,spawnCd=0,danger=
 let greenRunes=0,yellowRunes=0,solves=0,lastWord='',lastMarks=[];
 let mode='combat',target='',guesses=[],puzzleDone='',runeHudT=0;
 let deadT=0,deadScored=false,bossDue=false;
+// `frame` resets each life, so the show kernel gets a monotonic clock.
+// Ladder: kills muted tier 1; rune guesses and Crown Guard kills tier 2;
+// SPELLBOUND (the headline solve) is the apex — hitstop, slow-mo, admire.
+let showFrame=0;
+const SHOW=createShow({tiers:{
+  1:{frames:14},
+  2:{frames:50,minGap:90},
+  3:{frames:90,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:20}
+}});
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+// Environment act: the rune storm. Twice a minute after the opening stretch,
+// two tower lanes charge up (240-frame warning) and then take rune lightning
+// for 20 seconds — bolts kill swarm enemies (feeding gems into the altar
+// economy) and punish a survivor who lingers. Lanes are latched from sim
+// state deterministically; word progress is never blocked.
+let stormPhase='calm',stormX=[0,0],stormFlash=0,stormClock=0;
+function stepStorm(){
+  if(typeof __NO_ACTS!=='undefined'||mode!=='combat'){stormPhase='calm';return;}
+  // the storm cycle survives attract deaths (like the puzzle story does), so
+  // short lives still get their chapters; fresh player sessions start calm
+  stormClock++;
+  const was=stormPhase,c=stormClock<1500?-1:(stormClock-1500)%3600;
+  stormPhase=c<0?'calm':c<240?'warn':c<1440?'live':'calm';
+  if(stormPhase==='warn'&&was==='calm'){
+    const c1=(kills*37+floorNo*61+solves*13)%W;
+    stormX=[c1,(c1+80)%W];
+    texts.push({x:80,y:80,s:'RUNE STORM RISING',c:'#8fb7ff',t:110});
+    SHOW.note({kind:'act-warning',id:'storm',at:showFrame,tag:stormClock,landsAt:showFrame+(240-c)});
+  }else if(stormPhase==='live'&&was==='warn'){
+    texts.push({x:80,y:80,s:'RUNE STORM',c:'#8fb7ff',t:80});
+    SHOW.note({kind:'act-land',id:'storm',at:showFrame,tag:stormClock});
+  }else if(stormPhase==='calm'&&was==='live')SHOW.note({kind:'act-end',id:'storm',at:showFrame,tag:stormClock});
+  if(stormPhase==='live'&&stormClock%36===0){
+    stormFlash=8;
+    for(const sx of stormX){
+      burst(wrapX(sx),R(60,320),5,'#8fb7ff',1.4);
+      for(const e of enemies){let dx=Math.abs(e.x-sx);dx=Math.min(dx,W-dx);
+        if(dx<14){e.hp-=3;e.hit=6;if(e.hp<=0)killEnemy(e);}}
+      let pdx=Math.abs(P.x-sx);pdx=Math.min(pdx,W-pdx);
+      if(pdx<14)hurtPlayer(1);
+    }
+  }
+}
+function stormDodge(){ // signed push away from the nearest threatening lane
+  if(stormPhase==='calm')return null;
+  let best=null,bd=stormPhase==='live'?26:20;
+  for(const sx of stormX){let dx=P.x-sx;if(dx>W/2)dx-=W;if(dx<-W/2)dx+=W;
+    if(Math.abs(dx)<bd){bd=Math.abs(dx);best=dx;}}
+  return best;
+}
 
 const arrowDamage=()=>1+Math.floor(greenRunes/4);
 const fireDelay=()=>Math.max(13,43-yellowRunes*2-solves);
@@ -50,12 +101,23 @@ const magnet=()=>22+solves*4;
 const orbitCount=()=>Math.min(4,solves);
 const wrapX=x=>x<0?x+W:x>=W?x-W:x;
 
-function resetGame(){
+function resetGame(keepPuzzle){
+  const story=keepPuzzle&&target?{charge,combatT}:null;
   enemies=[];arrows=[];gems=[];shots=[];texts=[];altars=[];
   frame=0;kills=0;floorNo=0;charge=0;chargeNeed=18;combatT=0;spawnCd=20;danger=0;
-  greenRunes=0;yellowRunes=0;solves=0;lastWord='';lastMarks=[];
-  mode='combat';target=chooseTarget();guesses=[];puzzleDone='';runeHudT=0;
+  greenRunes=0;yellowRunes=0;solves=0;
+  mode='combat';runeHudT=0;
+  // Attract-mode deaths keep the half-solved rune word and the altar economy so
+  // the deduction story arcs across respawns; player sessions start clean.
+  if(!story){lastWord='';lastMarks=[];target=chooseTarget();guesses=[];puzzleDone='';}
+  else{
+    if(puzzleDone)newPuzzle();
+    charge=story.charge;combatT=story.combatT;
+  }
   deadT=0;deadScored=false;bossDue=false;
+  if(!story){stormPhase='calm';stormClock=0;} // fresh session: calm skies
+  stormFlash=0;
+  SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
   Object.assign(P,{x:80,y:327,vx:0,vy:0,g:true,face:1,hp:5,maxHp:5,inv:0,
     dodge:0,drop:0,fireCd:12,aiJump:0,walk:0,aim:0,jumps:0,coyote:0,jumpBuf:0,land:0});
 }
@@ -108,6 +170,7 @@ function chooseAltar(a){
   burst(a.x,a.y,18,'#c792ea',1.8);ring(a.x,a.y,'#ffd166',2.2,28);shake(2);
   const gain=(ng?ng+'P ':'')+(ny?ny+'H':'');
   texts.push({x:a.x,y:a.y-12,s:gain||'NO RUNES',c:ng?GREEN:ny?YELLOW:'#8f829e',t:70});
+  SHOW.offer({id:'guess',tier:2,at:showFrame,x:a.x,y:a.y});
   if(a.word===target){
     puzzleDone='solved';
     solves++;floorNo++;lastWord=target;P.hp=Math.min(P.maxHp,P.hp+1);
@@ -115,6 +178,8 @@ function chooseAltar(a){
     if(playing())addScore(250+floorNo*50);
     burst(P.x,P.y,24,'#ffd166',2.2);ring(P.x,P.y,'#57e389',3,36);shake(3);
     texts.push({x:80,y:105,s:'SPELLBOUND!',c:'#ffd166',t:120});
+    SHOW.offer({id:'spellbound',tier:3,at:showFrame,x:P.x,y:P.y}); // apex: hitstop beat
+    fxBurst(P.x,P.y,26,'#ffd166',2.6);fxBurst(P.x,P.y,12,'#57e389',1.8);
   }else if(guesses.length>=6){
     puzzleDone='failed';lastWord=target;
     texts.push({x:80,y:105,s:'WORD '+target,c:'#ff8f9b',t:150});
@@ -158,6 +223,8 @@ function killEnemy(e){
   if(e.dead)return;e.dead=true;kills++;
   const col=e.kind==='crown'?'#ffd166':e.kind==='mage'?'#c792ea':'#7ce0d3';
   burst(e.x,e.y,e.kind==='crown'?30:10,col,e.kind==='crown'?2.5:1.4);shake(e.kind==='crown'?5:1);
+  SHOW.offer({id:e.kind==='crown'?'crownfall':'kill',tier:e.kind==='crown'?2:1,at:showFrame,x:e.x,y:e.y});
+  if(e.kind==='crown')fxBurst(e.x,e.y,16,'#ffd166',2.2);
   const n=e.kind==='crown'?8:e.kind==='mage'?2:1;
   for(let i=0;i<n;i++)gems.push({x:e.x+R(-5,5),y:e.y+R(-5,5),vx:R(-.7,.7),vy:R(-1.2,-.2),v:e.kind==='crown'?2:1,t:0});
   if(playing())addScore(e.kind==='crown'?500:e.kind==='mage'?40:20);
@@ -172,6 +239,9 @@ function hurtPlayer(n){
   }
 }
 function aiMove(){
+  if(pres.admire)return 0; // savor the solve for a beat
+  const storm=stormDodge(); // lightning outranks gems — clear the lane first
+  if(storm!==null)return storm>=0?1:-1;
   const threat=nearestEnemy(P.x,P.y,54);
   const goal=AI.nearest(gems,P);
   if(threat){
@@ -303,7 +373,12 @@ function updateAltars(){
       if(Math.hypot(dx,a.y-P.y)<12){chooseAltar(a);return;}}
   }
   if(!playing()&&!manual()&&age>150){
-    const smart=altars.find(a=>a.word===target)||altars[0];chooseAltar(smart);return;
+    // Deduce like a player would: no peeking at the secret. Prefer a word that
+    // could still be the answer, then take the most informative guess.
+    const pool=possibleTargets(),words=altars.map(a=>a.word);
+    const live=words.filter(w=>pool.includes(w));
+    const pick=WordPuzzle.bestGuess(live.length?live:words,pool)||words[0];
+    chooseAltar(altars.find(a=>a.word===pick)||altars[0]);return;
   }
   if(altars[0].life<=0){
     altars=[];runeHudT=180;texts.push({x:80,y:92,s:'RUNES FADE',c:'#8f829e',t:70});
@@ -328,6 +403,7 @@ function updateFx(){
   stepParts();stepRings();
   for(const t of texts){t.y-=.15;t.t--;}texts=texts.filter(t=>t.t>0);
   if(!altars.length&&runeHudT>0)runeHudT--;
+  if(stormFlash>0)stormFlash--;
 }
 
 // ---------- drawing ----------
@@ -412,8 +488,25 @@ function drawAltar(a,aimed){
   ctx.fillText(a.word,x-a.word.length*2.1,y+2.5);
   if(aimed&&playing()&&frame%36<24){ctx.fillStyle='#7ce0d3';ctx.font='bold 5px monospace';ctx.fillText('X',x-1.5,y-10);}
 }
+function drawStorm(){
+  if(stormPhase==='calm')return;
+  const live=stormPhase==='live';
+  for(const sx of stormX){
+    const flick=live?.10+(stormFlash>0?.22:0):.06+.06*(Math.floor(frame/10)%2);
+    ctx.globalAlpha=flick;
+    for(const x of[sx-13,sx-13+W,sx-13-W])rect(x,30,26,318,'#8fb7ff');
+    ctx.globalAlpha=live?.5:.35;
+    for(const x of[sx,sx+W,sx-W]){rect(x-13,30,1,318,'#8fb7ff');rect(x+12,30,1,318,'#8fb7ff');}
+    if(live&&stormFlash>0){ // the bolt itself: a jagged bright core
+      ctx.globalAlpha=.85;
+      for(let y=32;y<346;y+=8)rect(wrapX(sx+((y*7)%3)-1),y,2,6,'#e8f2ff');
+    }
+    ctx.globalAlpha=1;
+  }
+}
 function drawCombat(){
   drawTower();
+  drawStorm();
   for(const g of gems){const bob=Math.sin(g.t*.13)*1.5;
     ctx.save();ctx.translate(Math.round(g.x),Math.round(g.y+bob));ctx.rotate(Math.PI/4);
     rect(-2,-2,4,4,'#7ce0d3');rect(-1,-1,2,2,'#e0fffb');ctx.restore();}
@@ -502,9 +595,13 @@ function drawDead(){drawCombat();drawSession();}
 
 // ---------- main ----------
 function step(){
-  frame++;sessionStep({reset:resetGame});
-  if(mode==='combat')updateCombat();
-  else if(mode==='dead'&&!deadScored&&++deadT>110)resetGame();
+  frame++;showFrame++;sessionStep({reset:resetGame});
+  pres=SHOW.step(showFrame);
+  if(mode==='combat'){
+    stepStorm();
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)updateCombat();
+  }
+  else if(mode==='dead'&&!deadScored&&++deadT>110)resetGame(true);
   updateFx();
 }
 function render(){

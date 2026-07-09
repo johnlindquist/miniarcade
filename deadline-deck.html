@@ -17,7 +17,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 const{controllerMux,skillProfile}=AI;
 
 // A newspaper route and a skate line are the same line: every delivery, flip,
@@ -40,6 +41,18 @@ const P={x:80,vx:0,h:0,airT:0,airMax:0,trick:'',trickAge:0,flip:0,grindId:0,
   grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0,
   pushT:0,landT:0,rampAir:0,launchSpeed:0};
 
+// ROADWORK act: once per route a telegraphed lane closure cones off one lane
+// for 20 seconds; the courier reroutes from the warning, before cones exist.
+// frame is monotonic (resetRoute keeps it) so it doubles as the show clock;
+// the lane latches from sim state, the schedule draws no RNG.
+let workPhase='calm',workLane=1;
+const WORK_AT=1800,WORK_WARN=240,WORK_LIVE=1200;
+const SHOW=createShow({tiers:{
+  1:{frames:12},                                        // combo lines: telemetry only
+  2:{frames:45,minGap:90},                              // big banks, rail/air mail
+  3:{frames:90,minGap:300,hold:6,slowEvery:3,slowFrames:18} // FRONT PAGE, route clear
+}});
+
 const courierSkill=skillProfile({skill:.92,precision:.94,risk:.72,recovery:.9,reactionFrames:[2,4],
   lapseChance:.00034,lapseFrames:[16,34],rng:{chance:p=>!globalThis.__NO_LAPSE&&random()<p,int:RI,range:R}});
 
@@ -58,8 +71,10 @@ function addLine(label,points,kind){
   comboPoints+=gain;if(!stale){comboSeen.add(kind);comboCount++;}
   comboT=frontPage>0?120:54;comboLabel=(stale?'STALE ':'')+label;
   stats.bestMult=Math.max(stats.bestMult,Math.max(1,comboCount));
+  SHOW.offer({id:'line',tier:1,at:frame});
   if(!stale)press=Math.min(100,press+(kind==='delivery'?9:kind.startsWith('trick')?8:5));
-  if(press>=100&&frontPage<=0){press=0;frontPage=360;say('FRONT PAGE!',YELLOW,80,174,90);ring(P.x,PY-10,YELLOW,2.6,38);}
+  if(press>=100&&frontPage<=0){press=0;frontPage=360;say('FRONT PAGE!',YELLOW,80,174,90);ring(P.x,PY-10,YELLOW,2.6,38);
+    SHOW.offer({id:'frontpage',tier:3,at:frame});fxBurst(P.x,PY-15,24,YELLOW,2.6);}
   if(kind.startsWith('trick'))stats.tricks++;
   markProgress();
 }
@@ -67,6 +82,7 @@ function bankCombo(){
   if(comboPoints<=0)return 0;
   const mult=Math.max(1,Math.min(8,comboCount)),bank=comboPoints*mult;
   score(bank);stats.bestCombo=Math.max(stats.bestCombo,bank);
+  if(bank>=500){SHOW.offer({id:'bank',tier:2,at:frame,tag:bank});fxBurst(P.x,PY-24,10,YELLOW,1.8);}
   say('BANK '+bank,YELLOW,P.x,PY-48,48);resetCombo();return bank;
 }
 function dropCombo(reason){
@@ -96,6 +112,10 @@ function genBlock(){
     ramps.push({id:nextId++,x,y:y+RI(104,158),w:18,power:R(1,1.24),used:false});
   }
   if(blockNo%4===0)bundles.push({id:nextId++,x:LANE_X[(lane+1)%3],y:y+RI(44,92),take:false});
+  // keep coning freshly generated street while the closure is live, but stop
+  // ~5s early so the last cones clear the screen around the ROAD CLEAR call
+  if(workPhase==='live'&&routeFrame<WORK_AT+WORK_WARN+WORK_LIVE-300)
+    obstacles.push({id:nextId++,kind:'cone',x:LANE_X[workLane],y:y+RI(70,180),w:7,h:4,vx:0,passed:false,hit:false,work:true});
 }
 function ensureStreet(){while(genY>-920)genBlock();}
 
@@ -104,10 +124,27 @@ function resetRoute(){
   lives=3;papers=9;delivered=0;offered=0;missed=0;routeScore=0;
   houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];texts=[];
   press=0;frontPage=0;resetCombo();courierSkill.reset();lastProgressFrame=frame;
+  workPhase='calm';SHOW.reset(frame);
   Object.assign(P,{x:80,vx:0,h:0,airT:0,airMax:0,trick:'',trickAge:0,flip:0,grindId:0,
     grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0,
     pushT:0,landT:0,rampAir:0,launchSpeed:0});
   ensureStreet();
+}
+function stepWork(){
+  if(typeof __NO_ACTS!=='undefined')return;
+  if(workPhase==='calm'&&routeFrame===WORK_AT){
+    workPhase='warn';workLane=(routeNo+blockNo)%3;
+    SHOW.note({kind:'act-warning',id:'roadwork',at:frame,tag:routeFrame,landsAt:WORK_AT+WORK_WARN});
+    say('ROADWORK AHEAD','#f28b3c',80,150,80);
+  }else if(workPhase==='warn'&&routeFrame>=WORK_AT+WORK_WARN){
+    workPhase='live';
+    SHOW.note({kind:'act-land',id:'roadwork',at:frame,tag:routeFrame});
+    say('LANE CLOSED','#f28b3c',80,150,70);shake(2);
+    for(let y=-40;y>genY+30;y-=84)
+      obstacles.push({id:nextId++,kind:'cone',x:LANE_X[workLane],y,w:7,h:4,vx:0,passed:false,hit:false,work:true});
+  }else if(workPhase==='live'&&routeFrame>=WORK_AT+WORK_WARN+WORK_LIVE){
+    workPhase='calm';say('ROAD CLEAR',TEAL,80,150,55);
+  }
 }
 
 function launchOllie(ramp){
@@ -175,6 +212,7 @@ function deliver(h){
   if(P.grindId){label='RAIL MAIL';points+=180;stats.railMail++;kind='delivery-rail';}
   else if(P.airT>0){label='AIR MAIL';points+=130;stats.airMail++;kind='delivery-air';}
   addLine(label,points,kind);press=Math.min(100,press+7);
+  if(kind!=='delivery')SHOW.offer({id:'mail',tier:2,at:frame,tag:label});
   say(label,h.premium?YELLOW:PAPER,h.side<0?45:115,targetY(h)-14,62);
   ring(h.side<0?32:128,targetY(h),YELLOW,1.8,26);burst(h.side<0?32:128,targetY(h),8,PAPER,1.1);
 }
@@ -214,8 +252,14 @@ function rawBotIntent(){
   const bundle=bundles.filter(b=>!b.take&&b.y>PY-115&&b.y<PY+5).sort((a,b)=>b.y-a.y)[0];
   const needsBundle=!!bundle&&papers<=4;
   if(needsBundle){desired=bundle.x;grind=false;}
-  const ramp=ramps.filter(r=>!r.used&&r.y>PY-(125+speed*12)&&r.y<PY+6).sort((a,b)=>b.y-a.y)[0];
+  const workX=workPhase==='calm'?-999:LANE_X[workLane];
+  const ramp=ramps.filter(r=>!r.used&&r.y>PY-(125+speed*12)&&r.y<PY+6&&Math.abs(r.x-workX)>=14)
+    .sort((a,b)=>b.y-a.y)[0];
   if(ramp&&!needsBundle){desired=ramp.x;grind=false;jump=false;throttle=speed<MAX_SPEED-.15?1:0;}
+  // reroute around the closed lane from the ROADWORK AHEAD call, before the
+  // cones exist — shade toward the next undelivered house's side
+  if(workPhase!=='calm'&&!needsBundle&&Math.abs(desired-workX)<14)
+    desired=clamp(workX+((h&&h.side<0)?-26:h?26:workX<80?26:-26),PLAYER_L+4,PLAYER_R-4);
   // Plan against the line we are carving toward, not only the rider's current
   // hitbox. The older reactive check noticed cars after the carve was already
   // committed and left only a few frames for a panic ollie.
@@ -352,17 +396,21 @@ function finishRoute(reason){
   if(state!=='route')return;bankCombo();state='finish';stateT=180;finishReason=reason||'DEADLINE';stats.routes++;
   const clear=reason!=='WIPEOUT'&&delivered>=QUOTA,
     grade=reason==='WIPEOUT'?'WIPEOUT':clear?(delivered>=QUOTA+8?'GRADE A':'GRADE B'):'SHORT ROUTE';
-  if(clear){stats.clears++;score(1500+(delivered-QUOTA)*100);}
+  if(clear){stats.clears++;score(1500+(delivered-QUOTA)*100);
+    SHOW.offer({id:'clear',tier:3,at:frame,tag:grade});fxBurst(80,178,26,TEAL,2.4);}
   if(playing())gameOver(grade+' '+delivered+'/'+QUOTA);
 }
 
 function step(){
   frame++;sessionStep({reset:resetRoute});
+  const pres=SHOW.step(frame); // FRONT PAGE: 6f hitstop then 18f at 1/3 speed
   if(state==='route'){
-    routeFrame++;
-    const intent=controller();updateSpeed(intent);updatePlayer(intent);moveStreet();updateFlyers();streetCollisions();updateCombo();
-    stats.maxStall=Math.max(stats.maxStall,frame-lastProgressFrame);
-    if(routeFrame>=ROUTE_FRAMES)finishRoute();
+    if(!pres.holdWorld&&frame%pres.physicsEvery===0){
+      routeFrame++;stepWork();
+      const intent=controller();updateSpeed(intent);updatePlayer(intent);moveStreet();updateFlyers();streetCollisions();updateCombo();
+      stats.maxStall=Math.max(stats.maxStall,frame-lastProgressFrame);
+      if(routeFrame>=ROUTE_FRAMES)finishRoute();
+    }
   }else if(--stateT<=0&&!playing()){routeNo++;resetRoute();}
   stepParts();stepRings();
   for(const t of texts){t.t--;t.y-=.22;}texts=texts.filter(t=>t.t>0);
@@ -393,6 +441,17 @@ function drawRoad(){
     }
     ctx.globalAlpha=1;
   }
+}
+function drawWork(){
+  if(workPhase==='calm')return;
+  const x=LANE_X[workLane],live=workPhase==='live';
+  ctx.globalAlpha=live?.15:.07+.05*Math.sin(frame*.2);
+  rect(x-11,HUD_H,22,H-HUD_H,'#f28b3c');
+  ctx.globalAlpha=live?.9:.55+.25*Math.sin(frame*.2);
+  ctx.font='bold 6px monospace';ctx.fillStyle='#f28b3c';
+  const label=live?'LANE CLOSED':'ROADWORK AHEAD';
+  ctx.fillText(label,80-label.length*1.8,45);
+  ctx.globalAlpha=1;
 }
 function drawHouse(h){
   const y=Math.round(h.y),left=h.side<0,x=left?-5:134;
@@ -522,7 +581,7 @@ function drawFinish(){
   const s='SCORE '+routeScore;ctx.fillText(s,80-s.length*2.5,197);
 }
 function draw(){
-  drawRoad();preDraw();
+  drawRoad();preDraw();drawWork();
   const scenery=[];
   for(const h of houses)scenery.push({y:targetY(h),kind:'house',v:h});
   for(const r of rails)scenery.push({y:r.y+r.len,kind:'rail',v:r});

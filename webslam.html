@@ -14,7 +14,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 
 // Platform-fighter knockback + charged rallies + a breakable Dropshot-style wall.
 const GRAV=.18,FLOOR=316,NET_X=80,NET_TOP=276,MAX_SCORE=3;
@@ -43,6 +44,18 @@ let wallFlash=[Array(WALL_TILES).fill(0),Array(WALL_TILES).fill(0)];
 let score=[0,0],clock=120*60,state='countdown',stateT=120,frame=0,server=0,
   banner='',bannerC='#fff',bannerT=0,citySeed=RI(0,9999),winner=-1;
 
+// GALE act: twice per match a telegraphed crosswind bends the ball; the bots
+// shade upwind-of-home while it blows. frame is monotonic (resetGame keeps it),
+// so it doubles as the show clock. Acts are scheduled on play time (clock only
+// runs in 'play'), latch direction from sim state, and draw no RNG.
+let galePhase='calm',galeDir=1,galeAx=0,galeIx=0;
+const GALE_ACTS=[1500,4200],GALE_WARN=240,GALE_LIVE=900,GALE_ACCEL=.008;
+const SHOW=createShow({tiers:{
+  1:{frames:12},                              // rally touches: telemetry only
+  2:{frames:45,minGap:90},                    // wall cracks, web K.O.
+  3:{frames:90,slowEvery:3,slowFrames:24}     // wall OPEN / breach point / match win
+}});
+
 const ballPhase=()=>ball.airTouches>=4?2:ball.airTouches>=2?1:0;
 const wallTileAt=y=>y<WALL_TOP||y>=WALL_BOTTOM?-1:Math.floor((y-WALL_TOP)/WALL_TILE_H);
 const wallTileY=i=>WALL_TOP+(i+.5)*WALL_TILE_H;
@@ -62,8 +75,24 @@ function resetBall(s){
 }
 function resetGame(){
   score=[0,0];clock=120*60;state='countdown';stateT=120;winner=-1;citySeed=RI(0,9999);
+  galePhase='calm';galeAx=0;galeIx=0;SHOW.reset(frame);
   fighters.forEach(resetFighter);resetWalls();
   resetBall(RI(0,1));showBanner('BREAK THE WALL','#f5f7ff',90);
+}
+function stepGale(){
+  if(typeof __NO_ACTS!=='undefined')return;
+  const t=120*60-clock;
+  if(galePhase==='calm'&&galeIx<GALE_ACTS.length&&t>=GALE_ACTS[galeIx]){
+    galePhase='warn';galeDir=(score[0]+score[1]+galeIx)%2?-1:1;
+    SHOW.note({kind:'act-warning',id:'gale',at:frame,tag:t,landsAt:GALE_ACTS[galeIx]+GALE_WARN});
+    showBanner(galeDir>0?'GALE RISING >>':'<< GALE RISING','#bfe3ff',66);
+  }else if(galePhase==='warn'&&t>=GALE_ACTS[galeIx]+GALE_WARN){
+    galePhase='live';galeAx=galeDir*GALE_ACCEL;
+    SHOW.note({kind:'act-land',id:'gale',at:frame,tag:t});
+    showBanner(galeDir>0?'GALE >>':'<< GALE','#bfe3ff',60);shake(2);
+  }else if(galePhase==='live'&&t>=GALE_ACTS[galeIx]+GALE_WARN+GALE_LIVE){
+    galePhase='calm';galeAx=0;galeIx++;showBanner('GALE FADES','#8ca4c0',45);
+  }
 }
 function showBanner(s,c,t){banner=s;bannerC=c||'#fff';bannerT=t||70;}
 
@@ -98,6 +127,7 @@ function webPull(f){
     ball.vx=-dx/(d||1)*power+f.face*1.4;ball.vy=-dy/(d||1)*power-1.3;
     ball.spin=f.face*.035;ball.last=f.i;ball.hot=Math.min(8,ball.hot+1);
     ball.airTouches=Math.min(8,ball.airTouches+1);ball.idleT=0;f.pullCd=70;
+    SHOW.offer({id:'touch',tier:1,at:frame});
     for(let i=0;i<9;i++)spawn({x:f.x+dx*i/9,y:f.y-5+dy*i/9,vx:0,vy:0,t:9+i/3,drag:1,c:TEAM[f.i].web});
     ring(ball.x,ball.y,TEAM[f.i].light,1.3,16);shake(2);
   }else if(!f.ground)attachWeb(f,nearestAnchor(f));
@@ -120,7 +150,7 @@ function predictBallX(f){
   let x=ball.x,y=ball.y,vx=ball.vx,vy=ball.vy,spin=ball.spin;
   const strikeY=f.y-7;
   for(let t=0;t<90;t++){
-    vy+=GRAV*.72;vx+=spin;spin*=.99;x+=vx;y+=vy;
+    vy+=GRAV*.72;vx+=spin+galeAx;spin*=.99;x+=vx;y+=vy;
     if(x<5){x=5;vx=Math.abs(vx)*.88;}else if(x>W-5){x=W-5;vx=-Math.abs(vx)*.88;}
     if(vy>0&&y>=strikeY)return x;
   }
@@ -142,6 +172,9 @@ function aiInput(f){
   let tx=ownX;
   if(ballOwn||approaching)tx=clamp(predictBallX(f),side?85:9,side?151:75);
   else if(Math.abs(ball.x-NET_X)<25)tx=side?103:57;
+  // gusted balls drift downwind: shade the ready spot that way, starting at
+  // the GALE RISING telegraph so the adjustment reads before the wind exists
+  else if(galePhase!=='calm')tx=clamp(ownX+galeDir*(galePhase==='live'?9:6),side?85:9,side?151:75);
   if(f.damage>85&&!ballOwn)tx=side?116:44;
   const dx=tx-f.x,move=Math.abs(dx)>4?Math.sign(dx):0;
   if(move){f.vx+=move*(f.ground?.205:.12);f.face=move;}
@@ -204,7 +237,7 @@ function hitBall(f){
     ball.vx=(f.i?R(-4.8,-3.7):R(3.7,4.8))+f.vx*.45;
     ball.vy=keys.up&&f.i===0?-3.5:R(-3.6,-1.8);ball.spin=f.face*R(.02,.055);
     ball.last=f.i;ball.hot=Math.min(8,ball.hot+1);ball.airTouches=Math.min(8,ball.airTouches+1);
-    ball.idleT=0;f.swing=4;
+    ball.idleT=0;f.swing=4;SHOW.offer({id:'touch',tier:1,at:frame});
     burst(ball.x,ball.y,10,TEAM[f.i].light,1.8,.02);ring(ball.x,ball.y,TEAM[f.i].light,1.8,18);
     shake(2+ball.hot*.3);if(playing()&&f.i===0)addScore(25+ball.hot*5);
   }
@@ -243,6 +276,8 @@ function damageWall(side,index,phase=ballPhase()){
   const x=side?W-3:3,y=wallTileY(index),c=TEAM[by].light;
   burst(x,y,8+phase*5,c,1.5+phase*.45,.02);ring(x,y,c,1.5+phase*.65,16+phase*4);
   shake(2+phase*2);if(opened)showBanner('WALL OPEN!',c,48);
+  if(opened){SHOW.offer({id:'open',tier:3,at:frame,x,y});fxBurst(x,y,18,c,2.2);}
+  else if(damaged)SHOW.offer({id:'crack',tier:2,at:frame,x,y});
   if(playing()&&by===0)addScore(60*damaged+140*opened);
   return{damaged,opened,breach:walls[side][index]===2};
 }
@@ -266,7 +301,7 @@ function ballStep(){
   }
   ball.trail.push({x:ball.x,y:ball.y});if(ball.trail.length>8)ball.trail.shift();
   ball.idleT++;if(ball.idleT>300){letRally();return;}
-  ball.vy+=GRAV*.72;ball.vx+=ball.spin;ball.spin*=.99;ball.x+=ball.vx;ball.y+=ball.vy;
+  ball.vy+=GRAV*.72;ball.vx+=ball.spin+galeAx;ball.spin*=.99;ball.x+=ball.vx;ball.y+=ball.vy;
   if(ball.breach<0){
     if(ball.x-ball.r<2)wallImpact(0);
     else if(ball.x+ball.r>W-2)wallImpact(1);
@@ -291,12 +326,14 @@ function ballStep(){
 function knockout(f,by){
   if(state!=='play'||f.respawn>0)return;
   f.respawn=95;detachWeb(f);shake(10);
+  SHOW.offer({id:'ko',tier:2,at:frame});fxBurst(clamp(f.x,3,W-3),clamp(f.y,25,H-5),12,TEAM[by].light,2.2);
   burst(clamp(f.x,3,W-3),clamp(f.y,25,H-5),26,TEAM[by].light,3.2,.05);
   showBanner('WEB K.O. · POWER PLAY',TEAM[by].light,80);if(playing()&&by===0)addScore(500);
 }
 function scorePoint(by,reason){
   if(state!=='play')return;
   score[by]++;shake(5);ring(ball.x,ball.y,TEAM[by].light,3,24);burst(ball.x,ball.y,18,TEAM[by].main,2.3,.04);
+  SHOW.offer({id:'point',tier:3,at:frame});fxBurst(ball.x,ball.y,20,TEAM[by].light,2.4);
   showBanner(reason+'  +1',TEAM[by].light,75);if(playing()&&by===0)addScore(300+ball.hot*40);
   if(score[by]>=MAX_SCORE)finishMatch(by);else{state='point';stateT=88;server=1-by;}
 }
@@ -307,6 +344,7 @@ function letRally(){
 }
 function finishMatch(by){
   winner=by;state='over';stateT=210;showBanner(by===0?'BLUE WINS!':'RED WINS!',TEAM[by].light,180);
+  SHOW.offer({id:'win',tier:3,at:frame});fxBurst(W/2,150,30,TEAM[by].light,2.8);
   if(playing())gameOver((by===0?'WIN ':'LOSS ')+score[0]+'-'+score[1]);
 }
 function nextServe(sealWalls=true){
@@ -318,6 +356,7 @@ function nextServe(sealWalls=true){
 }
 function step(){
   frame++;sessionStep({reset:resetGame});if(bannerT>0)bannerT--;
+  const pres=SHOW.step(frame);
   wallFlash.forEach(side=>side.forEach((v,i)=>{if(v>0)side[i]--;}));
   if(state==='countdown'){
     stateT--;fighters.forEach(fighterStep);if(stateT<=0){state='play';showBanner('SERVE!','#ffd166',42);}
@@ -326,8 +365,8 @@ function step(){
   }else if(state==='over'){
     stateT--;if(frame%4===0)spawn({x:R(5,W-5),y:-3,vx:R(-.4,.4),vy:R(.6,1.5),t:RI(100,220),drag:1,c:random()<.5?TEAM[winner].main:'#ffd166'});
     if(!playing()&&stateT<=0)resetGame();
-  }else{
-    clock--;fighters.forEach(fighterStep);ballStep();hitFighter(fighters[0],fighters[1]);hitFighter(fighters[1],fighters[0]);
+  }else if(frame%pres.physicsEvery===0){ // apex slow-mo: WALL OPEN rebounds at 1/3 speed
+    clock--;stepGale();fighters.forEach(fighterStep);ballStep();hitFighter(fighters[0],fighters[1]);hitFighter(fighters[1],fighters[0]);
     if(clock<=0){if(score[0]===score[1])clock=30*60;else finishMatch(score[0]>score[1]?0:1);}
   }
   stepParts();stepRings();
@@ -383,6 +422,24 @@ function drawScene(){
   }
   if(sceneLayer&&typeof ctx.drawImage==='function')ctx.drawImage(sceneLayer,0,0,W,H);
   else{drawSkyStatic(ctx,rect,citySeed);drawCourtStatic(ctx,rect);}
+}
+function drawGale(){
+  if(galePhase==='calm')return;
+  const live=galePhase==='live';
+  ctx.globalAlpha=live?.55:.26+.14*Math.sin(frame*.18);
+  ctx.strokeStyle='#bfe3ff';
+  const sp=live?1.4:.6;
+  for(let i=0;i<4;i++){
+    const ph=(frame*sp+i*44)%(W+20);
+    const x=galeDir>0?ph-10:W+10-ph;
+    for(const y of[62,100]){
+      ctx.beginPath();ctx.moveTo(x-5*galeDir,y-3);ctx.lineTo(x,y);ctx.lineTo(x-5*galeDir,y+3);ctx.stroke();
+    }
+  }
+  ctx.font='bold 6px monospace';ctx.fillStyle='#bfe3ff';
+  const label=live?'GALE':'GALE RISING';
+  ctx.fillText(label,W/2-label.length*1.8,55);
+  ctx.globalAlpha=1;
 }
 function drawAnchors(){
   for(const a of ANCHORS){ctx.globalAlpha=.28+.15*Math.sin(frame*.05+a.x);ctx.strokeStyle=a.recovery?'#ffd166':'#dff6ff';ctx.beginPath();ctx.arc(a.x,a.y,a.recovery?3:4,0,7);ctx.stroke();rect(a.x-1,a.y-1,2,2,a.recovery?'#ffd166':'#dff6ff');ctx.globalAlpha=1;}
@@ -451,7 +508,7 @@ function drawHUD(){
   if(state==='countdown'&&stateT<90){const n=Math.ceil(stateT/25);if(n>0){ctx.font='bold 20px monospace';ctx.fillStyle='#ffd166';ctx.fillText(n,74,159);}}
 }
 function draw(){
-  preDraw();drawScene();drawWalls();drawAnchors();fighters.forEach(drawWeb);drawBall();drawFighter(fighters[1]);drawFighter(fighters[0]);drawParts();drawRings();postDraw();drawHUD();drawSession(false);
+  preDraw();drawScene();drawGale();drawWalls();drawAnchors();fighters.forEach(drawWeb);drawBall();drawFighter(fighters[1]);drawFighter(fighters[0]);drawParts();drawRings();postDraw();drawHUD();drawSession(false);
 }
 
 initSession('webslam',[['GOAL','CRACK · BREAK · BREACH'],['RALLY','KEEP IT UP TO CHARGE'],['LEFT / RIGHT','RUN'],['SPACE','JUMP · HOLD TO WEB'],['X','RACKET SMASH'],['Z / SHIFT','WEB PULL']]);

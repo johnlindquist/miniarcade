@@ -86,9 +86,12 @@ function boot(runSeed){ // fresh dom-stubbed game instance
   }
   return{nodes:nodes.length,saws:saws.length,bad};
 };
-globalThis.__probe=()=>({lvl:level,prog:level*1000+Math.max(P.idx,P.best||0),deaths});`;
+globalThis.__probe=()=>({lvl:level,prog:level*1000+Math.max(P.idx,P.best||0),deaths});
+globalThis.__showP=()=>SHOW.probe();
+globalThis.__sig=()=>Math.round(P.x*31+P.y*7)+level*1009+deaths*97+bandCt*17;`;
   eval(src.replace(/'use strict';/g,'')+footer);
 }
+function runFrames(n){let t=0;for(let i=0;i<n;i++){const f=global.__cb;global.__cb=null;f(t+=1000/60);}}
 
 let failed=false;
 const fail=m=>{console.error('  FAIL:',m);failed=true;};
@@ -132,6 +135,25 @@ for(let run=1;run<=3;run++){
   console.log(`  run ${run}: level ${end.lvl}, deaths ${end.deaths}, worst stall ${(maxStall/60).toFixed(1)}s`);
   if(maxStall>1500)fail(`run ${run}: stalled ${(maxStall/60).toFixed(1)}s (limit 25s)`);
   if(end.lvl<20)fail(`run ${run}: only reached level ${end.lvl} in 10 min (limit 20)`);
+}
+
+// ---- 4. payoff ladder: rescues celebrated with exact apex budgets, fx sim-inert
+console.log('4) show ladder: rescues celebrated, apex budgets exact, fx sim-inert');
+{
+  boot(deriveSeed(seed,'ladder'));
+  runFrames(18000);
+  const p=globalThis.__showP(),o=p.offeredByTier,s3=p.shownByTier[3]||0;
+  console.log(`  tiers ${JSON.stringify(o)}, rescues ${s3} shown `+
+    `(held ${p.heldFrames}f, slowed ${p.slowedFrames}f), level ${globalThis.__probe().lvl}`);
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=3))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==6*s3)fail(`rescue hitstop ${p.heldFrames}f != 6f per rescue (${s3})`);
+  if(p.slowedFrames>24*s3)fail(`slow-mo overspent: ${p.slowedFrames}f for ${s3} rescues (budget 24f each)`);
+  boot(deriveSeed(seed,'fx'));runFrames(10800);const sigA=globalThis.__sig();
+  globalThis.__NO_PAYOFF_FX=1;
+  boot(deriveSeed(seed,'fx'));runFrames(10800);const sigB=globalThis.__sig();
+  delete globalThis.__NO_PAYOFF_FX;
+  if(sigA!==sigB)fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

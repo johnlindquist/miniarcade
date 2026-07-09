@@ -31,11 +31,16 @@ globalThis.__ddProbe=()=>({
   frame,state,stateT,routeFrame,routeNo,distance,speed,lives,papers,delivered,offered,missed,
   routeScore,comboPoints,comboCount,comboT,comboLabel,press,frontPage,
   ...stats,landedTricks:__ddLandedTricks,hybridMail:stats.airMail+stats.railMail,
+  lapses:globalThis.__ddLapses,
   routeLog:{clears:globalThis.__ddRouteLog.clears,wipeouts:globalThis.__ddRouteLog.wipeouts,
     shorts:globalThis.__ddRouteLog.shorts,finishes:globalThis.__ddRouteLog.finishes.map(o=>({...o}))},
   rider:{...P},playing:playing(),finite:__ddAllFinite()
 });
 const __ddNeutral=()=>({steer:0,throttle:0,jump:false,throw:false,throwSide:0,trick:false,grind:false});
+globalThis.__ddLapses=0;
+{const __d0=courierSkill.decide;let __was=false;
+ courierSkill.decide=(f,c,d,l)=>{const out=__d0(f,c,d,l);
+   const now=courierSkill.isLapsed(f);if(now&&!__was)globalThis.__ddLapses++;__was=now;return out;};}
 
 globalThis.__ddDeliveryFixture=()=>{
   resetRoute();houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];
@@ -144,7 +149,7 @@ const fail=m=>{console.error('  FAIL:',m);failed=true;};
 const press=(game,code)=>{game.key('keydown',code);game.frames(1,false);game.key('keyup',code);};
 
 console.log('1) autonomous newspaper lines: 3 x 5 simulated minutes');
-let autonomousClears=0;
+let autonomousClears=0,autonomousLapses=0;
 for(let run=1;run<=3;run++){
   const seed=0xdead102+run;
   const game=bootGame('deadline-deck',{seed,footer:FOOTER});
@@ -152,10 +157,12 @@ for(let run=1;run<=3;run++){
   console.log(`  run ${run} seed ${seed}: ${p.routes} routes (${p.routeLog.clears} clear), `+
     `${p.deliveries} deliveries, ${p.landedTricks}/${p.tricks} landed tricks, ${p.grinds} grinds, `+
     `${p.airMail}+${p.railMail} hybrid mail, ${p.ramps} ramps, top ${p.topSpeed.toFixed(2)}, `+
-    `combo ${p.bestCombo}, ${p.crashes} crashes, `+
+    `combo ${p.bestCombo}, ${p.crashes} crashes, ${p.lapses} lapses, `+
     `stall ${(p.maxStall/60).toFixed(1)}s`);
   if(!p.finite)fail(`run ${run}: non-finite route, rider, or entity state`);
   autonomousClears+=p.clears;
+  autonomousLapses+=p.lapses;
+  if(p.lapses>12)fail(`run ${run}: ${p.lapses} lapses in 5 min — courier is zoning out constantly`);
   if(p.routes<3||p.routes>6)fail(`run ${run}: ${p.routes} completed routes outside band 3..6`);
   if(p.deliveries<120)fail(`run ${run}: only ${p.deliveries} successful deliveries`);
   if(p.tricks<85||p.landedTricks<60)fail(`run ${run}: weak trick line (${p.landedTricks}/${p.tricks} landed)`);
@@ -167,6 +174,9 @@ for(let run=1;run<=3;run++){
   if(p.maxStall>480)fail(`run ${run}: progress stalled ${(p.maxStall/60).toFixed(1)}s (limit 8s)`);
 }
 if(autonomousClears<6)fail(`autonomous routes cleared quota only ${autonomousClears}/9 times`);
+// Human-like imperfection is the watchability mechanism; a lapseChance
+// regression to zero must fail loudly, not pass as "extra competent".
+if(autonomousLapses<3)fail(`skill-profile lapses fired only ${autonomousLapses}x across 15 minutes — courier is robotically perfect`);
 
 console.log('2) exact delivery: one paper, one doorstep, no double score');
 let game=bootGame('deadline-deck',{seed:0xdead201,footer:FOOTER});
@@ -276,6 +286,82 @@ if(jumped.rider.airT<=0||jumped.rider.h<=0)fail('manual Space did not launch an 
 if(threw.throws!==jumped.throws+1||threw.papers!==jumped.papers-1)fail('manual X did not throw exactly one paper');
 if(!tricked.rider.trick||tricked.tricks!==threw.tricks+1)fail('manual Z did not start one aerial trick');
 if(!tricked.finite)fail('manual courier produced non-finite state');
+
+console.log('10) roadwork act + show ladder: telegraphed closure, courier reroutes, hitstop budgeted');
+{
+  const ACT_FOOTER=FOOTER+`
+;globalThis.__work=()=>({phase:workPhase,laneX:workPhase==='calm'?-1:LANE_X[workLane],routeFrame,x:P.x});
+// SHOW.events() is a bounded log and this game's offer volume evicts early
+// act notes over 5 minutes — collect notes unboundedly for telegraph pairing
+globalThis.__notes=[];
+{const __n0=SHOW.note;SHOW.note=e=>{globalThis.__notes.push({kind:e.kind,id:e.id,tag:e.tag});return __n0(e);};}
+globalThis.__showP=()=>SHOW.probe();
+globalThis.__cones=()=>obstacles.filter(o=>o.work).length;
+globalThis.__sig=()=>Math.round(P.x*31+distance*7)+delivered*1009+stats.crashes*97+Math.round(speed*100);`;
+  const SEED=0xdead401;
+  const a=bootGame('deadline-deck',{seed:SEED,footer:ACT_FOOTER});
+  const b=bootGame('deadline-deck',{seed:SEED,footer:ACT_FOOTER});
+  b.sandbox.__NO_ACTS=1;
+  let firstDiverge=-1,divergePhase='',earlyCones=false,liveCones=0,
+    liveSamples=0,distA=0,distB=0;
+  for(let f=0;f<18000;f+=10){
+    a.frames(10,false);b.frames(10,false);
+    const g=a.sandbox.__work();
+    if(g.phase==='warn'&&a.sandbox.__cones()>0)earlyCones=true;
+    if(g.phase==='live'){liveSamples++;liveCones=Math.max(liveCones,a.sandbox.__cones());
+      distA+=Math.abs(g.x-g.laneX);distB+=Math.abs(b.sandbox.__work().x-g.laneX);}
+    if(firstDiverge<0&&a.sandbox.__sig()!==b.sandbox.__sig()){firstDiverge=f+10;divergePhase=g.phase;}
+  }
+  const ev=a.sandbox.__notes,p=a.sandbox.__showP();
+  const works=[];let pend=null;
+  for(const e of ev){
+    if(e.kind==='act-warning'&&e.id==='roadwork')pend=e;
+    else if(e.kind==='act-land'&&e.id==='roadwork'&&pend){works.push(e.tag-pend.tag);pend=null;}
+  }
+  const o=p.offeredByTier,s3=p.shownByTier[3]||0;
+  const pa=a.sandbox.__ddProbe();
+  console.log(`  ${works.length} closures landed (telegraphs ${works.join(',')} route-frames), `+
+    `diverged at ${firstDiverge} during '${divergePhase}', live lane distance ${liveSamples?(distA/liveSamples).toFixed(1):'?'} `+
+    `vs unaware ${liveSamples?(distB/liveSamples).toFixed(1):'?'} (${liveCones} cones), `+
+    `tiers ${JSON.stringify(o)}, apexes ${s3} (held ${p.heldFrames}f, slowed ${p.slowedFrames}f), `+
+    `${pa.deliveries} deliveries / ${pa.crashes} crashes`);
+  if(works.length<2)fail(`only ${works.length} roadwork closures landed in 5 minutes`);
+  for(const t of works)if(t<180||t>300)fail(`roadwork telegraph ${t} route-frames outside 180..300`);
+  if(earlyCones)fail('cones spawned during the warning phase (telegraph must precede the strike)');
+  if(liveCones<6)fail(`closed lane barely coned (${liveCones} cones)`);
+  if(liveSamples<30)fail(`closure live phase barely observable (${liveSamples} samples)`);
+  if(distA<=distB)fail(`courier ignored the closed lane (${(distA/Math.max(1,liveSamples)).toFixed(1)} vs ${(distB/Math.max(1,liveSamples)).toFixed(1)})`);
+  if(firstDiverge<0)fail('courier never responded to roadwork (A/B identical)');
+  else if(divergePhase!=='warn')fail(`courier first diverged during '${divergePhase}', not the telegraph`);
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==6*s3)fail(`hitstop ${p.heldFrames}f != 6f per apex (${s3})`);
+  if(p.slowedFrames>18*s3)fail(`slow-mo overspent: ${p.slowedFrames}f for ${s3} apexes (budget 18f each)`);
+  if(pa.deliveries<120)fail(`roadwork run deliveries ${pa.deliveries} fell below watchable floor 120`);
+  if(pa.crashes>8)fail(`roadwork run crashes ${pa.crashes} exceed watchable limit 8`);
+  const c=bootGame('deadline-deck',{seed:0xdead411,footer:ACT_FOOTER});
+  const d=bootGame('deadline-deck',{seed:0xdead411,footer:ACT_FOOTER});
+  d.sandbox.__NO_PAYOFF_FX=1;
+  c.frames(10800,false);d.frames(10800,false);
+  if(c.sandbox.__sig()!==d.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
+console.log('11) ten-minute soak: moving, happening, progressing');
+{
+  const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+  const SOAK_FOOTER=`
+;globalThis.__soakN={events:0,progress:0};
+{const a0=addLine;addLine=(label,points,kind)=>{globalThis.__soakN.events++;
+  if(kind==='delivery')globalThis.__soakN.progress++;return a0(label,points,kind);};}
+globalThis.__soakProbe=()=>({sig:Math.round(P.x*7+distance),
+  events:globalThis.__soakN.events,progress:globalThis.__soakN.progress,
+  finite:[P].every(o=>['x','h'].every(k=>Number.isFinite(o[k])))&&Number.isFinite(distance)});`;
+  const{samples}=runSoak('deadline-deck',{seed:0xdead501,footer:SOAK_FOOTER,minutes:10});
+  const report=analyzeSoak(samples);
+  console.log('  '+soakLine(report));
+  // measured seeds 0xdead501/02: still 2s, quiet 4-5s, stall 17-31s, ~1380 ev, ~145 prog
+  assertSoak('soak',report,{still:10,quiet:15,stall:60,minEvents:800,minProgress:90},fail);
+}
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);

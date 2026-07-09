@@ -14,7 +14,7 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,rect,spawn,burst,stepParts,drawParts,ring,stepRings,drawRings,shake,preDraw,postDraw,start,keys,manual,axis2,
-  initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,fxBurst}=E;
 const FL={x0:10,x1:150,y0:28,y1:332,gx0:59,gx1:101}; // field + goal mouth
 const TEAM=[{c:'#3b7bff',c2:'#7fa8ff',name:'BLU'},{c:'#ff8a2a',c2:'#ffc37f',name:'ORG'}];
 const angDiff=d=>((d+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
@@ -29,6 +29,41 @@ function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:f
 const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
 let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
 const readDrive=axis2({stickyFrames:2});
+// Payoff ladder: ball touches are muted tier-1 telemetry, demos tier 2, goals
+// tier 3 (the existing every-3rd-frame goal replay, now kernel-arbitrated).
+// tier 3 slowFrames matches the 85-frame goal state exactly so the formalized
+// slow-mo reproduces the old frame%3 cadence.
+const SHOW=createShow({tiers:{
+  1:{frames:12},
+  2:{frames:40,minGap:90},
+  3:{frames:85,slowEvery:3,slowFrames:85}
+}});
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+// Environment act: a telegraphed crosswind chapter, scheduled on match time
+// (clock only runs during live play, so goal replays never eat the warning).
+// Direction is latched per act from the score parity — deterministic, no RNG,
+// so __NO_ACTS A/B runs stay stream-identical.
+const WIND_ACTS=[{warn:2700,land:2940,end:4740},{warn:6900,land:7140,end:8940}];
+const WIND_ACCEL=0.012;
+let windPhase='calm',windDir=1,windAx=0,windActIx=0;
+function stepWind(){
+  if(typeof __NO_ACTS!=='undefined'){windPhase='calm';windAx=0;return;}
+  const a=WIND_ACTS[windActIx];
+  if(!a||state==='over'){windPhase='calm';windAx=0;return;}
+  const t=180*60-clock;
+  if(t<a.warn){windPhase='calm';windAx=0;}
+  else if(t<a.land){
+    if(windPhase==='calm'){windDir=(score[0]+score[1]+windActIx)%2?-1:1;
+      SHOW.note({kind:'act-warning',id:'wind',at:frame,tag:t,landsAt:frame+(a.land-t)});}
+    windPhase='warn';windAx=0;
+  }else if(t<a.end){
+    if(windPhase!=='live')SHOW.note({kind:'act-land',id:'wind',at:frame,tag:t});
+    windPhase='live';windAx=WIND_ACCEL*windDir;
+  }else{
+    windPhase='calm';windAx=0;windActIx++;
+    SHOW.note({kind:'act-end',id:'wind',at:frame,tag:t});
+  }
+}
 const driveController=AI.controllerMux({
   human:playerDrive,ai:decide,manual:c=>c.i===0&&(playing()||manual())
 });
@@ -42,13 +77,36 @@ function kickoffPos(){
 function resetGame(){ // fresh match for a new run (player or attract)
   score=[0,0];clock=180*60;overtime=false;winner=0;
   kickoffPos();state='countdown';stateT=100;
+  windPhase='calm';windDir=1;windAx=0;windActIx=0;
+  SHOW.reset(frame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 }
 
 // ---------- ai ----------
+function predictBall(frames){
+  // Forward-roll the ball alone with ballStep's exact drag and rail bounces.
+  // Pure math on locals: reads no RNG, so replays stay stream-identical.
+  let x=ball.x,y=ball.y,vx=ball.vx,vy=ball.vy;
+  for(let i=0;i<frames;i++){
+    vx+=windAx; // live crosswind bends the read exactly like ballStep
+    x+=vx;y+=vy;vx*=0.985;vy*=0.985;
+    if(x<FL.x0+ball.r){x=FL.x0+ball.r;vx=Math.abs(vx)*0.8;}
+    if(x>FL.x1-ball.r){x=FL.x1-ball.r;vx=-Math.abs(vx)*0.8;}
+    if(!(x>FL.gx0&&x<FL.gx1)){
+      if(y<FL.y0+ball.r){y=FL.y0+ball.r;vy=Math.abs(vy)*0.8;}
+      if(y>FL.y1-ball.r){y=FL.y1-ball.r;vy=-Math.abs(vy)*0.8;}
+    }
+    const sp=Math.hypot(vx,vy);
+    if(sp>2.4){vx*=2.4/sp;vy*=2.4/sp;}
+  }
+  return{x,y};
+}
 function decide(c){
   const atkUp=c.team===0; // blue attacks the top goal
   const oppY=atkUp?20:340,ownY=atkUp?340:20;
-  const behind=atkUp?c.y>ball.y+4:c.y<ball.y-4;
+  // drive at where the ball will be when the car can plausibly arrive there
+  const eta=Math.min(40,Math.hypot(ball.x-c.x,ball.y-c.y)/2.2)|0;
+  const bp=globalThis.__NO_PREDICT?{x:ball.x,y:ball.y}:predictBall(eta);
+  const behind=atkUp?c.y>bp.y+4:c.y<bp.y-4;
   const ballNearOwn=Math.abs(ball.y-ownY)<110;
   // role split: best-positioned teammate attacks, the other holds the net
   const mate=cars.find(o=>o!==c&&o.team===c.team&&o.dead<=0);
@@ -56,12 +114,15 @@ function decide(c){
   const attacker=!mate||posScore(c)+(c.i<mate.i?0.01:0)>=posScore(mate);
   let tx,ty;
   if(attacker){
-    if(behind){ // line up the shot from goal-side
-      const gx=80-ball.x,gy=oppY-ball.y,gl=Math.hypot(gx,gy)||1;
-      tx=ball.x-gx/gl*9;ty=ball.y-gy/gl*9;
-    }else{ // loop around to get goal-side
-      tx=ball.x+(c.x<ball.x?-24:24);
-      ty=ball.y+(atkUp?28:-28);
+    // long reads are fuzzy: aim error grows with how far ahead the car is
+    // predicting, so strikes stay human — sometimes a whiff, then a re-approach
+    if(!globalThis.__NO_PREDICT){const fuzz=2+eta*0.5;bp.x+=R(-fuzz,fuzz);bp.y+=R(-fuzz,fuzz);}
+    if(behind){ // line up the shot from goal-side, at the intercept point
+      const gx=80-bp.x,gy=oppY-bp.y,gl=Math.hypot(gx,gy)||1;
+      tx=bp.x-gx/gl*9;ty=bp.y-gy/gl*9;
+    }else{ // loop around to get goal-side of where the ball is heading
+      tx=bp.x+(c.x<bp.x?-24:24);
+      ty=bp.y+(atkUp?28:-28);
     }
     if(c.boost<24&&!ballNearOwn){ // top up when dry and safe
       let bp=null,bd=70;
@@ -70,11 +131,14 @@ function decide(c){
       if(bp){tx=bp.x;ty=bp.y;}
     }
   }else{
-    if(behind&&ballNearOwn){ // danger at the doorstep: clear it
-      const gx=80-ball.x,gy=oppY-ball.y,gl=Math.hypot(gx,gy)||1;
-      tx=ball.x-gx/gl*9;ty=ball.y-gy/gl*9;
-    }else{ // hold the mouth, shadowing the ball's x
-      tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,ball.x));
+    if(behind&&ballNearOwn){ // danger at the doorstep: clear the intercept
+      const gx=80-bp.x,gy=oppY-bp.y,gl=Math.hypot(gx,gy)||1;
+      tx=bp.x-gx/gl*9;ty=bp.y-gy/gl*9;
+    }else{ // hold the mouth, shadowing where the ball is heading
+      tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,bp.x));
+      // crosswind response: shade toward the downwind post — during the
+      // warning as pre-positioning, harder once the wind is live
+      if(windPhase!=='calm')tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,tx+windDir*(windPhase==='live'?8:5)));
       ty=atkUp?Math.min(326,ownY-12):Math.max(34,ownY+12);
       if(c.boost<40){ // sip a pad on the way home
         let bp=null,bd=44;
@@ -149,6 +213,7 @@ function carStep(c){
   }
 }
 function ballStep(){
+  ball.vx+=windAx;
   ball.x+=ball.vx;ball.y+=ball.vy;
   ball.vx*=0.985;ball.vy*=0.985;
   const inMouth=ball.x>FL.gx0&&ball.x<FL.gx1;
@@ -182,6 +247,7 @@ function collisions(){
       ball.vy=ball.vy*0.25+ny*(0.6+cs*0.45)+c.vy*0.25;
       ball.x=c.x+nx*(ball.r+7);ball.y=c.y+ny*(ball.r+7);
       burst(ball.x,ball.y,4,'#e8ecf2',0.9);
+      SHOW.offer({id:'touch',tier:1,at:frame,x:ball.x,y:ball.y}); // muted telemetry
     }
   }
   for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
@@ -202,6 +268,7 @@ function demo(victim,by){
   victim.dead=130;shake(8);
   burst(victim.x,victim.y,24,TEAM[victim.team].c,2.4);
   burst(victim.x,victim.y,10,'#ffd166',1.6);
+  SHOW.offer({id:'demo-'+victim.i,tier:2,at:frame,x:victim.x,y:victim.y,data:{by:by.i}});
 }
 function goal(team){
   score[team]++;shake(12);
@@ -211,6 +278,8 @@ function goal(team){
   burst(ball.x,gy,20,'#ffffff',2);
   ring(ball.x,gy,TEAM[team].c2,2.4,34);
   for(const c of cars)launchCar(c,ball.x,gy); // the blast clears the field
+  SHOW.offer({id:'goal',tier:3,at:frame,x:ball.x,y:gy,data:{team}});
+  fxBurst(ball.x,gy,22,TEAM[team].c2,2.8);
   state='goal';stateT=85;
   if(overtime)matchOver(team);
 }
@@ -313,6 +382,28 @@ function drawField(){
     }
     ctx.globalAlpha=1;
   }
+  drawWind();
+}
+function drawWind(){ // telegraphed crosswind: drifting chevrons, blink on warn
+  if(windPhase==='calm')return;
+  const live=windPhase==='live';
+  if(!live&&Math.floor(frame/14)%2)return; // warning blinks
+  ctx.fillStyle=live?'#9fe8ff':'#ffd166';
+  ctx.globalAlpha=live?0.4:0.5;
+  const off=((frame*(live?0.9:0.35)*windDir)%28+28)%28;
+  for(const y of[120,250]){
+    for(let x=-28;x<W+28;x+=28){
+      const ax=Math.round(x+off);
+      if(ax<FL.x0+4||ax>FL.x1-10)continue;
+      if(windDir>0){rect(ax,y-3,2,2,ctx.fillStyle);rect(ax+2,y-1,2,2,ctx.fillStyle);rect(ax,y+1,2,2,ctx.fillStyle);}
+      else{rect(ax+2,y-3,2,2,ctx.fillStyle);rect(ax,y-1,2,2,ctx.fillStyle);rect(ax+2,y+1,2,2,ctx.fillStyle);}
+    }
+  }
+  const s=windDir>0?'CROSSWIND >>':'<< CROSSWIND';
+  ctx.font='bold 6px monospace';
+  ctx.globalAlpha=live?0.55:0.9;
+  ctx.fillText(s,(W-s.length*3.6)/2,213);
+  ctx.globalAlpha=1;
 }
 function drawCar(c){
   if(c.dead>0)return;
@@ -400,9 +491,11 @@ function draw(){
 function step(){
   frame++;
   sessionStep({reset:resetGame});
+  pres=SHOW.step(frame);
+  stepWind();
   if(state==='countdown'){stateT--;if(stateT<=-15)state='play';}
   else if(state==='goal'){stateT--;
-    if(frame%3===0)physicsStep();
+    if(frame%pres.physicsEvery===0)physicsStep();
     if(stateT<=0){
       if(score[0]>=7||score[1]>=7)matchOver(score[0]>score[1]?0:1);
       else{kickoffPos();state='countdown';stateT=100;}
@@ -411,7 +504,7 @@ function step(){
     if(frame%3===0)spawn({x:R(FL.gx0-8,FL.gx1+8),y:winner===0?FL.y0+2:FL.y1-2, // victory confetti
       vx:R(-0.5,0.5),vy:winner===0?R(0.4,1.4):R(-1.4,-0.4),t:R(30,70),drag:1,
       c:random()<0.7?TEAM[winner].c:'#ffffff'});
-    if(stateT<=0){score=[0,0];clock=180*60;overtime=false;kickoffPos();state='countdown';stateT=100;}
+    if(stateT<=0)resetGame(); // same path as session resets: wind + show state too
   }else physicsStep();
   stepParts();stepRings();
 }

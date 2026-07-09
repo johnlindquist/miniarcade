@@ -17,7 +17,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,manual,axis2,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,manual,axis2,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 
 // Driverless reclamation rigs settle the overnight salvage contract in a
 // magnetic press yard. The recognizable fantasy is armed-car arena combat;
@@ -54,12 +55,22 @@ const PICKUP_SPECS=[
 
 let cars=[],shots=[],mines=[],pickups=[],barrels=[],frame=0,clock=ROUND_FRAMES;
 let matchState='countdown',stateT=120,roundPhase='OPEN SHIFT',overtime=false,winner=null;
-let wrecks=0,deaths=0,pickupsTaken=0,explosions=0,ramHits=0,wreckSlow=0;
+let wrecks=0,deaths=0,pickupsTaken=0,explosions=0,ramHits=0;
 let weaponUses={DISC:0,MINE:0,FLUX:0},weaponHits={DISC:0,MINE:0,FLUX:0};
 let tacticStats={dodges:0,flanks:0,ambushes:0,barrelShots:0,pressBaits:0,repairs:0,modeChanges:0};
-let director={quietT:0,dropSent:false,nextSweep:240,sweepT:0,drops:0,sweeps:0};
+let director={quietT:0,dropSent:false,nextSweep:240,sweepT:0,drops:0,sweeps:0,sweepWarned:false};
 let feed=[],banner='',bannerC='#fff',bannerT=0,lastCoreState='idle';
 const readDrive=axis2({stickyFrames:2});
+// Payoff ladder: routine rivets stay mute; weapon connections are tier 1
+// (telemetry only — no cue), wrecks are tier 2 (the old wreckSlow beat, now
+// arbitrated), match end is tier 3. `frame` never resets, so it is the
+// monotonic show clock the kernel requires.
+const SHOW=createShow({tiers:{
+  1:{frames:24},
+  2:{frames:55,minGap:90,slowEvery:3,slowFrames:18,admire:20},
+  3:{frames:180,minGap:600}
+}});
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 
 function makeCar(id){
   const r=RIGS[id],s=SPAWNS[id];
@@ -78,10 +89,11 @@ function resetGame(){
   pickups=PICKUP_SPECS.map((p,i)=>({...p,id:i,t:0,spin:i*.9}));
   barrels=BARREL_SPOTS.map((p,i)=>({id:i,x:p[0],y:p[1],hp:2,dead:0}));
   clock=ROUND_FRAMES;matchState='countdown';stateT=120;roundPhase='OPEN SHIFT';overtime=false;winner=null;
-  wrecks=0;deaths=0;pickupsTaken=0;explosions=0;ramHits=0;wreckSlow=0;
+  wrecks=0;deaths=0;pickupsTaken=0;explosions=0;ramHits=0;SHOW.reset(frame);
+  pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
   weaponUses={DISC:0,MINE:0,FLUX:0};weaponHits={DISC:0,MINE:0,FLUX:0};
   tacticStats={dodges:0,flanks:0,ambushes:0,barrelShots:0,pressBaits:0,repairs:0,modeChanges:0};
-  director={quietT:0,dropSent:false,nextSweep:240,sweepT:0,drops:0,sweeps:0};
+  director={quietT:0,dropSent:false,nextSweep:240,sweepT:0,drops:0,sweeps:0,sweepWarned:false};
   feed=[];banner='SCRAP SHIFT';bannerC='#ffd166';bannerT=105;
   CORE.t=0;CORE.state='idle';CORE.pulses=0;lastCoreState='idle';
 }
@@ -109,15 +121,20 @@ const NAV_NODES=[...WALLS.flatMap((w,i)=>[
   {id:'top',x:80,y:45},{id:'north',x:80,y:114},{id:'west',x:43,y:180},
   {id:'east',x:117,y:180},{id:'south',x:80,y:247},{id:'bottom',x:80,y:315}
 ].filter(n=>n.x>ARENA.x0+7&&n.x<ARENA.x1-7&&n.y>ARENA.y0+7&&n.y<ARENA.y1-7&&!pointInWall(n.x,n.y,7));
+// Visible press warning: 192 frames (3.2s) so a viewer can forecast the
+// strike. __NO_ACT_TELEGRAPH restores the old 96-frame flash for paired A/Bs.
+// Bot avoidance margins below are trimmed so total bot lead time stays close
+// to the pre-telegraph ~206 frames — the telegraph is for the audience.
+function pressWarnLead(){return typeof __NO_ACT_TELEGRAPH!=='undefined'?158:254;}
 function coreForecast(){
   if(CORE.state==='active'||CORE.state==='warn')return 0;
-  const period=phasePeriod();return Math.max(0,period-158-CORE.t);
+  const period=phasePeriod();return Math.max(0,period-pressWarnLead()-CORE.t);
 }
 function dangerAt(x,y,c,allowCore){
   let risk=0;
   for(const mine of mines){if(mine.owner===c.id)continue;const d=Math.hypot(x-mine.x,y-mine.y);if(d<38)risk+=(38-d)*2.2;}
   for(const p of PUDDLES){const d=Math.hypot(x-p.x,y-p.y);if(d<p.r+13)risk+=(p.r+13-d)*1.4;}
-  if(!allowCore&&(coreDanger()||coreForecast()<120)){const range=roundPhase==='REDLINE'?84:70,d=Math.hypot(x-CORE.x,y-CORE.y);
+  if(!allowCore&&(coreDanger()||coreForecast()<(typeof __NO_ACT_TELEGRAPH!=='undefined'?120:40))){const range=roundPhase==='REDLINE'?84:70,d=Math.hypot(x-CORE.x,y-CORE.y);
     if(d<range)risk+=(range-d)*1.6;}
   return risk;
 }
@@ -265,11 +282,24 @@ function decide(c){
   if(threat&&threat.score>26){const goal=dodgePoint(c,threat),intent=steerIntent(c,goal,{boost:threat.t<15});
     setMode(c,'DODGE '+threat.kind);if(c.dodgeCd<=0){tacticStats.dodges++;c.dodgeCd=45;}
     return{...intent,fire:false,special:false,aim:foe?Math.atan2(foe.y-c.y,foe.x-c.x):c.a};}
+  // The killer lets off the gas for the wreck beat — a visible flourish, but
+  // never at the cost of dodging live threats (checked above).
+  if(pres.admire&&pres.cue&&pres.cue.data&&pres.cue.data.killer===c.id&&typeof __NO_ADMIRE==='undefined'){
+    setMode(c,'ADMIRE');
+    return{steer:0,throttle:.18,boost:false,fire:false,special:false,aim:c.aimA,goalX:c.goalX,goalY:c.goalY};}
   const coreRange=roundPhase==='REDLINE'?88:74,coreD=Math.hypot(c.x-CORE.x,c.y-CORE.y),
-    showdown=director.sweepT>0,pressSoon=!showdown&&(coreDanger()||coreForecast()<110);
+    showdown=director.sweepT>0,pressSoon=!showdown&&(coreDanger()||coreForecast()<(typeof __NO_ACT_TELEGRAPH!=='undefined'?110:30));
   const bait=foe&&hpRatio>.5&&(c.role==='BRAWLER'||c.role==='HUNTER')&&pressSoon&&Math.hypot(foe.x-CORE.x,foe.y-CORE.y)<62;
   if(pressSoon&&coreD<coreRange&&!bait){const dx=c.x-CORE.x,dy=c.y-CORE.y,d=coreD||1,goal={x:c.x+dx/d*55,y:c.y+dy/d*55},intent=steerIntent(c,goal,{boost:CORE.state==='active'});
     setMode(c,'PRESS ESCAPE');return{...intent,fire:false,special:false,aim:foe?Math.atan2(foe.y-c.y,foe.x-c.x):c.a};}
+  // Sweep telegraph response: rigs missing hp/nitro/ammo peel off to stock up
+  // before the magnet drags everyone into the showdown.
+  if(sweepSoon()&&!showdown){
+    const need=hpRatio<.62?repairFor(c):c.nitro<45?nitroFor(c):c.ammo<WAMMO[c.weapon]?weaponFor(c):null;
+    if(need&&Math.hypot(need.x-c.x,need.y-c.y)<120){const intent=steerIntent(c,need,{boost:false});
+      setMode(c,'STOCK UP');
+      return{...intent,fire:false,special:false,aim:foe?Math.atan2(foe.y-c.y,foe.x-c.x):c.a};}
+  }
   const repair=!showdown&&hpRatio<(c.role==='FLANKER' ? .48 : .42)?repairFor(c):null;
   if(repair){const intent=steerIntent(c,repair,{boost:hpRatio<.25});setMode(c,'REPAIR');c.plan='RECOVER';c.planT=0;
     return{...intent,fire:false,special:false,aim:foe?Math.atan2(foe.y-c.y,foe.x-c.x):c.a};}
@@ -405,11 +435,14 @@ function carStep(c,intent){
 
 function damageCar(victim,amount,source,kind,kx,ky,invFrames){
   if(!active(victim)||victim.inv>0)return false;
-  director.quietT=0;director.dropSent=false;director.nextSweep=240;
+  director.quietT=0;director.dropSent=false;director.nextSweep=240;director.sweepWarned=false;
   victim.hp-=amount;victim.hitT=6;victim.inv=invFrames===undefined?4:invFrames;
   if(source&&source!==victim){victim.lastHit=source.id;victim.lastHitT=240;victim.grudge=source.id;victim.grudgeT=420;}
   if(kx){victim.vx+=kx;victim.vy+=ky||0;}
   burst(victim.x,victim.y,Math.min(6,Math.ceil(amount*2)),victim.c2,1.05);
+  // tier 1: a special weapon connecting. Deliberately mute — no cue, no extra
+  // fx — it exists so ladder-coverage evals can compare opportunity counts.
+  if(WEAPON[kind])SHOW.offer({id:'hit-'+kind,tier:1,at:frame,x:victim.x,y:victim.y});
   if(victim.hp<=0)wreckCar(victim,source,kind);
   return true;
 }
@@ -430,6 +463,11 @@ function wreckCar(victim,source,kind){
   }else feed.unshift({text:victim.name+' SCRAPPED',c:'#9ca6b6',t:120});
   feed=feed.slice(0,3);banner=(killer?killer.name:'THE PRESS')+' +1';bannerC=killer?killer.c:'#ffd166';bannerT=55;
   blast(victim.x,victim.y,killer,1.4,22,'WRECK');
+  // tier 2: the wreck beat — kernel-arbitrated slow-mo (the old wreckSlow)
+  // plus a killer admire window; confetti rides the sim-inert fx stream.
+  SHOW.offer({id:'wreck-'+victim.id,tier:2,at:frame,x:victim.x,y:victim.y,
+    data:{killer:killer&&killer!==victim?killer.id:-1}});
+  fxBurst(victim.x,victim.y,14,victim.c2,2.3);
   if(overtime)matchOver(killer||leader(),'SUDDEN WRECK');
 }
 function damageBarrel(b,amount,source){if(b.dead>0)return;b.hp-=amount;if(b.hp<=0)detonateBarrel(b,source);}
@@ -500,8 +538,12 @@ function carCollisions(){
 function phasePeriod(){return roundPhase==='OPEN SHIFT'?720:roundPhase==='MAGNET HOT'?540:360;}
 function stepCore(){
   const period=phasePeriod();CORE.t++;if(CORE.t>=period)CORE.t=0;
-  const next=director.sweepT>0?'active':CORE.t>period-62?'active':CORE.t>period-158?'warn':'idle';
-  CORE.state=next;if(next==='active'&&lastCoreState!=='active'){CORE.pulses++;if(director.sweepT<=0){banner='PRESS LIVE';bannerC='#ffd166';bannerT=45;}}
+  const next=director.sweepT>0?'active':CORE.t>period-62?'active':CORE.t>period-pressWarnLead()?'warn':'idle';
+  if(next==='warn'&&lastCoreState==='idle')SHOW.note({kind:'act-warning',id:'press',at:frame,landsAt:frame+pressWarnLead()-62});
+  CORE.state=next;if(next==='active'&&lastCoreState!=='active'){CORE.pulses++;
+    // a sweep forcing the core live is the sweep's landing, not the press's
+    if(director.sweepT<=0){SHOW.note({kind:'act-land',id:'press',at:frame});
+      banner='PRESS LIVE';bannerC='#ffd166';bannerT=45;}}
   lastCoreState=next;if(next!=='active')return;
   const sweep=director.sweepT>0,range=sweep?170:roundPhase==='REDLINE'?78:64;
   if(sweep&&director.quietT>=420){const stalled=cars.find(c=>active(c)&&c.inv<=0);if(stalled){const dx=CORE.x-stalled.x,dy=CORE.y-stalled.y,d=Math.hypot(dx,dy)||1;
@@ -514,12 +556,15 @@ function stepCore(){
 function updatePhase(){
   const contenders=cars.filter(c=>c.lives>0).length;
   const next=contenders<=2||clock<=30*60?'REDLINE':clock<=100*60?'MAGNET HOT':'OPEN SHIFT';
-  if(next!==roundPhase){roundPhase=next;banner=next;bannerC=next==='REDLINE'?'#ff654f':'#2de2e6';bannerT=110;}
+  if(next!==roundPhase){roundPhase=next;banner=next;bannerC=next==='REDLINE'?'#ff654f':'#2de2e6';bannerT=110;
+    SHOW.note({kind:'phase',id:next,at:frame});}
 }
 function leader(){return cars.slice().sort((a,b)=>b.kills-a.kills||b.lives-a.lives||b.hp-a.hp||a.id-b.id)[0];}
 function matchOver(win,reason){
   if(matchState==='over')return;winner=win||leader();matchState='over';stateT=playing()?1e9:360;
   banner=(reason||'SHIFT OVER')+' · '+winner.name;bannerC=winner.c;bannerT=180;
+  SHOW.offer({id:'match-end',tier:3,at:frame,x:winner.x,y:winner.y,data:{winner:winner.id,reason}});
+  fxBurst(winner.x,winner.y,26,winner.c,2.6);
   if(playing()){
     if(winner.id===0)addScore(300);
     const rank=cars.slice().sort((a,b)=>b.kills-a.kills||b.lives-a.lives||b.hp-a.hp).indexOf(cars[0])+1;
@@ -537,17 +582,29 @@ function checkMatch(){
     else matchOver(a,'SHIFT OVER');
   }
 }
+// A quiet arena summons a magnet sweep. The sweep lands at the same quietT it
+// always did; the telegraph only announces it 186 frames out (any wreck or hit
+// resets quietT, which cancels the warning with the sweep it predicted).
+function sweepSoon(){return director.sweepT<=0&&director.sweepWarned&&
+  typeof __NO_ACT_TELEGRAPH==='undefined';}
 function stepDirector(){
   director.quietT++;
   if(director.quietT>=150&&!director.dropSent){
     let drop=pickups.find(p=>p.oneShot);if(!drop){drop={id:1000+director.drops,x:80,y:180,type:'weapon',t:0,spin:0,oneShot:true};pickups.push(drop);}
     else Object.assign(drop,{x:80,y:180,t:0,spin:0});
     director.dropSent=true;director.drops++;banner='CONTRACT DROP';bannerC='#e7edf4';bannerT=70;
+    SHOW.note({kind:'set-piece',id:'drop',at:frame});
+  }
+  if(director.sweepT<=0&&!director.sweepWarned&&director.quietT>=director.nextSweep-186&&
+    typeof __NO_ACT_TELEGRAPH==='undefined'){
+    director.sweepWarned=true;banner='SWEEP INBOUND';bannerC='#ffd166';bannerT=80;
+    SHOW.note({kind:'act-warning',id:'sweep',at:frame,landsAt:frame+(director.nextSweep-director.quietT)});
   }
   if(director.quietT>=director.nextSweep){
     const drop=pickups.find(p=>p.oneShot);if(drop)Object.assign(drop,{x:80,y:180,t:0,spin:0});
-    director.nextSweep+=210;director.sweeps++;director.sweepT=150;
+    director.nextSweep+=210;director.sweeps++;director.sweepT=150;director.sweepWarned=false;
     banner='MAGNET SWEEP';bannerC='#ffd166';bannerT=90;
+    SHOW.note({kind:'act-land',id:'sweep',at:frame});
   }
 }
 function physicsStep(){
@@ -667,11 +724,12 @@ function drawHUD(){
 function draw(){preDraw();drawWorld();postDraw();drawHUD();drawSession(false);}
 function step(){
   frame++;sessionStep({reset:resetGame});
+  pres=SHOW.step(frame);
   if(matchState==='countdown'){
     stateT--;if(stateT<=0){matchState='play';banner='ARM · RAM · OUTLAST';bannerC='#e7edf4';bannerT=75;}
   }else if(matchState==='play'){
     clock=Math.max(0,clock-1);updatePhase();
-    if(wreckSlow>0){wreckSlow--;if(frame%3===0)physicsStep();}else physicsStep();
+    if(!pres.holdWorld&&frame%pres.physicsEvery===0)physicsStep();
   }else if(matchState==='over'){
     stateT--;if(frame%3===0&&winner)spawn({x:winner.x+R(-8,8),y:winner.y+R(-8,8),vx:R(-.3,.3),vy:R(-.8,-.1),t:RI(20,45),c:winner.c});
     if(stateT<=0&&!playing())resetGame();

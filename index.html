@@ -57,7 +57,7 @@
     }
     #clip button{background:#c52332;padding:5px 11px}
     #clip button:hover{background:#e33b49}
-    button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,.game-card:focus-visible{
+    button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,input:focus-visible,.game-card:focus-visible{
       outline:2px solid var(--cyan);outline-offset:3px;
     }
     .carousel-shell{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);padding-top:10px}
@@ -128,9 +128,25 @@
       min-width:0;display:flex;align-items:center;gap:18px;min-height:42px;padding:8px clamp(16px,3vw,42px) calc(8px + env(safe-area-inset-bottom));
       border-top:1px solid rgba(39,43,60,.68);color:var(--dim);font-size:8px;line-height:1.45;letter-spacing:.06em;
     }
-    .site-footer>span{white-space:nowrap;text-transform:uppercase}
+    .footer-status{white-space:nowrap;text-transform:uppercase}
+    .maker-promo{display:flex;align-items:center;gap:8px;white-space:nowrap;text-transform:uppercase}
+    .maker-credit{color:#747b8f}
+    .maker-credit strong{color:var(--ink);font-weight:800}
+    .maker-separator{color:#3d4257}
+    .workshop-link{
+      display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:4px 7px;border:1px solid rgba(255,138,42,.28);
+      border-radius:99px;background:rgba(255,138,42,.07);color:#ffb16c;text-decoration:none;font-weight:800;
+      letter-spacing:.08em;transition:color 150ms ease,border-color 150ms ease,background 150ms ease,box-shadow 150ms ease,transform 150ms ease;
+    }
+    .workshop-link:hover{
+      color:#fff;border-color:rgba(255,138,42,.72);background:rgba(255,138,42,.14);
+      box-shadow:0 0 18px rgba(255,138,42,.13);transform:translateY(-1px);
+    }
+    .workshop-arrow{color:#ff8a2a;font-size:10px;line-height:1;transition:transform 150ms ease}
+    .workshop-link:hover .workshop-arrow{transform:translate(1px,-1px)}
+    .workshop-short{display:none}
     .site-footer details{margin-left:auto;position:relative}
-    .site-footer summary{color:#b7bdcb;cursor:pointer;text-transform:uppercase;letter-spacing:.1em;list-style:none}
+    .site-footer summary{display:flex;align-items:center;min-height:30px;color:#b7bdcb;cursor:pointer;text-transform:uppercase;letter-spacing:.1em;list-style:none}
     .site-footer summary::-webkit-details-marker{display:none}
     .site-footer summary::before{content:"+ ";color:var(--cyan)}
     .site-footer details[open] summary::before{content:"− "}
@@ -164,7 +180,7 @@
       .open-game{opacity:1;transform:none;pointer-events:auto}
       .preview-viewport::after{opacity:0}
       .rail-toolbar{padding-bottom:8px}
-      .site-footer>span{overflow:hidden;text-overflow:ellipsis}
+      .footer-status{display:none}
     }
     @media (max-width:430px){
       h1{font-size:15px}
@@ -174,12 +190,14 @@
       #clip label:first-child{display:none}
       #clip button{padding-inline:8px}
       .rail-toolbar,#game-track{padding-inline:12px;scroll-padding-inline:12px}
-      .site-footer{padding-inline:12px}
-      .site-footer>span{max-width:58vw}
+      .site-footer{gap:9px;padding-inline:12px}
+      .maker-promo{gap:6px}
+      .workshop-wide{display:none}
+      .workshop-short{display:inline}
     }
     @media (prefers-reduced-motion:reduce){
       html{scroll-behavior:auto}
-      .game-card,.open-game,.preview-viewport::after{transition:none!important}
+      .game-card,.open-game,.preview-viewport::after,.workshop-link,.workshop-arrow{transition:none!important}
     }
   </style>
 </head>
@@ -212,7 +230,16 @@
   </section>
 
   <footer class="site-footer">
-    <span>Self-playing previews · full controls inside each game</span>
+    <span class="footer-status">Self-playing previews · full controls inside each game</span>
+    <div class="maker-promo">
+      <span class="maker-credit">Built by <strong>John Lindquist</strong></span>
+      <span class="maker-separator" aria-hidden="true">·</span>
+      <a class="workshop-link" href="https://egghead.io/workshop/software-factory" target="_blank" rel="noopener noreferrer" title="Agentic Software Factory Workshop" aria-label="Check out my Agentic Software Factory workshop (opens in a new tab)">
+        <span class="workshop-wide">Check out my workshop</span>
+        <span class="workshop-short" aria-hidden="true">Workshop</span>
+        <span class="workshop-arrow" aria-hidden="true">↗</span>
+      </a>
+    </div>
     <details>
       <summary>play &amp; record</summary>
       <p>Open any game for full-speed play. Press <code>ENTER</code> for instructions, then <code>ENTER</code> again to start a scored run. The gallery plays previews at 30fps and pauses distant games. RECORD opens the selected game and turbo-renders an exact 60fps <code>.webm</code>; add <code>&amp;speed=1</code> to its URL for realtime capture.</p>

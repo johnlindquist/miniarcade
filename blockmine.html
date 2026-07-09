@@ -14,7 +14,7 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,shake,preDraw,postDraw,
-  start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,fxBurst}=E;
 
 // BLOCK MINE — a tiny, endless, self-playing mining story for the 4:9 strip.
 // The controls are deliberately grid-like: every move is readable at video size,
@@ -69,6 +69,18 @@ let lastDiscoverKey=-1,discoveryDirty=true,discoveryPasses=0;
 let deepest=0,kills=0,nextMob=540,day=0,buildScore=0,trapKills=0,trapBuilds=0,deaths=0,repaths=0;
 let golemKills=0,surge=0,nextGolemDepth=100,lastDeepFrame=0,recentDeaths=[];
 let caravans=0,forgeT=0,nextTripF=0;
+// Show kernel adoption is telemetry + ladder only for Block Mine: the game
+// already has rich environmental systems (day/night, depth, caravans, babel)
+// and a 30-minute no-stall contract, so no hold/slow-mo directives — just
+// frame-stamped evidence and celebration scaling. Mob kills are muted tier 1;
+// goals, caravans, tool upgrades, golems and babel stories tier 2; the
+// waygate and BABEL TOUCHES HEAVEN are the apex.
+let showFrame=0,wasNight=false;
+const SHOW=createShow({tiers:{
+  1:{frames:14},
+  2:{frames:50,minGap:120},
+  3:{frames:120,minGap:900}
+}});
 // Waygates: each deep portal is twinned with one home portal at the camp, so
 // established runs commute instead of re-digging (or re-climbing) the shaft.
 let homePortal=null,deepPortals=[],lastPortalDepth=0,nextSurfMob=0;
@@ -247,6 +259,7 @@ function goalDone(stage){return stage===0?P.tool>=1:stage===1?P.tool>=2:stage===
   stage===6?golemKills>=1:stage===7?P.obsidian>=4:stage===8?P.portalBuilt:
   stage===9?treesPlanted>=2:false;}
 function completeGoal(label){goalState.completed++;goalState.lastFlash=frame;say('GOAL! '+label,'#9af7ff');
+  SHOW.offer({id:'goal',tier:2,at:showFrame,tag:label});fxBurst(P.x,P.y,12,'#9af7ff',1.8);
   if(playing())addScore(100);burst(P.x,P.y,16,'#9af7ff',1.7);}
 function updateGoals(){
   while(goalState.stage<10&&goalDone(goalState.stage)){completeGoal(GOAL_LABELS[goalState.stage]);goalState.stage++;}
@@ -295,6 +308,7 @@ function resetGame(){
     ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
     portalT:0,portalCd:0,portalTo:null,regroup:false,
     lastBuildDepth:0,beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()});
+  SHOW.reset(showFrame);wasNight=false; // showFrame is monotonic; only the cue state resets
 }
 
 function mineFrames(t){
@@ -336,7 +350,8 @@ function finishMine(){
     }
   }
 }
-function grantTool(n){P.tool=n;P.dur=P.durMax=DURMAX[n];}
+function grantTool(n){P.tool=n;P.dur=P.durMax=DURMAX[n];
+  SHOW.offer({id:'tool',tier:2,at:showFrame,tag:n});}
 function checkCraft(){
   if(P.tool<1&&P.wood>=3){P.wood-=3;grantTool(1);say('CRAFTED WOOD PICK','#f6c177');burst(P.x,P.y,14,TOOLCOL[1],1.4);}
   else if(P.tool<2&&P.cobble>=8){P.cobble-=8;grantTool(2);P.bow=true;P.ammo+=10;
@@ -646,6 +661,7 @@ function buildPortal(){
   if(!homePortal)homePortal=erectFrame(HOME_PORTAL_X,SURFACE-1);
   P.obsidian-=6;P.portalBuilt=true;P.buildCd=900;structures.push({kind:'portal',x:gate.x,y:gate.y});
   P.hp=5;P.food+=2;P.ammo+=10;shake(6);burst(P.x,P.y-12,30,'#b57aff',2.6);
+  SHOW.offer({id:'waygate',tier:3,at:showFrame});fxBurst(P.x,P.y-8,26,'#b57aff',2.6);
   awardBuild('WAYGATE',600);say('A TWIN GATE OPENS AT CAMP','#d9b8ff');return true;
 }
 // Standing inside a burning core counts as "in the gate".
@@ -695,6 +711,7 @@ function campServices(){
     // Traders carry seed stock from distant forests — the grove's bootstrap.
     if(goalState.stage>=8)P.sapling+=2;
     say('CARAVAN! GOLD x'+g+' TRADED','#ffd166');burst(P.x,P.y,20,'#ffd166',2);
+    SHOW.offer({id:'caravan',tier:2,at:showFrame,tag:g});fxBurst(P.x,P.y,14,'#ffd166',2.2);
     if(playing())addScore(g*30);
   }
 }
@@ -945,11 +962,13 @@ function babelAct(){
     setTile(TOWER_X,y,LADDER);
     P.cobble-=plan.cobble;P.ladder--;towerH++;P.progressFrame=frame;lastDeepFrame=frame;
     buildScore+=15;if(playing())addScore(15);
-    if(towerH%tp.story===0){say('BABEL: STORY '+(towerH/tp.story)+' DONE','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
+    if(towerH%tp.story===0){say('BABEL: STORY '+(towerH/tp.story)+' DONE','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);
+      SHOW.offer({id:'babel-story',tier:2,at:showFrame,tag:towerH});}
     if(towerH>=TOWER_MAX){
       // The crown: a beacon burning at the top of the world.
       setTile(TOWER_X,y-1,BEACON);
       say('BABEL TOUCHES HEAVEN','#9af7ff');burst(P.x,centerY(y-1),30,'#9af7ff',2.6);shake(4);
+      SHOW.offer({id:'babel',tier:3,at:showFrame});fxBurst(P.x,centerY(y-1),30,'#9af7ff',2.8);
     }
     P.aiMode='BUILD BABEL';return true;
   }
@@ -1275,6 +1294,9 @@ function spawnMob(kindOverride){
 }
 function killMob(m,how){
   if(m.hp<=0&&m.dead>0)return;m.hp=0;m.dead=20;kills++;P.progressFrame=frame;
+  SHOW.offer(m.kind==='golem'?{id:'golem',tier:2,at:showFrame,x:m.x,y:m.y}
+    :{id:'kill',tier:1,at:showFrame,x:m.x,y:m.y}); // routine kills stay mute
+  if(m.kind==='golem')fxBurst(m.x,m.y,16,'#c9d4e2',2.4);
   if(how==='trap'){trapKills++;buildScore+=25;if(playing())addScore(60);say('TRAP KILL +25','#7ef0ff');}
   else if(playing())addScore(m.kind==='golem'?250:m.kind==='creeper'?55:m.kind==='skeleton'?40:
     m.kind==='spider'?45:30);
@@ -1445,7 +1467,10 @@ function gateStep(){
   if(P.moveT<=0){const g=gateHere();if(g)enterGate(g);}
 }
 function step(){
-  frame++;day=(day+0.00045)%1;sessionStep({reset:resetGame});
+  frame++;showFrame++;day=(day+0.00045)%1;sessionStep({reset:resetGame});
+  SHOW.step(showFrame); // telemetry + cue arbitration only: no world directives
+  if(isNight()!==wasNight){wasNight=!wasNight;
+    SHOW.note({kind:wasNight?'night':'dawn',id:'daycycle',at:showFrame});}
   refreshDiscovery();gateStep();playerStep();campServices();mobStep();projectileStep();fluidStep();stepParts();updateGoals();
   if(tile(P.cx,P.cy)===LAVA){
     if(!playing()&&!manual()&&P.cobble>=2){buildBridge(P.cx,P.cy);P.aiMode='SEAL LAVA';}

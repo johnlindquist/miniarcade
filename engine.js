@@ -8,6 +8,11 @@
  *   - pixel-rect drawing                      E.rect(x, y, w, h, color)
  *   - a particle pool                         E.spawn / E.burst / E.dust
  *                                             E.stepParts(hook?) / E.drawParts(camY?)
+ *   - sim-inert fx stream + confetti          E.fxRandom / E.fxR / E.fxRI
+ *     (celebrations never touch sim RNG)      E.fxBurst / E.fxDust
+ *   - show kernel: payoff arbitration +       E.createShow({queueLimit, recoveryGap,
+ *     hold/slow-mo/admire directives +          tiers:{n:{frames,minGap,hold,
+ *     frame-stamped telemetry for evals          slowEvery,slowFrames,admire}}})
  *   - expanding ring effects                  E.ring / E.stepRings / E.drawRings(camY?)
  *   - screen shake                            E.shake(n) + E.preDraw() / E.postDraw()
  *   - keyboard input (arrows/WASD/space/...)  E.keys, E.tap(name), E.manual()
@@ -39,17 +44,24 @@ const E=(()=>{
   }
   // Rendering must never advance the simulation stream: gallery previews,
   // direct pages, turbo capture, and headless evals all draw at different rates.
-  let rng=null,rngSeed=null,visualRng=makeRng(0x51de0f5e);
+  // The fx stream exists because celebrations fire from step(): using the sim
+  // stream there would let a payoff burst reshuffle later enemies and layouts,
+  // and visualRng advances at render rate so it isn't replay-exact either.
+  let rng=null,rngSeed=null,visualRng=makeRng(0x51de0f5e),fxRng=makeRng(0x9d2c5681);
   function seedRandom(seed){
     rngSeed=(Number(seed)>>>0)||1;
     rng=makeRng(rngSeed);
     visualRng=makeRng((Math.imul(rngSeed^0x9e3779b9,0x85ebca6b)>>>0)||0x51de0f5e);
+    fxRng=makeRng((Math.imul(rngSeed^0x3c6ef372,0xc2b2ae35)>>>0)||0x9d2c5681);
     return rngSeed;
   }
   if(params.has('seed'))seedRandom(params.get('seed'));
   const random=()=>rng?rng():Math.random();
   const R=(a,b)=>a+random()*(b-a);
   const RI=(a,b)=>Math.floor(R(a,b+1));
+  const fxRandom=()=>fxRng();
+  const fxR=(a,b)=>a+fxRng()*(b-a);
+  const fxRI=(a,b)=>Math.floor(fxR(a,b+1));
   const hash=(x,y)=>{const s=Math.sin(x*127.1+y*311.7)*43758.5453;return s-Math.floor(s);};
   const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -66,6 +78,22 @@ const E=(()=>{
   function dust(x,y,n,c){
     for(let i=0;i<n;i++)spawn({x:x+R(-3,3),y:y+R(0,3),vx:R(-0.4,0.4),vy:R(-0.3,0.1),t:RI(8,18),c:c||'#8a7a5e',drag:1});
   }
+  // Celebration particles live in their own pool: game stepParts hooks can
+  // kill, count, or roll sim RNG per particle, so fx confetti passing through
+  // them would leak presentation into gameplay. __NO_PAYOFF_FX must leave the
+  // sim byte-identical, which this isolation makes true by construction.
+  let fxParts=[];
+  function fxBurst(x,y,n,c,sp,grav){
+    if(typeof __NO_PAYOFF_FX!=='undefined')return;
+    for(let i=0;i<n;i++){const a=fxR(0,6.283);
+      fxParts.push(Object.assign(partFree.pop()||{},{drag:0.94,
+        x,y,vx:Math.cos(a)*fxR(0.3,sp),vy:Math.sin(a)*fxR(0.3,sp),t:fxRI(14,32),c,grav:grav||0}));}
+  }
+  function fxDust(x,y,n,c){
+    if(typeof __NO_PAYOFF_FX!=='undefined')return;
+    for(let i=0;i<n;i++)fxParts.push(Object.assign(partFree.pop()||{},{grav:0,
+      x:x+fxR(-3,3),y:y+fxR(0,3),vx:fxR(-0.4,0.4),vy:fxR(-0.3,0.1),t:fxRI(8,18),c:c||'#8a7a5e',drag:1}));
+  }
   function stepParts(hook){ // hook(p) may return false to kill the particle
     let w=0;
     for(const p of parts){
@@ -74,9 +102,16 @@ const E=(()=>{
       if(p.t>0)parts[w++]=p;else partFree.push(p);
     }
     parts.length=w;
+    w=0;
+    for(const p of fxParts){
+      p.vx*=p.drag;p.vy*=p.drag;p.vy+=p.grav;p.x+=p.vx;p.y+=p.vy;p.t--;
+      if(p.t>0)fxParts[w++]=p;else partFree.push(p);
+    }
+    fxParts.length=w;
   }
   function drawParts(camY){camY=camY||0;
     for(const p of parts){ctx.globalAlpha=Math.min(1,p.t/12);rect(p.x,p.y-camY,2,2,p.c);}
+    for(const p of fxParts){ctx.globalAlpha=Math.min(1,p.t/12);rect(p.x,p.y-camY,2,2,p.c);}
     ctx.globalAlpha=1;
   }
 
@@ -100,6 +135,108 @@ const E=(()=>{
   function preDraw(){ctx.save();if(shakeT>0){ctx.translate(Math.round((visualRng()*2-1)*shakeT*0.4),
       Math.round((visualRng()*2-1)*shakeT*0.4));shakeT--;}}
   function postDraw(){ctx.restore();}
+
+  // ---- show kernel: deterministic celebration arbitration + frame-stamped
+  //      telemetry. Decides WHEN a payoff may present (priority beats FIFO,
+  //      same-id coalescing, fast expiry, per-tier spacing, a recovery gap
+  //      after apex cues) and WHAT presentation the game should honor this
+  //      frame (world hold, integer physics gating, bot admire). It never
+  //      mutates gameplay, schedules acts, or draws: games offer moments,
+  //      render the active cue, and honor the directives. Pure function of
+  //      the call sequence — no RNG. Callers pass a monotonic showFrame
+  //      (game/engine frame counters reset between runs; the kernel must not
+  //      guess reset behavior).
+  function createShow(opts){
+    opts=opts||{};
+    const queueLimit=opts.queueLimit!==undefined?opts.queueLimit:2;
+    const recoveryGap=opts.recoveryGap!==undefined?opts.recoveryGap:45;
+    const tiers={};
+    const tierCfg=t=>tiers[t]||(tiers[t]={frames:48,minGap:0,hold:0,slowEvery:1,slowFrames:0,admire:0});
+    for(const k in(opts.tiers||{})){
+      const src=opts.tiers[k];
+      tiers[k]={frames:src.frames!==undefined?src.frames:48,minGap:src.minGap||0,hold:src.hold||0,
+        slowEvery:src.slowEvery||1,slowFrames:src.slowFrames||0,admire:src.admire||0};
+    }
+    let active=null,queue=[],log=[],lastShown={},lastApexEnd=-1e9;
+    const counts={offered:0,shown:0,dropped:0,expired:0,coalesced:0,preempted:0,
+      heldFrames:0,slowedFrames:0,admireFrames:0,notes:0,logTotal:0,maxQueue:0};
+    // Per-tier trigger opportunities vs presentations: ladder-coverage evals
+    // must see that muting tier 1 didn't erase tier-1 *events*, only cues.
+    const offeredByTier={},shownByTier={};
+    const bump=(m,t)=>{m[t]=(m[t]||0)+1;};
+    function record(kind,sf,cue,extra){
+      counts.logTotal++;
+      log.push(Object.assign({kind,frame:sf,id:cue&&cue.id,tier:cue&&cue.tier,tag:cue&&cue.tag},extra));
+      if(log.length>600)log.splice(0,log.length-600);
+    }
+    function begin(cue,sf){
+      const cfg=tierCfg(cue.tier);
+      // presentation starts the frame AFTER the trigger, whether the cue came
+      // straight from offer() or was promoted from the queue — this keeps the
+      // hold/slow/admire windows exactly cfg-sized in both paths
+      active={id:cue.id,tier:cue.tier,tag:cue.tag,x:cue.x,y:cue.y,data:cue.data,
+        count:cue.count||1,startAt:sf+1,endAt:sf+1+cfg.frames,cfg};
+      lastShown[cue.tier]=sf;counts.shown++;bump(shownByTier,cue.tier);record('show',sf,active);
+    }
+    function offer(o){
+      counts.offered++;bump(offeredByTier,o.tier);
+      const sf=o.at,cfg=tierCfg(o.tier);
+      o={id:o.id,tier:o.tier,tag:o.tag,x:o.x,y:o.y,data:o.data,at:sf,
+        expiresAt:o.expiresAt!==undefined?o.expiresAt:sf+18,count:1};
+      if(active&&active.id===o.id&&active.tier===o.tier){active.count++;counts.coalesced++;return'coalesced';}
+      const dup=queue.find(q=>q.id===o.id&&q.tier===o.tier);
+      if(dup){dup.count++;counts.coalesced++;return'coalesced';}
+      if(lastShown[o.tier]!==undefined&&sf-lastShown[o.tier]<cfg.minGap){
+        counts.dropped++;record('drop',sf,o,{why:'gap'});return'dropped';}
+      if(active&&o.tier>active.tier){
+        counts.preempted++;record('preempt',sf,active,{by:o.id});
+        begin(o,sf);return'shown';}
+      if(!active&&!(o.tier>=2&&sf-lastApexEnd<recoveryGap)){begin(o,sf);return'shown';}
+      if(o.tier>=(active?active.tier:2)&&queue.length<queueLimit){
+        queue.push(o);counts.maxQueue=Math.max(counts.maxQueue,queue.length);return'queued';}
+      counts.dropped++;record('drop',sf,o,{why:'busy'});return'dropped';
+    }
+    function note(e){
+      counts.notes++;
+      record(e.kind||'note',e.at,e,e.landsAt!==undefined?{landsAt:e.landsAt}:undefined);
+    }
+    function step(sf){
+      if(active&&sf>=active.endAt){
+        if(active.tier>=3)lastApexEnd=sf;
+        record('end',sf,active);active=null;
+      }
+      while(!active&&queue.length){
+        const c=queue[0];
+        if(c.expiresAt<sf){queue.shift();counts.expired++;record('expire',sf,c);continue;}
+        if(c.tier>=2&&sf-lastApexEnd<recoveryGap)break;
+        if(lastShown[c.tier]!==undefined&&sf-lastShown[c.tier]<tierCfg(c.tier).minGap){
+          queue.shift();counts.dropped++;record('drop',sf,c,{why:'gap'});continue;}
+        queue.shift();begin(c,sf);
+      }
+      let holdWorld=false,physicsEvery=1,admire=false,t=0;
+      if(active){
+        t=sf-active.startAt;const cfg=active.cfg;
+        holdWorld=t>=0&&t<cfg.hold;
+        if(!holdWorld&&t>=0&&t<cfg.hold+cfg.slowFrames)physicsEvery=cfg.slowEvery;
+        admire=t>=0&&t<cfg.admire;
+        if(holdWorld)counts.heldFrames++;
+        if(physicsEvery>1)counts.slowedFrames++;
+        if(admire)counts.admireFrames++;
+      }
+      return{cue:active,t,holdWorld,physicsEvery,admire};
+    }
+    function reset(sf){
+      sf=sf||0;
+      if(active){if(active.tier>=3)lastApexEnd=sf;record('end',sf,active,{why:'reset'});active=null;}
+      for(const c of queue){counts.expired++;record('expire',sf,c,{why:'reset'});}
+      queue.length=0;
+    }
+    return{offer,note,step,reset,events:()=>log.slice(),
+      probe:()=>Object.assign({queued:queue.length,
+        active:active?{id:active.id,tier:active.tier}:null,
+        offeredByTier:Object.assign({},offeredByTier),
+        shownByTier:Object.assign({},shownByTier)},counts)};
+  }
 
   // ---- keyboard: arrows + WASD move, space/x/z act; any input enters manual
   //      mode and the AI takes back over after 8 idle seconds
@@ -336,7 +473,7 @@ const E=(()=>{
   function start(step,render,options){
     options=options||{};
     loopHooks={step,render};
-    const renderEvery=options.renderEvery||(preview?2:1);
+    const preview=params.has('preview'),renderEvery=options.renderEvery||(preview?2:1);
     let last=0,acc=0,frame=0,lastRendered=-1;
     if(!options.headless){measure('render',render,0);lastRendered=0;}
     function tick(now){
@@ -359,6 +496,7 @@ const E=(()=>{
     }return count;}
 
   return{cv,ctx,W,H,random,seedRandom,R,RI,hash,dist,clamp,rect,spawn,burst,dust,stepParts,drawParts,
+    fxRandom,fxR,fxRI,fxBurst,fxDust,createShow,
     ring,stepRings,drawRings,shake,preDraw,postDraw,start,runFrames,keys,tap,manual,axis2,record,recordTurbo,
     profileReport,initSession,sessionStep,drawSession,playing,addScore,gameOver};
 })();

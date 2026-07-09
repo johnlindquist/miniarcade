@@ -14,7 +14,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 const{bestBy,controllerMux,progressWatchdog}=AI;
 
 const GRAV=0.22,JUMP=-3.7;
@@ -32,6 +33,22 @@ let beans=[],floors=[],plats=[],sweeps=[],bumps=[],texts=[];
 let type='doors',finishY=-400,slimeY=40,slimeV=0.22,crown=null;
 let plan=[],QS=[6,4,1],round=0,Q=6,phase='intro',phT=0,timer=0,tLimit=0,qCount=0;
 let episode=0,winner=null,frame=0,camY=-238;
+
+// EPISODE MODIFIERS: rounds are already the acts here (no redundant timeline
+// per the design council) — each round latches a modifier from sim state and
+// announces it on the intro card. Bots adapt their margins to the modifier.
+let mod='none';
+const MODS={frenzy:'FRENZY GEARS',hungry:'HUNGRY SLIME',blitz:'DOOR BLITZ',none:''};
+function pickMod(){
+  if(typeof __NO_ACTS!=='undefined')return'none';
+  if((episode*5+round*3+beans.length)%3===0)return'none';
+  return type==='doors'?'blitz':type==='slime'?'hungry':'frenzy';
+}
+const SHOW=createShow({tiers:{
+  1:{frames:12},                                  // door crashes, rival goals
+  2:{frames:50,minGap:90},                        // star qualifies, lucky losers
+  3:{frames:120,hold:6,slowEvery:3,slowFrames:24} // THE CROWN
+}});
 
 // ---------- course generation ----------
 function genDoors(){
@@ -74,8 +91,9 @@ function genLadder(rows,sw,bp,hard){
 }
 function buildRound(){
   type=plan[round];Q=QS[round];qCount=0;timer=0;
-  slimeY=40;slimeV=0.1;
-  if(type==='doors'){genDoors();tLimit=75*60;}
+  mod=pickMod();SHOW.note({kind:'modifier',id:mod,at:frame,tag:round});
+  slimeY=40;slimeV=mod==='hungry'?0.145:0.1;
+  if(type==='doors'){genDoors();tLimit=(mod==='blitz'?52:75)*60;}
   else if(type==='whirly'){genLadder(14,true,true,false);tLimit=75*60;}
   else if(type==='slime'){genLadder(14,false,false,false);tLimit=0;}
   else{ // final: short brutal climb, crown on top
@@ -83,6 +101,7 @@ function buildRound(){
     let top=null;for(const p of plats)if(p.main&&(!top||p.y<top.y))top=p;
     crown={x:(top.x0+top.x1)/2,y:finishY-6,t:0};
   }
+  if(mod==='frenzy')for(const s of sweeps)s.spd*=1.35;
   beans.forEach((b,i)=>{
     b.x=18+i*(W-36)/Math.max(1,beans.length-1)+R(-3,3);b.y=-3.01;
     b.vx=0;b.vy=0;b.g=true;b.st='run';b.stun=0;b.dive=false;b.hitCd=0;b.jcd=RI(0,20);
@@ -101,7 +120,7 @@ function newBean(i){const skill=i===0?1:R(0.8,0.95);
   return bean;
 }
 function newEpisode(){
-  episode++;winner=null;round=0;
+  episode++;winner=null;round=0;SHOW.reset(frame);
   const pool=['doors','whirly','slime'].sort(()=>random()-0.5);
   plan=[pool[0],pool[1],'final'];
   beans=[];for(let i=0;i<10;i++)beans.push(newBean(i));
@@ -119,7 +138,7 @@ function collideDoors(b,py){
     if(sl&&sl.st==='open'&&b.vy<0){b.x=clamp(b.x,sl.x0+3.2,sl.x1-3.2);continue;}
     if(b.vy<0){
       if(sl&&sl.st==='shut'){ // real door bursts open
-        sl.st='open';
+        sl.st='open';SHOW.offer({id:'crash',tier:1,at:frame});
         burst(b.x,top+4,16,HUES[f.hue][0],1.8);shake(2);
         texts.push({x:b.x,y:top-4,s:'CRASH!',c:'#fff',t:45});
         continue;
@@ -206,12 +225,15 @@ function qualify(b){
   b.st='done';b.doneT=0;qCount++;
   ring(b.x,b.y,b.col,1.5,20);
   burst(b.x,b.y,10,'#fff',1.2);
+  if(b.i===0){SHOW.offer({id:'qualify',tier:2,at:frame,tag:round});fxBurst(b.x,b.y,12,b.col,2);}
+  else SHOW.offer({id:'goal',tier:1,at:frame});
   texts.push({x:b.x,y:b.y-8,s:'GOAL!',c:'#fff',t:50});
   if(b.i===0&&playing())addScore(100+round*50);
 }
 function winRound(b){
   winner=b;b.st='win';
   phase='win';phT=0;
+  SHOW.offer({id:'crown',tier:3,at:frame,tag:b.i});fxBurst(crown.x,crown.y,30,'#ffd166',2.8);
   burst(crown.x,crown.y,26,'#ffd166',2.4);
   ring(crown.x,crown.y,'#ffd166',2,26);shake(3);
   for(const o of beans)if(o!==b&&o.st==='run')o.st='sad';
@@ -265,7 +287,7 @@ function botStep(b){
   if(b.jcd>0)b.jcd--;
   if(b.i===0){ // clutch mode: the star digs deep when it falls behind the pack
     const above=beans.reduce((n,o)=>n+(o!==b&&o.st==='run'&&o.y<b.y-8?1:0),0);
-    b.clutch=above>=(crown?1:3)||(type==='slime'&&slimeY-b.y<70);
+    b.clutch=above>=(crown?1:3)||(type==='slime'&&slimeY-b.y<(mod==='hungry'?85:70));
     if(b.clutch&&b.jcd>2)b.jcd=2;
   }
   if(type==='doors'){
@@ -274,9 +296,10 @@ function botStep(b){
     if(f){
       if(b.pickF!==f){b.pickF=f;b.pickS=chooseSlot(b,f);}
       else if(frame%30===(b.i*3)%30&&f.slots[b.pickS].st!=='open'){
-        // someone broke a door open — most beans funnel to it
+        // someone broke a door open — most beans funnel to it (all of them
+        // when the DOOR BLITZ clock is squeezing the round)
         for(let i=0;i<f.slots.length;i++)
-          if(f.slots[i].st==='open'&&random()<0.75){b.pickS=i;break;}
+          if(f.slots[i].st==='open'&&random()<(mod==='blitz'?0.92:0.75)){b.pickS=i;break;}
       }
       const s=f.slots[b.pickS],tx=(s.x0+s.x1)/2+b.bias*5;
       if(Math.abs(b.x-tx)>2.5)input=Math.sign(tx-b.x);
@@ -302,10 +325,11 @@ function botStep(b){
     }else if(best){
       const tx=clamp(best.cx+b.bias*9,best.p.x0+3,best.p.x1-3);
       if(Math.abs(b.x-tx)>2)input=Math.sign(tx-b.x);
-      if(b.i===0&&b.g&&input!==0&&armDist(b.x+input*9,b.y-3)<10)input=0; // star waits out a sweeping arm
+      // FRENZY GEARS spin 1.35x: the star reads them with a wider margin
+      if(b.i===0&&b.g&&input!==0&&armDist(b.x+input*9,b.y-3)<(mod==='frenzy'?12:10))input=0; // star waits out a sweeping arm
       if(b.g&&Math.abs(b.x-tx)<12&&b.jcd<=0){
         // time the sweeper window — but never stall more than ~1s waiting for one
-        if(b.clutch||armDist(tx,best.p.y-8,22)>11||random()>b.skill||(b.wgT||0)>60){
+        if(b.clutch||armDist(tx,best.p.y-8,22)>(mod==='frenzy'?13.5:11)||random()>b.skill||(b.wgT||0)>60){
           jump=JUMP*R(0.96,1.03);b.jcd=RI(4,10)+Math.round((1-b.skill)*14);b.wgT=0;
         }else b.wgT=(b.wgT||0)+1;
       }
@@ -315,7 +339,7 @@ function botStep(b){
       if(b.g&&b.jcd<=0){jump=JUMP;b.jcd=18;}
     }
     if(!crown&&b.y<finishY+42&&!b.g&&b.vy<0&&random()<0.06)dive=true; // lunge the line
-    if(type==='slime'&&slimeY-b.y<24&&b.g&&b.jcd<=0){jump=JUMP;b.jcd=10;} // panic hop
+    if(type==='slime'&&slimeY-b.y<(mod==='hungry'?34:24)&&b.g&&b.jcd<=0){jump=JUMP;b.jcd=10;} // panic hop (earlier when it's HUNGRY)
   }
   phys(b,input,jump,dive);
 }
@@ -348,6 +372,13 @@ function crowd(){ // beans shove each other — comedy at every doorway
 function step(){
   frame++;
   sessionStep({reset:resetGame});
+  const pres=SHOW.step(frame); // the crown: 6f hitstop then 24f at 1/3 speed
+  if(pres.holdWorld||frame%pres.physicsEvery!==0){
+    stepParts();stepRings();
+    for(const t of texts){t.t--;t.y-=0.22;}
+    texts=texts.filter(t=>t.t>0);
+    return;
+  }
   for(const s of sweeps)s.a+=s.spd;
   for(const u of bumps)if(u.t>0)u.t--;
   if(crown)crown.t++;
@@ -366,7 +397,7 @@ function step(){
     }
     crowd();
     if(type==='slime'){
-      slimeV=Math.min(0.26,slimeV+0.00012);slimeY-=slimeV;
+      slimeV=Math.min(mod==='hungry'?0.3:0.26,slimeV+0.00012);slimeY-=slimeV;
       if(frame%6===0)spawn({x:R(4,W-4),y:slimeY+R(2,20),vy:-R(0.2,0.6),t:RI(10,26),c:'#ff8ac4',drag:1});
     }
     for(const b of beans){
@@ -399,6 +430,7 @@ function step(){
         const outs=beans.filter(b=>b.st==='out');
         while(done.length<need&&outs.length){
           const b=outs.pop();b.st='done';done.push(b);
+          SHOW.offer({id:'lucky',tier:2,at:frame});
           texts.push({x:W/2,y:camY+40+done.length*10,s:'LUCKY LOSER!',c:'#ffe66d',t:80});
         }
       }
@@ -579,7 +611,8 @@ function draw(){
     const sub=crown?'GRAB THE CROWN':type==='slime'?'SURVIVE · '+Q+' QUALIFY':'FIRST '+Q+' QUALIFY';
     ctx.fillText(sub,W/2-sub.length*2.1,175);
     ctx.fillStyle='#c8d2e0';
-    const s2='EP '+episode+' · '+beans.length+' BEANS';
+    const s2=mod!=='none'?'★ '+MODS[mod]+' ★':'EP '+episode+' · '+beans.length+' BEANS';
+    if(mod!=='none')ctx.fillStyle='#ff9e64';
     ctx.fillText(s2,W/2-s2.length*2.1,189);
     ctx.globalAlpha=1;
   }else if(phase==='result'){

@@ -326,5 +326,94 @@ if((rendered.byMethod.drawImage||0)!==1)fail('render did not use exactly one cac
 const win=game.sandbox.__ssWinFixture();
 if(!win.before||win.after||win.state!=='over'||win.winner!==0)fail(`scored match did not enter shared game-over state: ${JSON.stringify(win)}`);
 
+console.log('6) show ladder + act telegraphs: warnings land, tiers ordered, payoffs sim-inert');
+const SHOW_FOOTER=`
+globalThis.__showProbe=()=>SHOW.probe();
+globalThis.__showEvents=()=>SHOW.events();
+globalThis.__modeSeen={escape:0,stock:0,admire:0};
+const __setMode1=setMode;setMode=function(c,mode){
+  if(mode==='PRESS ESCAPE'&&CORE.state==='warn')globalThis.__modeSeen.escape++;
+  if(mode==='STOCK UP')globalThis.__modeSeen.stock++;
+  if(mode==='ADMIRE')globalThis.__modeSeen.admire++;
+  return __setMode1(c,mode);};
+globalThis.__simSig=()=>cars.reduce((a,c)=>a+Math.round(c.x*13+c.y*7+c.hp*100)+c.kills*1e4,0)+wrecks*31;
+`;
+for(const seed of[0x550511,0x550512,0x550513]){
+  const g=bootGame('scrapshift',{seed,footer:SHOW_FOOTER});
+  g.frames(10800,false);
+  const ev=g.sandbox.__showEvents(),p=g.sandbox.__showProbe(),modes=g.sandbox.__modeSeen;
+  // pair act warnings with landings; a phase change or a sweep supersedes a
+  // pending press telegraph (the strike legitimately moves), so those pairs
+  // are excluded from the duration band, not from existence checks
+  const pend={},press=[],sweeps=[];let lastPhase=-1e9;
+  for(const e of ev){
+    // a warning born on a phase boundary starts already compressed: the phase
+    // shift moved the strike threshold under it — same-frame phase+warn case
+    if(e.kind==='act-warning')pend[e.id]={at:e.frame,planned:e.landsAt-e.frame,
+      cut:e.id==='press'&&e.frame-lastPhase<=2};
+    else if(e.kind==='phase'){lastPhase=e.frame;if(pend.press)pend.press.cut=true;}
+    else if(e.kind==='act-land'){
+      if(e.id==='sweep'&&pend.press)pend.press.cut=true;
+      const w=pend[e.id];delete pend[e.id];
+      if(w)(e.id==='press'?press:sweeps).push({gap:e.frame-w.at,planned:w.planned,cut:w.cut});
+    }
+  }
+  const uncut=press.filter(x=>!x.cut);
+  const o=p.offeredByTier,s=p.shownByTier;
+  console.log(`  seed ${seed.toString(16)}: press gaps ${press.map(x=>x.gap+(x.cut?'*':'')).join(',')} | `+
+    `sweep gaps ${sweeps.map(x=>x.gap).join(',')} | tiers ${JSON.stringify(o)} shown ${JSON.stringify(s)} | `+
+    `responses ${JSON.stringify(modes)}`);
+  if(press.length<3)fail(`seed ${seed.toString(16)}: only ${press.length} press telegraph pairs`);
+  if(uncut.length<2)fail(`seed ${seed.toString(16)}: only ${uncut.length} uninterrupted press telegraphs`);
+  for(const x of uncut)if(x.gap<180||x.gap>320)fail(`seed ${seed.toString(16)}: press telegraph ${x.gap}f outside 180..320`);
+  if(sweeps.length<1)fail(`seed ${seed.toString(16)}: no telegraphed sweep landed`);
+  for(const x of sweeps){
+    if(x.gap<=0)fail(`seed ${seed.toString(16)}: sweep landed without warning`);
+    if(x.planned>=186&&(x.gap<180||x.gap>320))fail(`seed ${seed.toString(16)}: sweep telegraph ${x.gap}f outside 180..320`);
+  }
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))
+    fail(`seed ${seed.toString(16)}: ladder opportunities not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==0)fail(`seed ${seed.toString(16)}: unexpected world holds (${p.heldFrames}f)`);
+  if(p.slowedFrames>18*((s[2]||0)+(s[3]||0)))fail(`seed ${seed.toString(16)}: slow-mo ${p.slowedFrames}f exceeded wreck budget`);
+  if((s[2]||0)<5)fail(`seed ${seed.toString(16)}: only ${s[2]||0} wreck beats presented`);
+  if(modes.escape<1||modes.stock<1||modes.admire<1)
+    fail(`seed ${seed.toString(16)}: a telegraph/payoff bot response never fired (${JSON.stringify(modes)})`);
+}
+{
+  const a=bootGame('scrapshift',{seed:0x550521,footer:SHOW_FOOTER});
+  const b=bootGame('scrapshift',{seed:0x550521,footer:SHOW_FOOTER});
+  b.sandbox.__NO_PAYOFF_FX=1;
+  a.frames(10800,false);b.frames(10800,false);
+  if(a.sandbox.__simSig()!==b.sandbox.__simSig())fail('__NO_PAYOFF_FX changed the sim: payoff fx leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+for(const[sw,label]of[['__NO_ACT_TELEGRAPH','telegraphs off'],['__NO_ADMIRE','admire off']]){
+  const g=bootGame('scrapshift',{seed:0x551f02,footer:FOOTER});
+  g.sandbox[sw]=1;g.frames(24000,false);
+  const p=g.sandbox.__ssProbe();
+  console.log(`  paired A/B ${label}: ${p.matches} matches, ${p.wrecks} wrecks (bands must hold both ways)`);
+  if(p.wrecks<30||p.wrecks>75)fail(`${label}: wrecks ${p.wrecks} outside 30..75`);
+  if(p.matches<2||p.matches>7)fail(`${label}: matches ${p.matches} outside 2..7`);
+}
+
+console.log('ten-minute soak: moving, happening, progressing');
+{
+  const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+  const SOAK_FOOTER=`
+;globalThis.__soakN={events:0,progress:0};
+{const d0=damageCar;damageCar=(v,a,s,k,...r)=>{const out=d0(v,a,s,k,...r);if(out)globalThis.__soakN.events++;return out;};
+ const w0=wreckCar;wreckCar=(v,s,k)=>{const before=v.deaths,out=w0(v,s,k);if(v.deaths>before)globalThis.__soakN.progress++;return out;};
+ const p0=collectPickup;collectPickup=(c,p)=>{const out=p0(c,p);if(out)globalThis.__soakN.events++;return out;};}
+globalThis.__soakProbe=()=>({
+  sig:cars.reduce((a,c)=>a+Math.round(c.x*3+c.y*7),0),
+  events:globalThis.__soakN.events,progress:globalThis.__soakN.progress,
+  finite:cars.every(c=>[c.x,c.y,c.vx,c.vy,c.hp].every(Number.isFinite))});`;
+  const{samples}=runSoak('scrapshift',{seed:0x550501,footer:SOAK_FOOTER,minutes:10});
+  const report=analyzeSoak(samples);
+  console.log('  '+soakLine(report));
+  // measured seeds 0x550501/02: still 5-6s, quiet 7s, stall 19-41s, 2159-2394 ev, 95-108 prog
+  assertSoak('soak',report,{still:15,quiet:20,stall:90,minEvents:1300,minProgress:60},fail);
+}
+
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);

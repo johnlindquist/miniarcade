@@ -1,0 +1,251 @@
+# SIDE/QUEST Bot Intelligence Audit
+
+Audit of the AI in all eleven self-playing games, their eval coverage, and a plan for
+consolidating bot infrastructure and building evals that measure what actually matters:
+**fun to watch, sometimes creative, never stuck**.
+
+Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.js`,
+`evals/*.js`, and git history.
+
+## Scorecard
+
+| Game | Intelligence | Variety/Creativity | autoplay.js usage | Deliberate imperfection | Eval watchability coverage |
+|---|---|---|---|---|---|
+| SCRAP SHIFT | 5/5 — A* over nav graph, intercept solving, target hysteresis, roles | 4/5 — four personas (VOLT/FORK/BULWARK/WISP), director set-pieces | `findPath`, `controllerMux` | plan-duration jitter, fire spread | **Best in repo**: damage-lull cap, low-speed cap, mode presence, action bands |
+| MEAT LAD | 5/5 — model-predictive: simulates real physics over jump candidates | 3/5 — depth-scaled deliberate fumbles (`err` up to 0.3) | **none** (doesn't load it) | yes — intentional under-powered jumps | progress + solvability only; can't tell clean play from warp-rescues |
+| BLOCK MINE | 4/5 — weighted A* w/ state-dependent costs, trips, combat tactics | 3/5 — world seed + seeded tower blueprints; **no persona** | `BinaryHeap` only | none | rich competence floors + 30m never-stuck seed search; no variety/pacing metric |
+| DEADLINE DECK | 4/5 — ETA obstacle projection, multi-objective priorities | 4/5 — full `skillProfile` (reaction 2-4f, lapses) | `controllerMux`, `skillProfile` | yes — lapses (chance .00034) | strong bands, but **lapse firing never asserted** |
+| SIDE SURFERS | 4/5 — TTC lane analysis, roof-ride landing planning | 4/5 — "perfect bot that stumbles" lapse profile | `controllerMux`, `skillProfile` | yes — visible trips w/ `!` bubble | perfect-run + death band (1–14); no loot/variety assert |
+| HORIZON | 3/5 — stealth state machine, LoS, per-type machine AI; no pathing | 3/5 — variety from machines, not Aloy | `nearest`, `bestBy`, `progressWatchdog` | none | meters/kills/downs floors only; no lower bound on downs, watchdog firings uncounted |
+| WORD FALL | 3/5 — reactive survival; altar solver is **omniscient (cheats)** | 4/5 — word RNG, floor-scaled enemy mix, build branching | `nearest`, `wrappedDistance`, `controllerMux` | none | kills/deaths/swarm bands; **never asserts a word gets solved in autonomous runs** |
+| SMALL GUYS | 3/5 — greedy platform hopping, sweeper timing | 4/5 — per-bean skill+bias, star "clutch" mode | `bestBy`, `controllerMux`, `progressWatchdog` | yes — weak beans wander | completion + star floor; teleport re-seats invisible to eval |
+| WEB SLAM | 3/5 — ballistic prediction, off-stage recovery | 3/5 — random action gates (.09/.07/.035) | `controllerMux`, `bestBy` | yes — probabilistic actions | goal/KO/let bands; no rally-length distribution, symmetric AIs |
+| HEX CASCADE | 2/5 — greedy 1-ply argmax over swaps | 2/5 — only `random()*.35` tie-break | **none** | tie-break noise only | excellent pacing-curve + band evals (ironically better than its AI) |
+| POCKET LEAGUE | 2/5 — current-position greedy, no ball prediction | 2/5 — spectacle (per-car blasts), not brains | `controllerMux` only | steer/throttle jitter | tightest outcome bands (goals 10–30, demos 2–20); no possession/blowout check |
+
+## Finding 1 — Toolkit adoption is inversely correlated with intelligence
+
+The smartest bots (Meat Lad, Scrap Shift, Block Mine) hand-roll nearly everything;
+`simulateCandidates`, `searchPath`/`findPath`, `createMemory`, `firstApplicable`,
+`seek`/`flee`/`steer`, and `generateValidated` are essentially unused across all
+eleven games (Meat Lad doesn't even load `autoplay.js` — it needs bit-identical
+physics as ground truth, which is legitimate).
+
+Implication: don't force planner consolidation — games rightly own tactics. The
+consolidation win is the **watchability layer**: `skillProfile`, personas, watchdogs,
+and standardized telemetry, which are game-agnostic. Only 3 of 11 games use
+`skillProfile`; only 2 use `progressWatchdog` while all eleven hand-roll stall guards.
+
+## Finding 2 — Anti-stall scar tissue is the repo's dominant pattern
+
+Every game carries hand-rolled stall/deadlock escapes, and git history shows they were
+added reactively after watching bad footage:
+
+- Block Mine: SMART REPATH watchdog, depth-stall watchdog, entombed breaker, pogo guards, respawn death-spiral guards, golem timeout.
+- Meat Lad: 3-tier rocket → warp escalation, off-course suicide, trampoline-purgatory escape.
+- Scrap Shift: dual goal/movement watchdogs + a whole anti-quiet director.
+- Small Guys: watchdog teleport re-seat; Horizon: replan@30s → respawn@60s; Web Slam: `letRally`; Hex Cascade: reshuffle-on-no-moves; Word Fall: idle sway + pit respawn.
+
+Stalling is the #1 known watchability failure — and most rescue mechanisms are
+**invisible teleports/warps that read as glitches on camera**. Evals assert max-stall
+but (except blockmine-30m's `repaths===0`) never budget how often rescues fire.
+
+## Finding 3 — Evals measure competence floors, not watchability
+
+What's asserted today: finite state, progress floors, death/goal count bands, max-stall.
+What's *not* asserted anywhere (except partially in Scrap Shift / Hex Cascade):
+
+1. **Variety across seeds** — no eval compares runs to each other. Two seeds producing
+   near-identical footage pass everything. (Only Block Mine's tower-blueprint test checks
+   cross-seed difference, and only for the blueprint.)
+2. **Imperfection actually firing** — Deadline Deck and Surfers' entire drama engine is
+   `lapseChance`; a regression to 0 (robotically perfect play) passes every current band.
+3. **Signature spectacle happening** — nothing asserts Horizon thunderjaw fights, Rocket
+   demos within a match, Word Fall autonomous solves, Block Mine tower progress pacing.
+4. **Pacing distribution** — totals are checked, spread is not. 40 kills in one clump +
+   9 dead minutes passes the same band as 40 kills spread evenly. Scrap Shift's
+   `maxDamageLull ≤ 8s` and Hex Cascade's pacing-curve test are the only exceptions —
+   they should be the template.
+5. **Both bounds** — several bands are floors only (Horizon downs has no minimum → a
+   0-death safe plink-fest passes; Small Guys' star has a win floor but no dominance cap).
+
+## Finding 4 — Creativity is bolted on in 3 games, absent in the rest
+
+Existing mechanisms, best-first:
+- Deadline Deck / Surfers: `skillProfile` lapses (human-like zoning out) — the right idea.
+- Meat Lad: depth-scaled deliberate fumbles "for the fans".
+- Scrap Shift: four true personas with distinct aggression/range/orbit.
+- Small Guys: per-bean skill/bias + star clutch mode.
+- Web Slam: probabilistic action gates.
+- Block Mine, Hex Cascade, Horizon, Rocket, Word Fall: **uniform optimum-seeking, zero
+  personality**. Their variety is 100% terrain/RNG; a bland seed yields a bland run and
+  no eval catches it. Word Fall actively *cheats* (picks the known answer), destroying
+  the Wordle tension it's built around.
+
+---
+
+# Recommendations
+
+## A. Consolidate the bot layer (keep tactics game-owned)
+
+1. **Standard telemetry probe.** Every game exposes `__probe()` returning a common core:
+   `{frame, progressFrame, deaths, rescues, mode, events:[{t,type,tag}]}` — `mode` is the
+   on-screen tactic label (most games already have one), `events` is an append-only log of
+   watchable moments (kill, near-miss, build, breach, solve, lapse, rescue). Games extend
+   freely. This one contract unlocks every generic eval below.
+2. **Persona layer in autoplay.js.** `createPersona(rng, table)`: a named, seeded bundle
+   of weights (risk, greed, patience, showboat, build-affinity) that games map onto their
+   own tactic scores. Each attract run forks the RNG and draws a persona — run-to-run
+   variety by construction. Scrap Shift's hand-tuned roles are the proof it works.
+3. **Adopt `skillProfile` everywhere a body moves** (Block Mine, Horizon, Rocket, Small
+   Guys non-star beans, Hex Cascade decision cadence). It's already battle-tested in two games.
+4. **Standardize stall handling on `createProgressWatchdog`** with a shared escalation
+   vocabulary (`nudge → replan → rescue`), each escalation logged as a `rescue` event so
+   evals can budget them. Prefer *visible* recoveries (dig, rocket, panic animation) over
+   teleports.
+5. **Shared eval lib** (`evals/lib.js`): `check/near/band`, seeded run loops, JSON report
+   output (generalize what blockmine-30m already writes), and a `bootGame`-based runner.
+   Port blockmine-30m-eval off its hand-rolled `eval()` boot onto `harness.bootGame`.
+
+## B. A generic watchability eval (one runner, eleven games)
+
+Compute from the standard event stream, per seed:
+
+- **Lull**: max gap between interesting events. Band: ≤ 8–10s (Scrap Shift's bar).
+- **Pacing shape**: events-per-minute curve should rise or oscillate, not flatline.
+- **Behavior entropy**: n-gram entropy over the `mode` sequence. Catches "same stair-dig
+  for 20 minutes" — a floor asserts the bot visibly changes what it's doing.
+- **Cross-seed diversity**: run N seeds, compare mode/event signatures (Jaccard or edit
+  distance); fail if any pair is too similar. This is the direct "differently every run" test.
+- **Rescue budget**: `rescues ≤ k` (and rescue events must be > 20s apart). Warps and
+  teleport re-seats stop being invisible.
+- **Signature-moment floor**: each game declares 2–3 spectacle event types in `games.js`
+  metadata; the eval asserts each occurs and is spread out.
+- **Imperfection floor**: where a skill profile exists, assert `lapse`/`fumble` events > 0
+  in drama runs (keep the existing `__NO_LAPSE` perfect-run tests as the competence anchor).
+
+Run tiers: CI keeps today's 3 fixed seeds per game (fast, deterministic); a nightly sweep
+runs 30–50 seeds and reports percentile distributions to JSON so thresholds can be set
+from data instead of guesses, and drift is visible over time.
+
+## C. Creative-but-fun: principled "not best path"
+
+The mechanism that gives *creative* without *stupid*: **temperature over ranked plans,
+plus a style bonus** —
+
+1. Score candidate actions/plans as today (utility), add a `spectacle` term (air time,
+   near-miss margin, combo potential, build flourish — game-defined).
+2. Select by softmax over `utility + persona.showboat * spectacle` instead of argmax.
+   Temperature is the creativity dial; personas set it per run. A showboat run takes the
+   flashy line; a cautious run takes the safe one — both remain competent because utility
+   still dominates catastrophic choices.
+3. **Mood arcs**: drift skill/risk over a run (nervous open, confident middle, desperate
+   finale) for narrative shape — trivially built on `skillProfile` parameters.
+4. Watchability evals (B) are the guardrail: entropy/diversity floors force creativity to
+   exist; competence bands and lull caps stop it from tanking the run.
+
+## Implemented and proven (2026-07-09)
+
+Each change below was measured against the pre-change bot on identical seeds before
+being accepted; the proof is wired into the evals so it re-runs forever.
+
+1. **Word Fall — real deduction + a Wordle layer that actually plays.** Baseline
+   measurement revealed the audit undersold the problem: in attract mode the puzzle
+   NEVER completed (0 solves over 24 seeds × 3 min) because every death wiped the
+   puzzle, gem charge, and combat gate. Fix: attract deaths keep the half-solved word
+   and altar economy (player sessions still start clean), and the oracle pick was
+   replaced with `WordPuzzle.bestGuess` deduction over `possibleTargets()`. Proven:
+   0 → 1.42 solves and 0.63 → 4.04 guesses per 3 min (24 seeds), 2.85 guesses/solve,
+   combat bands intact. Eval now asserts solves ≥ 1, guesses ≥ 3, guesses > solves,
+   plus persistence fixtures both ways.
+2. **Deadline Deck + Surfers — imperfection is now guarded.** Lapse onsets are counted
+   by wrapping `skillProfile.decide` in the eval footers. Measured 2/3/1 per 5-min
+   deck run and 24/23 per 10-min surfers run; asserts fail if lapses stop firing
+   (verified: disabling lapses trips the floor) or explode into a stumble-storm.
+   Surfers' perfect-run test also asserts exactly 0 lapses under `__NO_LAPSE`.
+3. **Hex Cascade — cascade-aware lookahead.** `simCascadeGain` resolves each candidate
+   swap one clear+fall ahead on a private board copy (refills become unmatchable
+   holes; zero RNG reads). Proven: +27% chain-clears (1422 → 1801 over 10 paired
+   seeds), +13% specials, wins 10/10 seeds, all watchability bands intact. The eval's
+   new section 8 permanently re-proves lookahead > greedy on a fixed seed via the
+   `__NO_LOOKAHEAD` switch.
+4. **Pocket League — ball-trajectory interception with human aim fuzz.** `predictBall`
+   mirrors `ballStep` exactly (eval asserts 0.000px drift over 30 frames); cars drive
+   to the ETA-scaled intercept. First attempt scored +42% goals and broke the ≤30
+   band (the eval caught it); final design keeps the defender's read exact but fuzzes
+   the attacker's aim proportionally to prediction distance — whiffs and re-approaches
+   instead of robotic conversion. Proven: +20% goals (208 → 249 over 10 paired seeds,
+   8/10 wins), every seed inside the 10..30 band, scrum time down, splits balanced.
+
+5. **Ten-minute soaks on every game** (John's standing highest priority). New shared
+   `evals/soak.js` samples a per-game `__soakProbe` every simulated second and
+   asserts the three critical invariants: the world keeps MOVING (motion signature),
+   things keep HAPPENING (cumulative activity events), and PROGRESS keeps being made
+   (cumulative story marks) — plus finiteness. Added to the six games that lacked
+   10-minute coverage (webslam, wordfall, hexcascade, rocket, deadline-deck,
+   scrapshift) and to horizon (whose 10-minute run only checked totals, not gaps).
+   All limits calibrated from two measured seeds per game, ~2× worst-case.
+   Findings the soaks surfaced immediately:
+   - **Word Fall: the rune-word story can go dark for ~174s** late in a run —
+     `chargeNeed` grows to 42 gems per guess round. Known issue; current limit 240s
+     locks it from getting worse. Fix candidates: cap chargeNeed in attract, or
+     scale gem drops with floorNo.
+   - **Pocket League can go 75s without a scoring beat** (limit 120s) — consider a
+     director-style nudge if it drifts longer.
+   - Horizon's Aloy legitimately holds a stealth hide for ~28s while machines prowl;
+     the soak tracks world motion, not just the avatar.
+
+Iteration lessons worth keeping: measure before believing (two of four "improvements"
+initially failed their own bands or instruments); paired same-seed A/B via a
+`__NO_<FEATURE>` switch is cheap and makes the proof permanent; watchability bands
+are design contracts — when an improvement busts one, temper the bot (ideally with
+human-flavored imperfection), don't widen the band.
+
+## Environment acts + payoff ladders (2026-07-09, fusion-max council)
+
+All eleven games now run `E.createShow` (see AGENTS.md "Acts and the payoff
+ladder"). Per-game acts, each proven by a warn-phase A/B divergence against
+`__NO_ACTS` plus exact apex time budgets:
+
+- **Scrap Shift** — press/sweep telegraphs on the existing phase ladder; wreck
+  slow-mo + killer admire coast. **Rocket** — CROSSWIND bends ball and
+  `predictBall` identically; defenders pre-position. **Hex Cascade** — volatile
+  tide re-values chosen swaps (5/5 seeds); lord-fall hold+slow+admire.
+- **Word Fall** — rune storm on a death-persistent clock; closed the 174s
+  story-cadence gap (stall band tightened 240→120s). **Block Mine** — existing
+  day/night/Babel acts; kernel adopted as telemetry+ladder only (30-minute
+  no-stall contract; heldFrames pinned to 0).
+- **Web Slam** — GALE act; wall-open slow-mo. **Deadline Deck** — ROADWORK lane
+  closure; courier reroutes from the warning; FRONT PAGE hitstop.
+  **Surfers** — EXPRESS wave surges live trains inside the corridor guarantee;
+  perfect-run contract still holds (20km, 0 deaths).
+- **Horizon** — herd migration; huntress covers up and rolls through
+  stragglers; thunderjaw hold+slow+admire. **Small Guys** — round modifiers
+  (FRENZY GEARS / HUNGRY SLIME / DOOR BLITZ) instead of a redundant timeline;
+  bots adapt margins; crown hitstop. **Meat Lad** — ladder only per the
+  council (rescue apex, NAILED IT clutch beats, booster saves).
+
+Lessons this pass added: assert time budgets EXACTLY (a kernel off-by-one made
+holds run 5 of 6 frames; exact asserts caught it); slow-mo skip frames must
+stay inside the run branch (Surfers' fell through to the busted branch and
+silently reset runs — the speed-curve band caught it); the kernel event log is
+bounded, so long-window telegraph pairing needs a footer note collector
+(Deadline Deck); pick A/B seeds so the pre-positioning situation actually
+arises during the first warn window, and document the rejected seeds.
+
+## D. Per-game priorities
+
+1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board
+   already has a pure step function — cheapest big win), plus temperature selection.
+2. **Pocket League** (2/5): port Web Slam's `predictBallX` idea — ball-trajectory
+   interception + a possession/blowout eval band.
+3. **Word Fall**: replace the omniscient altar pick with `WordPuzzle.bestGuess` (the
+   entropy solver already exists in-repo and is unused by the game!) — authentic deduction,
+   occasional wrong guess, real drama. Assert `solves ≥ 1` in autonomous runs.
+4. **Block Mine**: persona layer (architect/speedrunner/hoarder) — the biggest game with
+   zero personality; add mode-entropy + cross-seed diversity to the 30m eval.
+5. **Deadline Deck / Surfers**: assert lapses fire; done.
+6. **Horizon**: lower bound on downs (or a "danger time" floor), count watchdog firings,
+   thunderjaw encounter floor.
+7. **Meat Lad**: budget warps/rockets per 10 minutes so late-game rescue-spam can't
+   masquerade as skill.

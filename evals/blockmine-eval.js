@@ -173,7 +173,11 @@ globalThis.__bmDiscoveryFixture=()=>{
   resetGame();P.dead=1e9;nextMob=1e9;for(let i=0;i<120;i++)step();const idle=discoveryPasses;
   setTile(P.cx+1,P.cy,STONE);setTile(P.cx+1,P.cy,AIR);step();
   return{idle,afterOpen:discoveryPasses};
-};`;
+};
+globalThis.__bmShow=()=>SHOW.probe();
+globalThis.__bmShowE=()=>SHOW.events();
+globalThis.__bmSig=()=>Math.round(P.x*31+P.y*7)+deepest*101+kills*1009+buildScore*13+
+  mobs.length*7+torches.length*17+Math.round(camY)+goalState.completed*271;`;
   eval((engine+'\n'+autoplay+'\n'+inline).replace(/'use strict';/g,'')+footer);
   globalThis.__bmKey=(type,code)=>listeners[type]&&listeners[type]({code,preventDefault(){}});
 }
@@ -312,6 +316,34 @@ console.log('discovery scheduling: idle frames do no repeated flood work');
 boot();const discoveryProbe=globalThis.__bmDiscoveryFixture();
 console.log(`  ${discoveryProbe.idle} initial pass, ${discoveryProbe.afterOpen} after opening a nearby face`);
 if(discoveryProbe.idle!==1||discoveryProbe.afterOpen!==2)fail('discovery flood was not movement/topology driven');
+
+console.log('payoff ladder: tier telemetry ordered, day/night notes, no world directives, fx sim-inert');
+{
+  // Block Mine keeps its existing acts (day/night, depth bands, Babel); the
+  // show kernel here is telemetry + celebration arbitration ONLY — no hold or
+  // slow-mo tiers, because the 30-minute soak's no-stall contract is the
+  // game's defining constraint. Tier 3 (waygate/Babel crown) is late-game and
+  // covered by blockmine-30m-eval.js, so this section only asserts o1>o2.
+  // Window is the full 10 minutes: the first ~3 minutes are goal-onboarding
+  // heavy (measured 0xB10C50: 20 tier-2 vs 15 kills at 3min) and only after
+  // that does routine combat dominate, which is the ordering that matters.
+  boot(0xB10C50);run(36000);
+  const p=globalThis.__bmShow(),ev=globalThis.__bmShowE();
+  const o=p.offeredByTier;
+  const nights=ev.filter(e=>e.kind==='night').length,dawns=ev.filter(e=>e.kind==='dawn').length;
+  console.log(`  tiers offered ${JSON.stringify(o)}, shown ${JSON.stringify(p.shownByTier)}, `+
+    `${nights} nights / ${dawns} dawns, held ${p.heldFrames}f slowed ${p.slowedFrames}f`);
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if((o[2]||0)<1)fail('no tier-2 milestone (goal/tool/caravan/golem) in 10 minutes');
+  if(nights<2||dawns<2)fail(`day cycle notes missing (${nights} nights, ${dawns} dawns in 3 minutes)`);
+  if(p.heldFrames!==0||p.slowedFrames!==0)fail('Block Mine must not hold or slow the world (30m no-stall contract)');
+  boot(0xB10C51);run(10800);const sigA=globalThis.__bmSig();
+  globalThis.__NO_PAYOFF_FX=1;
+  boot(0xB10C51);run(10800);const sigB=globalThis.__bmSig();
+  delete globalThis.__NO_PAYOFF_FX;
+  if(sigA!==sigB)fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
 
 console.log('manual controls: enter for instructions, enter to play, move + mine, place torch');
 boot();

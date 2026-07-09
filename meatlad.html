@@ -13,7 +13,7 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,rect,spawn,burst,stepParts,drawParts,start,keys,tap,manual,
-  initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,fxBurst}=E;
 const T=8,COLS=20,TILE_STRIDE=32;
 
 // ---------- world ----------
@@ -43,6 +43,17 @@ const solid=(tx,ty)=>tx>=0&&tx<COLS&&!!((solidRows.get(ty)||0)&(1<<tx));
 const solidPx=(px,py)=>solid(Math.floor(px/T),Math.floor(py/T));
 let saws=[],stains=[],nodes=[],items=[],bandages=[],level=1,deaths=0,frame=0,camY=-230;
 let girl=null,lives=5,bandCt=0;
+
+// Payoff ladder only (design council: this game's climb is its own act
+// structure — add environment later only if footage shows lulls). frame is
+// monotonic (resetGame keeps it) so it doubles as the show clock.
+let bannerS='',bannerC='#fff',bannerT=0;
+const showBanner=(s,c,t)=>{bannerS=s;bannerC=c||'#fff';bannerT=t||70;};
+const SHOW=createShow({tiers:{
+  1:{frames:12},                                   // node progress, bandages
+  2:{frames:45,minGap:90},                         // rocket grabs/saves, nailed jumps
+  3:{frames:110,minGap:300,hold:6,slowEvery:3,slowFrames:24} // SAVED! level clear
+}});
 
 // ---------- level generation ----------
 function plat(tx,ty,w){for(let i=0;i<w;i++)addSolid(tx+i,ty);}
@@ -403,6 +414,7 @@ function resetGame(){ // fresh tower for a new run (player or attract)
   saws=[];stains=[];items=[];bandages=[];
   level=1;deaths=0;lives=5;bandCt=0;camY=-230;
   P.rocket=false;P.rocketT=0;
+  bannerT=0;SHOW.reset(frame);
   startRun();
 }
 function blood(x,y,n){
@@ -422,6 +434,7 @@ function die(){
   for(let m=0;m<=Math.min(P.best||0,nodes.length-1);m++)nodes[m].err=0; // mastered ground stays mastered
   nodes[k].fails=(nodes[k].fails||0)+1;
   if(nodes[k].fails>=2){ // this jump keeps eating him — hop him past it
+    nodes[k].skipped=true; // a bailout, not a win: no NAILED IT for this one
     placeAt(nodes[0]);P.idx=k;P.best=k;
     const n=nodes[k];P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;
     checkClear();}
@@ -551,6 +564,14 @@ function think(){
           P.idx=j;
           if(j>(P.best||0)){
             if(playing())addScore((j-(P.best||0))*10);
+            // a jump that kept eating him, finally landed clean: NAILED IT
+            for(let m=(P.best||0)+1;m<=j;m++)
+              if((nodes[m].fails||0)>=1&&!nodes[m].skipped){
+                SHOW.offer({id:'nailed',tier:2,at:frame,tag:m});
+                fxBurst(P.x,P.y-4,12,'#ffd166',2);
+                showBanner('NAILED IT!','#ffd166',55);break;
+              }
+            SHOW.offer({id:'progress',tier:1,at:frame});
             P.best=j;P.stall=0; // only real progress calms the watchdog
           }
           checkClear();return;
@@ -661,6 +682,9 @@ function think(){
 function checkClear(){
   if(P.idx===nodes.length-1){
     girl.gone=true;girl.t=0;
+    SHOW.offer({id:'saved',tier:3,at:frame,tag:level});
+    fxBurst(P.x,P.y-6,26,'#ff9ecb',2.6);
+    showBanner('SAVED! · LVL '+level+' CLEAR','#ff9ecb',90);
     if(playing())addScore(100);
     level++;
     const start=nodes[nodes.length-1];
@@ -679,6 +703,8 @@ function hazards(){
     spawn({x:P.x+R(-2,2),y:P.y+4,vx:R(-0.3,0.3),vy:R(0.5,1.4),t:12,c:random()<0.5?'#ffd166':'#ff8a2a'});
   }else if(P.rocket&&P.vy>2.6&&P.y>nodes[P.idx].ty*T+22){ // falling to his death: fire it
     P.rocket=false;P.rocketT=55;
+    SHOW.offer({id:'save',tier:2,at:frame});fxBurst(P.x,P.y+2,12,'#ff8a2a',2);
+    showBanner('BOOSTER SAVE!','#ff8a2a',50);
     burst(P.x,P.y+4,10,'#ffd166',1.6);
   }
   for(const s of saws){
@@ -803,6 +829,13 @@ function draw(){
     ctx.fillStyle='#ff9ecb';ctx.font='bold 7px monospace';
     ctx.fillText('x'+bandCt,11,20);
   }
+  if(bannerT>0){
+    const a=Math.min(1,bannerT/15);
+    ctx.globalAlpha=.75*a;rect(16,96,W-32,20,'#120e15');ctx.globalAlpha=a;
+    ctx.strokeStyle=bannerC;ctx.strokeRect(16.5,96.5,W-33,19);
+    ctx.fillStyle=bannerC;ctx.font='bold 8px monospace';
+    ctx.fillText(bannerS,W/2-bannerS.length*2.4,109);ctx.globalAlpha=1;
+  }
   drawSession();
 }
 
@@ -810,14 +843,20 @@ function draw(){
 function step(){
   frame++;
   sessionStep({reset:resetGame});
+  const pres=SHOW.step(frame); // SAVED!: 6f hitstop then 24f at 1/3 speed
+  if(bannerT>0)bannerT--;
+  if(!pres.holdWorld&&frame%pres.physicsEvery===0){
   think();
   hazards();
   for(const it of items)if(!it.taken&&!P.rocket&&Math.hypot(it.x-P.x,it.y-P.y)<8){
     it.taken=true;P.rocket=true;burst(it.x,it.y,8,'#ffd166',1.2);
+    SHOW.offer({id:'rocket',tier:2,at:frame});
   }
   for(const b of bandages)if(!b.got&&Math.hypot(b.x-P.x,b.y-P.y)<7){
     b.got=true;bandCt++;if(playing())addScore(50);
+    SHOW.offer({id:'bandage',tier:1,at:frame});
     burst(b.x,b.y,10,'#ff9ecb',1.4);
+  }
   }
   stepParts(p=>{ // blood settles into permanent stains
     if(solidPx(p.x,p.y+1)){if(stains.length<800)stains.push({x:p.x,y:p.y});return false;}

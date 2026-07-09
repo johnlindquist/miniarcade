@@ -18,7 +18,11 @@ let game;
 
 function boot(seed){
   const footer=`
-;globalThis.__probe=()=>({dist,deaths,state,spd,
+;globalThis.__lapses=0;
+{const __d0=runnerSkill.decide;let __was=false;
+ runnerSkill.decide=(f,c,d,l)=>{const out=__d0(f,c,d,l);
+   const now=runnerSkill.isLapsed(f);if(now&&!__was)globalThis.__lapses++;__was=now;return out;};}
+globalThis.__probe=()=>({dist,deaths,state,spd,lapses:globalThis.__lapses,
   bad:!isFinite(P.x)||!isFinite(dist)});
 globalThis.__streamCheck=(nSeg)=>{
   // build a long static track, then DP a ground path through it
@@ -85,6 +89,7 @@ for(let run=1;run<=3;run++){
   if(p.bad)fail(`run ${run}: non-finite state`);
   if(p.deaths>0)fail(`run ${run}: perfect AI died ${p.deaths}x — track presented an unavoidable death`);
   if(p.dist<150000)fail(`run ${run}: only ${Math.round(p.dist/10)}m in 10 min — speed curve regressed`);
+  if(p.lapses!==0)fail(`run ${run}: __NO_LAPSE run still recorded ${p.lapses} lapses`);
 }
 // ---- 3. drama band with lapses on
 console.log('3) drama: 2 x 10 minutes, lapses on');
@@ -92,9 +97,67 @@ for(let run=1;run<=2;run++){
   boot(0x51de3000+run);
   game.frames(36000,false);
   const p=probe();
-  console.log(`  run ${run}: deaths ${p.deaths}`);
+  console.log(`  run ${run}: deaths ${p.deaths}, lapses ${p.lapses}`);
   if(p.deaths<1)fail(`run ${run}: zero deaths in 10 min — no drama`);
   if(p.deaths>14)fail(`run ${run}: ${p.deaths} deaths in 10 min — bloodbath`);
+  // The stumble mechanic is the drama engine: it must visibly fire, but a
+  // stumble-storm reads as a broken runner. Measured 23-24 on these seeds.
+  if(p.lapses<5)fail(`run ${run}: only ${p.lapses} lapses in 10 min — runner is robotically perfect`);
+  if(p.lapses>60)fail(`run ${run}: ${p.lapses} lapses in 10 min — stumble storm`);
+}
+
+// ---- 4. express wave act + show ladder
+console.log('4) express wave + show ladder: telegraphed surge, runner holds a lane, slow-mo budgeted');
+{
+  const ACT_FOOTER=`
+;globalThis.__notes=[];
+{const __n0=SHOW.note;SHOW.note=e=>{globalThis.__notes.push({kind:e.kind,id:e.id,tag:e.tag});return __n0(e);};}
+globalThis.__rush=()=>({phase:rushPhase,deaths,dist,
+  dyn:obs.reduce((n,o)=>n+(o.kind==='mov'||o.kind==='crawl'?1:0),0)});
+globalThis.__showP=()=>SHOW.probe();
+globalThis.__sig=()=>Math.round(P.x*31+dist*7)+coinCt*1009+deaths*97+P.tl*17;`;
+  // Seed picked so the pre-positioning situation actually arises during the
+  // first warn window (runner off-corridor / loot tempting the unaware twin):
+  // 0x51de4001/02/03/05 first diverge only at live, 0x51de4004 during warn.
+  const SEED=0x51de4004;
+  const a=bootGame('surfers',{seed:SEED,footer:ACT_FOOTER});
+  const b=bootGame('surfers',{seed:SEED,footer:ACT_FOOTER});
+  b.sandbox.__NO_ACTS=1;
+  let firstDiverge=-1,divergePhase='',liveSamples=0,dynA=0,dynB=0;
+  for(let f=0;f<18000;f+=10){
+    a.frames(10,false);b.frames(10,false);
+    const g=a.sandbox.__rush();
+    if(g.phase==='live'){liveSamples++;dynA+=g.dyn;dynB+=b.sandbox.__rush().dyn;}
+    if(firstDiverge<0&&a.sandbox.__sig()!==b.sandbox.__sig()){firstDiverge=f+10;divergePhase=g.phase;}
+  }
+  const ev=a.sandbox.__notes,p=a.sandbox.__showP();
+  const waves=[];let pend=null;
+  for(const e of ev){
+    if(e.kind==='act-warning'&&e.id==='express')pend=e;
+    else if(e.kind==='act-land'&&e.id==='express'&&pend){waves.push(e.tag-pend.tag);pend=null;}
+  }
+  const o=p.offeredByTier,s3=p.shownByTier[3]||0;
+  const pa=a.sandbox.__rush();
+  console.log(`  ${waves.length} waves landed (telegraphs ${waves.join(',')} run-frames), `+
+    `diverged at ${firstDiverge} during '${divergePhase}', live trains ${liveSamples?(dynA/liveSamples).toFixed(2):'?'} `+
+    `vs unaware ${liveSamples?(dynB/liveSamples).toFixed(2):'?'}, tiers ${JSON.stringify(o)}, `+
+    `waves cleared ${o[3]||0} (slowed ${p.slowedFrames}f, held ${p.heldFrames}f), ${pa.deaths} deaths`);
+  if(waves.length<2)fail(`only ${waves.length} express waves landed in 5 minutes`);
+  for(const t of waves)if(t<180||t>300)fail(`express telegraph ${t} run-frames outside 180..300`);
+  if(liveSamples<30)fail(`express live phase barely observable (${liveSamples} samples)`);
+  if(dynA<=dynB)fail(`express wave did not surge live trains (${(dynA/Math.max(1,liveSamples)).toFixed(2)} vs ${(dynB/Math.max(1,liveSamples)).toFixed(2)})`);
+  if(firstDiverge<0)fail('runner never responded to the express call (A/B identical)');
+  else if(divergePhase!=='warn')fail(`runner first diverged during '${divergePhase}', not the telegraph`);
+  if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))fail(`ladder not strictly ordered (${JSON.stringify(o)})`);
+  if(p.heldFrames!==0)fail(`hitstop not configured yet counted ${p.heldFrames} held frames`);
+  if(p.slowedFrames>24*s3)fail(`slow-mo overspent: ${p.slowedFrames}f for ${s3} apexes (budget 24f each)`);
+  if(pa.deaths>7)fail(`express run deaths ${pa.deaths} exceed watchable half-band 7 in 5 minutes`);
+  const c=bootGame('surfers',{seed:0x51de4011,footer:ACT_FOOTER});
+  const d=bootGame('surfers',{seed:0x51de4011,footer:ACT_FOOTER});
+  d.sandbox.__NO_PAYOFF_FX=1;
+  c.frames(10800,false);d.frames(10800,false);
+  if(c.sandbox.__sig()!==d.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
+  else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

@@ -18,7 +18,7 @@
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,dist,rect,spawn,burst,stepParts,drawParts,ring,stepRings,
   drawRings,shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,
-  playing,addScore,gameOver}=E;
+  playing,addScore,gameOver,createShow,fxBurst}=E;
 
 // Match-three spellcraft above a Vampire Survivors-style arena. Every color
 // permanently improves a different part of the survivor's build for this run;
@@ -39,6 +39,34 @@ let frame=0,elapsed=0,kills=0,totalMatches=0,bestCascade=0,specialsMade=0;
 let enemies=[],bolts=[],links=[],texts=[],spawnCd=20,bossMark=0,dead=false,deadT=0,deadScored=false;
 let powers=[0,0,0,0,0],matchCounts=[0,0,0,0,0],powerPulse=[0,0,0,0,0],banner='',bannerC='#fff',bannerT=0;
 let cameraZoom=CAMERA_START;
+// `frame` resets every run, so the show kernel gets its own monotonic clock.
+// Ladder: routine matches are muted tier 1; big cascades and forged specials
+// tier 2; a Night Lord falling is the apex — 6-frame hitstop, brief slow-mo,
+// and the caster pausing to admire before the board work resumes.
+let showFrame=0;
+const SHOW=createShow({tiers:{
+  1:{frames:16},
+  2:{frames:50,minGap:120},
+  3:{frames:90,minGap:600,hold:6,slowEvery:3,slowFrames:30,admire:24}
+}});
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+// Environment act: the volatile tide. One rune color surges for 30s mid-run —
+// matches of it pay double power, so the caster (and the viewer) start
+// hunting that color. Warned 300 frames out; the color is latched from sim
+// state, deterministically, with no RNG draw.
+let tidePhase='calm',tideType=0;
+function stepTide(){
+  if(typeof __NO_ACTS!=='undefined'){tidePhase='calm';return;}
+  const was=tidePhase;
+  tidePhase=elapsed>=3300&&elapsed<5100?'live':elapsed>=3000&&elapsed<3300?'warn':'calm';
+  if(tidePhase==='warn'&&was==='calm'){tideType=(totalMatches+kills)%5;
+    banner=RUNE_NAME[tideType]+' TIDE RISING';bannerC=RUNE_COL[tideType];bannerT=90;
+    SHOW.note({kind:'act-warning',id:'tide',at:showFrame,tag:elapsed,landsAt:showFrame+(3300-elapsed)});}
+  else if(tidePhase==='live'&&was!=='live'){
+    banner=RUNE_NAME[tideType]+' TIDE';bannerC=RUNE_COL[tideType];bannerT=70;
+    SHOW.note({kind:'act-land',id:'tide',at:showFrame,tag:elapsed});}
+  else if(tidePhase==='calm'&&was==='live')SHOW.note({kind:'act-end',id:'tide',at:showFrame,tag:elapsed});
+}
 const P={x:WORLD_CX,y:WORLD_CY,hp:8,maxHp:8,inv:0,shield:0,attackCd:0,hit:0};
 const reducedMotion=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
 const rumble=n=>{if(!reducedMotion)shake(n);};
@@ -168,6 +196,7 @@ function startClear(groups,custom){
     if(anchor){const k=keyOf(anchor.r,anchor.c);
       keep.set(k,makeRune(special===COLOR?PRISM:group.type,special));specialsMade++;
       banner=special===COLOR?'PRISM FORGED':special===NOVA?'NOVA FORGED':'STRIPE FORGED';bannerC=RUNE_COL[group.type];bannerT=60;
+      SHOW.offer({id:'forge',tier:2,at:showFrame,data:{special}});
     }
     awardMatch(group.type,group.cells.length,cascade,false);
   }
@@ -187,6 +216,7 @@ function prismClear(a,b,ta,tb){
   else for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(board[r][c].type===target)set.add(keyOf(r,c));
   set.add(keyOf(a.r,a.c));set.add(keyOf(b.r,b.c));
   const cells=[...set].map(fromKey);banner='PRISM BREAK';bannerC=target>=0?RUNE_COL[target]:'#fff';bannerT=70;
+  SHOW.offer({id:'prism',tier:2,at:showFrame});
   startClear([{type:target,cells,dirs:new Set(),runs:[{cells,dir:'h'}]}],set);
 }
 
@@ -234,12 +264,50 @@ function updateBoard(){
   }
 }
 
+function simCascadeGain(move){
+  // Resolve this swap one clear+fall ahead on a private copy: refill slots
+  // become unmatchable holes, so the bonus only counts cascades the move
+  // guarantees. Pure board reads — never touches the engine RNG stream.
+  if(globalThis.__NO_LOOKAHEAD||!move.groups.length)return 0;
+  const sim=board.map(row=>row.map(t=>t?{type:t.type,special:t.special}:null));
+  const t=sim[move.a.r][move.a.c];sim[move.a.r][move.a.c]=sim[move.b.r][move.b.c];sim[move.b.r][move.b.c]=t;
+  const real=board;board=sim;
+  let gain=0;
+  try{
+    const clear=new Set(),seen=new Set();
+    for(const g of move.groups)for(const p of g.cells)addClear(clear,p.r,p.c);
+    const queue=[...clear];
+    while(queue.length){
+      const k=queue.pop();if(seen.has(k))continue;seen.add(k);
+      const{r,c}=fromKey(k),tile=sim[r][c];
+      if(!tile||!tile.special||tile.special===COLOR)continue;
+      const before=clear.size;
+      if(tile.special===ROW)for(let x=0;x<COLS;x++)addClear(clear,r,x);
+      else if(tile.special===COL)for(let y=0;y<ROWS;y++)addClear(clear,y,c);
+      else if(tile.special===NOVA)for(let y=r-1;y<=r+1;y++)for(let x=c-1;x<=c+1;x++)addClear(clear,y,x);
+      if(clear.size>before)for(const nk of clear)if(!seen.has(nk))queue.push(nk);
+    }
+    for(let c=0;c<COLS;c++){
+      let w=ROWS-1;
+      for(let r=ROWS-1;r>=0;r--)if(!clear.has(keyOf(r,c))&&sim[r][c])sim[w--][c]=sim[r][c];
+      while(w>=0)sim[w--][c]=null;
+    }
+    for(const g of findMatches()){
+      const special=classifyGroup(g);
+      gain+=g.cells.length+(special===COLOR?12:special===NOVA?8:special?5:0);
+    }
+  }finally{board=real;}
+  return gain;
+}
 function scoreMove(move){
   let score=0;for(const g of move.groups){const special=classifyGroup(g);score+=g.cells.length+(special===COLOR?12:special===NOVA?8:special?5:0);
+    // tide response: hunt the volatile color — half weight during the warning
+    // (set up the board before it surges), full weight while it pays double
+    if(tidePhase!=='calm'&&g.type===tideType)score+=g.cells.length*(tidePhase==='live'?2.6:1.2);
     if(g.type===GREEN&&P.hp<P.maxHp*.55)score+=12;if(g.type===BLUE&&P.shield<60)score+=5;
     score+=Math.max(0,5-powers[g.type])*.18;}
   const a=board[move.a.r][move.a.c],b=board[move.b.r][move.b.c];if(a.special===COLOR||b.special===COLOR)score+=18;
-  return score+random()*.35;
+  return score+simCascadeGain(move)*.9+random()*.35;
 }
 function bestMove(){let best=null,bs=-1e9;for(const move of validMoves()){const s=scoreMove(move);if(s>bs){best=move;bs=s;}}return best;}
 
@@ -276,6 +344,11 @@ function spawnEnemy(kind){
 function killEnemy(e){
   if(e.dead)return;e.dead=true;kills++;const col=e.kind==='lord'?'#ffd166':e.kind==='ghoul'?'#c68cff':'#66c7ff';
   burst(e.x,e.y,e.kind==='lord'?30:9,col,e.kind==='lord'?2.4:1.2);ring(e.x,e.y,col,1.8,e.kind==='lord'?38:18);
+  if(e.kind==='lord'){ // apex payoff: hitstop + slow-mo + admire via the kernel
+    banner='LORD FELLED';bannerC='#ffd166';bannerT=80;rumble(6);
+    SHOW.offer({id:'lordfall',tier:3,at:showFrame,x:e.x,y:e.y});
+    fxBurst(e.x,e.y,24,'#ffd166',2.6);fxBurst(e.x,e.y,12,'#fff',1.8);
+  }
   if(playing())addScore(e.kind==='lord'?500:e.kind==='ghoul'?35:15);
 }
 function damageEnemy(e,n){if(!e||e.dead)return;e.hp-=n;e.hit=5;if(e.hp<=0)killEnemy(e);}
@@ -312,12 +385,16 @@ function castMatch(type,gain){
 function awardMatch(type,size,chain,fromSpecial){
   if(type<0||type>4)return;
   const levelBefore=overallLevel();
-  const gain=1+Math.max(0,size-3);powers[type]+=gain;matchCounts[type]++;totalMatches++;
+  const surge=tidePhase==='live'&&type===tideType; // volatile tide pays a bonus
+  const base=1+Math.max(0,size-3),gain=base+(surge?1:0);
+  powers[type]+=gain;matchCounts[type]++;totalMatches++;
   powerPulse[type]=30;
   if(type===GREEN)P.maxHp=vitalityMax();
-  castMatch(type,gain);const label=(fromSpecial?'CHAIN ':'')+RUNE_NAME[type]+' +'+gain;
+  castMatch(type,gain);const label=(surge?'TIDE ':fromSpecial?'CHAIN ':'')+RUNE_NAME[type]+' +'+gain;
   texts=[{x:P.x,y:P.y-24,s:label,c:RUNE_COL[type],t:42}];
-  if(chain>1){banner='CASCADE x'+chain;bannerC=RUNE_COL[type];bannerT=Math.max(bannerT,50);}
+  SHOW.offer({id:'match',tier:1,at:showFrame}); // muted ladder telemetry
+  if(chain>1){banner='CASCADE x'+chain;bannerC=RUNE_COL[type];bannerT=Math.max(bannerT,50);
+    if(chain>=3)SHOW.offer({id:'cascade',tier:2,at:showFrame,data:{chain}});}
   if(overallLevel()>levelBefore){banner='LEVEL '+overallLevel()+' · VIEW EXPANDS';bannerC='#f4ddff';bannerT=70;}
   if(playing())addScore((size*12+gain*18)*Math.max(1,chain));
 }
@@ -371,14 +448,25 @@ function resetGame(){
   enemies=[];bolts=[];links=[];texts=[];spawnCd=54;bossMark=0;dead=false;deadT=0;deadScored=false;cameraZoom=CAMERA_START;
   phase='idle';phaseT=0;pending=null;activeClear=new Set();cascade=0;cursor={r:3,c:2};selected=null;hint=null;hintT=0;aiCd=15;lastSwap=null;
   banner='MATCH TO EVOLVE';bannerC='#f4ddff';bannerT=100;Object.assign(P,{x:WORLD_CX,y:WORLD_CY,hp:8,maxHp:8,inv:0,shield:0,attackCd:10,hit:0});
+  tidePhase='calm';SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
   seedBoard();spawnEnemy('bat');
 }
 
 function step(){
-  frame++;sessionStep({reset:resetGame});
-  if(!dead){elapsed++;boardController();updateBoard();updateCombat();
-    if(elapsed>=RUN_FRAMES){if(playing()){addScore(1000+Math.round(P.hp*100));dead=true;deadScored=true;gameOver('DAWN');}
-      else resetGame();}}
+  frame++;showFrame++;sessionStep({reset:resetGame});
+  pres=SHOW.step(showFrame);
+  if(!dead){
+    // hitstop freezes the world (board, combat, night clock) while particles
+    // and banners keep breathing; slow-mo gates it to every 3rd frame; admire
+    // pauses only the bot's board work — humans keep full control
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0){
+      elapsed++;stepTide();
+      if(!pres.admire||playing()||manual())boardController();
+      updateBoard();updateCombat();
+      if(elapsed>=RUN_FRAMES){if(playing()){addScore(1000+Math.round(P.hp*100));dead=true;deadScored=true;gameOver('DAWN');}
+        else resetGame();}
+    }
+  }
   else if(!deadScored&&++deadT>140)resetGame();
   stepParts();stepRings();for(const t of texts){t.y-=.13;t.t--;}texts=texts.filter(t=>t.t>0);
   for(let i=0;i<powerPulse.length;i++)if(powerPulse[i]>0)powerPulse[i]--;
@@ -387,6 +475,7 @@ function step(){
 
 function drawBackdrop(){
   rect(0,0,W,H,'#090713');rect(0,ARENA_TOP,W,ARENA_BOTTOM-ARENA_TOP,'#100c20');
+  if(tidePhase==='live'){ctx.globalAlpha=.06;rect(0,ARENA_TOP,W,ARENA_BOTTOM-ARENA_TOP,RUNE_COL[tideType]);ctx.globalAlpha=1;}
   rect(0,ARENA_BOTTOM,W,2,'#3a2a4c');rect(0,BY-5,W,1,'#342640');
 }
 function drawArenaWorld(){
@@ -460,6 +549,9 @@ function drawBoard(){
   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
     const tile=board[r][c],x=BX+c*CELL,y=BY+r*CELL-(tile?tile.drop:0);rect(BX+c*CELL,BY+r*CELL,CELL-1,CELL-1,(r+c)%2?'#1b1525':'#21182d');
     if(!tile)continue;if(tile.flash>0){ctx.globalAlpha=.35;rect(x+1,y+1,CELL-3,CELL-3,'#fff');ctx.globalAlpha=1;}
+    if(tidePhase!=='calm'&&tile.type===tideType&&tile.special!==COLOR){ // volatile shimmer
+      ctx.globalAlpha=(tidePhase==='live'?.26:.14)+.1*Math.sin(frame*.15+r+c);
+      rect(x+1,y+1,CELL-3,CELL-3,RUNE_COL[tideType]);ctx.globalAlpha=1;}
     drawRuneShape(tile,x+1,y+1,CELL-2);
   }
   ctx.restore();

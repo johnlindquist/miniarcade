@@ -14,7 +14,8 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
-  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver}=E;
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst}=E;
 const{controllerMux,skillProfile}=AI;
 
 // ---- simulation space: 3 lanes, runner row PY, distances in sim px ----
@@ -38,6 +39,17 @@ const RSX=()=>px3(P.x,1);                           // runner screen x
 let obs=[],coins=[],pows=[],texts=[];
 let dist=0,spd=2.6,coinCt=0,corridor=1,genY=-60,state='intro',stT=0,deaths=0,frame=0;
 let combo=0,lastCoinF=-99;
+
+// EXPRESS act: a telegraphed rush-hour wave floods the tunnel with live
+// trains for 15s; the runner commits to a lane from the warning instead of
+// chasing loot. Scheduled on run distance, no RNG draws; frame is monotonic
+// (startRun keeps it) so it doubles as the show clock.
+let rushPhase='calm',rushT=0,nextRushD=7000,lastKm=0;
+const SHOW=createShow({tiers:{
+  1:{frames:12},                                    // whooshes, combo pops
+  2:{frames:45,minGap:90},                          // powerups, 1000m marks
+  3:{frames:90,minGap:600,slowEvery:3,slowFrames:24} // EXPRESS CLEARED
+}});
 const P={x:LX[1],tl:1,elev:0,jumpT:0,rollT:0,hopT:0,magT:0,jetT:0,lapse:0,runT:0,legT:0};
 let botFrame=0;
 // Keep the original speed-scaled lapse roll on E.random. The +1 duration is
@@ -72,7 +84,8 @@ function genSegment(){
     if(random()<0.4+0.3*d&&b2!==bl)obs.push({kind:'bar',lane:b2,y:top+L/2,len:6});
     coinLine(bl,top+L/2-22,3); // arc bait over the hop
     coinLine(bl,top+L/2+50,3);
-  }else if(r<0.20+0.24*Math.min(1,0.35+d)&&dynCount<(d>0.5?2:1)&&spd>2.8){
+  }else if(r<0.20+(rushPhase==='live'?0.42:0.24*Math.min(1,0.35+d))&&
+    dynCount<(d>0.5?2:1)+(rushPhase==='live'?1:0)&&spd>2.8){
     // a LIVE train: oncoming with headlights, or a slow crawler you overtake
     const cand=[0,1,2].filter(l=>l!==c&&!dynIn(l));
     let placed=false;
@@ -118,7 +131,24 @@ function startRun(){
   combo=0;lastCoinF=-99;
   P.x=LX[1];P.tl=1;P.elev=0;P.jumpT=0;P.rollT=0;P.hopT=0;P.magT=0;P.jetT=0;P.lapse=0;P.runT=0;
   botFrame=0;runnerSkill.reset();
+  rushPhase='calm';rushT=0;nextRushD=7000;lastKm=0;SHOW.reset(frame);
   state='intro';stT=0;
+}
+function stepRush(){
+  if(typeof __NO_ACTS!=='undefined')return;
+  if(rushPhase==='calm'&&dist>=nextRushD){
+    rushPhase='warn';rushT=0;
+    SHOW.note({kind:'act-warning',id:'express',at:frame,tag:P.runT});
+    texts.push({x:80,y:186,s:'EXPRESS INBOUND',c:'#ffe66d',t:70});shake(2);
+  }else if(rushPhase==='warn'&&++rushT>=240){
+    rushPhase='live';rushT=0;
+    SHOW.note({kind:'act-land',id:'express',at:frame,tag:P.runT});
+    texts.push({x:80,y:186,s:'EXPRESS SERVICE',c:'#ff5f6d',t:70});shake(3);
+  }else if(rushPhase==='live'&&++rushT>=900){
+    rushPhase='calm';nextRushD=dist+9000;
+    SHOW.offer({id:'wave',tier:3,at:frame});fxBurst(RSX(),FEET-20,22,'#ffe66d',2.4);
+    texts.push({x:80,y:186,s:'EXPRESS CLEARED',c:'#2ec4b6',t:70});
+  }
 }
 function catchPlayer(){
   if(state!=='run')return;
@@ -222,16 +252,24 @@ function runnerPolicy(){
         P.tl=bl;
         if(t0*spd<30){texts.push({x:RSX(),y:FEET-30,s:'CLOSE!',c:'#ffe66d',t:40});shake(1);}
       }else if(t0*spd<36)jumpNow(); // boxed in: ride the roof
-    }else if(t0>90){ // safe: chase loot
-      let best=lane,bs=coinScore(lane);
-      for(const d of[-1,1]){
-        const l2=lane+d;
-        if(l2<0||l2>2||barSoon(l2))continue;
-        if(tHit(l2)<90)continue;
-        const s=coinScore(l2);
-        if(s>bs+1){bs=s;best=l2;}
+    }else if(t0>90){ // safe
+      if(rushPhase==='calm'){ // chase loot
+        let best=lane,bs=coinScore(lane);
+        for(const d of[-1,1]){
+          const l2=lane+d;
+          if(l2<0||l2>2||barSoon(l2))continue;
+          if(tHit(l2)<90)continue;
+          const s=coinScore(l2);
+          if(s>bs+1){bs=s;best=l2;}
+        }
+        P.tl=best;
+      }else{ // EXPRESS called: work toward the guaranteed corridor and hold it
+        const d=Math.sign(corridor-lane);
+        if(d){
+          const l2=lane+d;
+          if(l2>=0&&l2<=2&&!barSoon(l2)&&tHit(l2)>90)P.tl=l2;
+        }
       }
-      P.tl=best;
     }
   }
 }
@@ -325,7 +363,7 @@ function pickups(){
       lastCoinF=frame;
       if(combo===8||combo===16||combo===28){
         texts.push({x:RSX(),y:FEET-42,s:'COMBO x'+(combo===8?2:combo===16?3:4),c:'#ffd166',t:50});
-        shake(1);
+        shake(1);SHOW.offer({id:'combo',tier:1,at:frame,tag:combo});
         if(playing())addScore(combo);
       }
       if(playing())addScore(5);
@@ -337,6 +375,7 @@ function pickups(){
     if(Math.abs(LX[p.lane]-P.x)<10&&Math.abs(p.y-PY)<10&&P.elev!==1){
       p.take=true;
       ring(RSX(),FEET-14,p.kind==='mag'?'#ff5fa8':'#ffd166',1.8,24);
+      SHOW.offer({id:'power',tier:2,at:frame,tag:p.kind});fxBurst(RSX(),FEET-18,10,p.kind==='mag'?'#ff5fa8':'#ffd166',1.8);
       texts.push({x:RSX(),y:FEET-40,s:p.kind==='mag'?'MAGNET!':'JETPACK!',c:'#fff',t:50});
       if(p.kind==='mag')P.magT=540;else{P.jetT=330;P.jumpT=0;P.rollT=0;}
     }
@@ -348,6 +387,7 @@ function pickups(){
 function step(){
   frame++;
   sessionStep({reset:startRun});
+  const pres=SHOW.step(frame); // EXPRESS CLEARED: 24f at 1/3 speed
   if(state==='intro'){
     stT++;
     if(stT<50&&stT%3===0) // spraying the wall
@@ -355,11 +395,18 @@ function step(){
     if(stT===58)texts.push({x:46,y:FEET-60,s:'HEY!!',c:'#ff5f6d',t:46});
     if(stT>80)state='run';
   }else if(state==='run'){
+    // slow-mo skip frames stay inside this branch: falling through to the
+    // busted else would tick stT and eventually startRun() mid-run
+    if(frame%pres.physicsEvery===0){
     P.runT++;
+    stepRush();
     // sprint within the first minute, keep creeping up after
     spd=2.6+Math.min(2.2,dist/9000*2.2)+Math.min(0.7,Math.max(0,dist-9000)/60000*0.7);
     if(P.jetT>0)spd*=1.38; // jetpack afterburner
     dist+=spd;
+    const km=Math.floor(dist/10000);
+    if(km>lastKm){lastKm=km;SHOW.offer({id:'km',tier:2,at:frame,tag:km});
+      texts.push({x:RSX(),y:FEET-52,s:(km*1000)+'m!',c:'#9fd8ff',t:56});fxBurst(RSX(),FEET-24,10,'#9fd8ff',1.8);}
     if(playing()&&frame%6===0)addScore(1);
     genY+=spd;
     for(const o of obs)o.y+=TR[o.kind]?obsV(o):spd;
@@ -377,7 +424,7 @@ function step(){
           o.nm=1;
           if(o.kind!=='train'||spd>3.6){
             burst(RSX()+(LX[o.lane]>P.x?9:-9),FEET-16,6,'#fff',1.6);
-            shake(o.kind==='mov'?3:1);
+            shake(o.kind==='mov'?3:1);SHOW.offer({id:'whoosh',tier:1,at:frame});
             if(playing())addScore(3);
             if(random()<0.5)texts.push({x:RSX(),y:FEET-34,s:'WHOOSH!',c:'#9fd8ff',t:30});
           }
@@ -388,6 +435,7 @@ function step(){
         }
       }
       pickups();
+    }
     }
   }else{ // busted
     stT++;
@@ -566,6 +614,23 @@ function drawRunner(){
   if(P.jetT>0){rect(x-8,y-16,3,9,'#8b91a5');rect(x+6,y-16,3,9,'#8b91a5');}
   if(P.lapse>0&&frame%14<8){ctx.fillStyle='#ffe66d';ctx.font='bold 8px monospace';ctx.fillText('!',x+7,y-22);}
 }
+function drawRush(){
+  if(rushPhase==='calm')return;
+  const live=rushPhase==='live',on=frame%20<10;
+  // twin signal heads flashing at the tunnel mouth
+  for(const dx of[-30,30]){
+    ctx.globalAlpha=live?.9:on?.9:.25;
+    rect(78+dx,HOR-14,4,4,'#ff5f6d');
+    ctx.globalAlpha=(live||on)?.3:.08;
+    ctx.fillStyle='#ff5f6d';ctx.beginPath();ctx.arc(80+dx,HOR-12,6,0,7);ctx.fill();
+  }
+  ctx.globalAlpha=live?.22:.12;
+  rect(0,HOR-2,W,2,'#ff5f6d');
+  ctx.globalAlpha=1;
+  ctx.font='bold 6px monospace';ctx.fillStyle=live?'#ff5f6d':'#ffe66d';
+  const s=live?'EXPRESS SERVICE':'EXPRESS INBOUND';
+  ctx.fillText(s,80-s.length*1.8,HOR-20);
+}
 function drawGuard(gy,gx){
   rect(gx-7,gy-4,15,10,'#2c3e66'); // uniform
   rect(gx-4,gy-12,9,8,'#e8b088');
@@ -634,6 +699,7 @@ function draw(){
       rect(px3(l-13,f),y,px3(l+13,f)-px3(l-13,f),Math.max(1,2.4*f),'#2e313d');
     ctx.globalAlpha=1;
   }
+  drawRush();
   drawObs();
   // guard: on your tail early, lunging when you're caught
   if(state==='intro')drawGuard(H-16-Math.max(0,40-stT*2)*-0+Math.min(40,stT),52);
