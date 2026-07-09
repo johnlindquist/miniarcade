@@ -54,7 +54,7 @@ const parityCases=[
     flyers:flyers.map(p=>Object.values(p)),stats:Object.values(stats),next:E.random()});`],
   ['scrapshift',`globalThis.__parity=()=>({frame,clock,matchState,stateT,roundPhase,overtime,
     wrecks,deaths,pickupsTaken,explosions,ramHits,wreckSlow,weaponUses:{...weaponUses},weaponHits:{...weaponHits},
-    core:Object.values(CORE),cars:cars.map(c=>Object.values(c)),shots:shots.map(s=>Object.values(s)),
+    tactics:{...tacticStats},director:{...director},lastCoreState,core:Object.values(CORE),cars:cars.map(c=>Object.values(c)),shots:shots.map(s=>Object.values(s)),
     mines:mines.map(m=>Object.values(m)),pickups:pickups.map(p=>Object.values(p)),
     barrels:barrels.map(b=>Object.values(b)),feed:feed.map(f=>Object.values(f)),banner,bannerT,next:E.random()});`]
 ];

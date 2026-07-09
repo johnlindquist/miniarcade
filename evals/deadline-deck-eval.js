@@ -28,14 +28,14 @@ const __ddAllFinite=()=>[
   ...houses,...obstacles,...rails,...ramps,...bundles,...flyers
 ].every(__ddFinite);
 globalThis.__ddProbe=()=>({
-  frame,state,stateT,routeFrame,routeNo,distance,lives,papers,delivered,offered,missed,
+  frame,state,stateT,routeFrame,routeNo,distance,speed,lives,papers,delivered,offered,missed,
   routeScore,comboPoints,comboCount,comboT,comboLabel,press,frontPage,
   ...stats,landedTricks:__ddLandedTricks,hybridMail:stats.airMail+stats.railMail,
   routeLog:{clears:globalThis.__ddRouteLog.clears,wipeouts:globalThis.__ddRouteLog.wipeouts,
     shorts:globalThis.__ddRouteLog.shorts,finishes:globalThis.__ddRouteLog.finishes.map(o=>({...o}))},
   rider:{...P},playing:playing(),finite:__ddAllFinite()
 });
-const __ddNeutral=()=>({steer:0,jump:false,throw:false,throwSide:0,trick:false,grind:false});
+const __ddNeutral=()=>({steer:0,throttle:0,jump:false,throw:false,throwSide:0,trick:false,grind:false});
 
 globalThis.__ddDeliveryFixture=()=>{
   resetRoute();houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];
@@ -96,6 +96,47 @@ globalThis.__ddBailFixture=()=>{
   const recovered={x:P.x,bailT:P.bailT,inv:P.inv,trick:P.trick};
   const canRide=launchOllie(false);
   return{before,bailed,lost,beforeRecovery,recovered,canRide,airT:P.airT,finite:__ddAllFinite()};
+};
+
+globalThis.__ddMovementFixture=()=>{
+  resetRoute();houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];
+  Object.assign(P,{x:80,vx:0,airT:0,airMax:0,h:0,grindId:0,bailT:0,inv:0});speed=CRUISE_SPEED;
+  const start=speed,push={...__ddNeutral(),throttle:1},brake={...__ddNeutral(),throttle:-1};
+  for(let i=0;i<90;i++)updateSpeed(push);const boosted=speed;
+  for(let i=0;i<25;i++)updateSpeed(brake);const braked=speed;
+  speed=3;P.x=80;P.vx=0;const middle=boardHeading();
+  const rightIntent={...__ddNeutral(),steer:1};for(let i=0;i<120;i++)updatePlayer(rightIntent);
+  const right={x:P.x,heading:boardHeading()};
+  const leftIntent={...__ddNeutral(),steer:-1};for(let i=0;i<240;i++)updatePlayer(leftIntent);
+  const left={x:P.x,heading:boardHeading()};
+  P.x=80;P.vx=2;const angle=boardHeading(),axis={x:Math.sin(angle),y:-Math.cos(angle)},
+    mag=Math.hypot(P.vx,speed),dot=(axis.x*P.vx+axis.y*-speed)/mag;
+  return{start,boosted,braked,middle,right,left,span:right.x-left.x,dot,finite:__ddAllFinite()};
+};
+
+globalThis.__ddRampFixture=()=>{
+  resetRoute();houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];resetCombo();stats.ramps=0;
+  Object.assign(P,{x:80,vx:0,airT:0,airMax:0,h:0,grindId:0,bailT:0,inv:0,rampAir:0});
+  speed=4;launchOllie(false);const normalMax=P.airMax;let normalPeak=0;
+  while(P.airT>0){updatePlayer(__ddNeutral());normalPeak=Math.max(normalPeak,P.h);}
+  resetCombo();Object.assign(P,{x:80,vx:0,airT:0,airMax:0,h:0,grindId:0,bailT:0,inv:0,rampAir:0});
+  speed=4;const ramp={id:9002,x:80,y:PY,w:20,power:1.1,used:false};ramps=[ramp];streetCollisions();
+  const rampMax=P.airMax,takeoffSpeed=speed;let rampPeak=0;
+  while(P.airT>0){updatePlayer(__ddNeutral());rampPeak=Math.max(rampPeak,P.h);}
+  return{used:ramp.used,ramps:stats.ramps,normalMax,normalPeak,rampMax,rampPeak,takeoffSpeed,
+    landed:P.airT===0&&P.rampAir===0,landT:P.landT,finite:__ddAllFinite()};
+};
+
+globalThis.__ddVisualState=mode=>{
+  resetRoute();houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];texts=[];
+  Object.assign(P,{x:80,vx:0,h:0,airT:0,airMax:0,grindId:0,bailT:0,inv:0,rampAir:0,landT:0});
+  speed=CRUISE_SPEED;
+  if(mode==='fast')speed=MAX_SPEED;
+  else if(mode==='air'){speed=4.2;Object.assign(P,{airT:34,airMax:68,rampAir:1,launchSpeed:4.2});P.h=riderHeight();}
+  else if(mode==='grind'){
+    const rail={id:9003,x:80,y:PY-30,len:90,side:1};rails=[rail];P.x=80;P.grindId=rail.id;P.h=7;
+  }
+  return{speed,h:P.h,heading:boardHeading()};
 };`;
 
 let failed=false;
@@ -110,7 +151,8 @@ for(let run=1;run<=3;run++){
   game.frames(18000,false);const p=game.sandbox.__ddProbe();
   console.log(`  run ${run} seed ${seed}: ${p.routes} routes (${p.routeLog.clears} clear), `+
     `${p.deliveries} deliveries, ${p.landedTricks}/${p.tricks} landed tricks, ${p.grinds} grinds, `+
-    `${p.airMail}+${p.railMail} hybrid mail, combo ${p.bestCombo}, ${p.crashes} crashes, `+
+    `${p.airMail}+${p.railMail} hybrid mail, ${p.ramps} ramps, top ${p.topSpeed.toFixed(2)}, `+
+    `combo ${p.bestCombo}, ${p.crashes} crashes, `+
     `stall ${(p.maxStall/60).toFixed(1)}s`);
   if(!p.finite)fail(`run ${run}: non-finite route, rider, or entity state`);
   autonomousClears+=p.clears;
@@ -118,6 +160,7 @@ for(let run=1;run<=3;run++){
   if(p.deliveries<120)fail(`run ${run}: only ${p.deliveries} successful deliveries`);
   if(p.tricks<85||p.landedTricks<60)fail(`run ${run}: weak trick line (${p.landedTricks}/${p.tricks} landed)`);
   if(p.grinds<50)fail(`run ${run}: only ${p.grinds} rail grinds`);
+  if(p.ramps<80||p.topSpeed<4.65||p.topSpeed>4.81)fail(`run ${run}: ramp/speed loop weak (${p.ramps} ramps, ${p.topSpeed.toFixed(2)} speed)`);
   if(p.airMail<40||p.railMail<30)fail(`run ${run}: hybrid mail weak (${p.airMail} air, ${p.railMail} rail)`);
   if(p.bestMult<8||p.bestCombo<25000)fail(`run ${run}: best line only x${p.bestMult} / ${p.bestCombo}`);
   if(p.crashes>8)fail(`run ${run}: ${p.crashes} crashes exceed the watchable limit 8`);
@@ -180,20 +223,55 @@ if(bail.recovered.x!==80||bail.recovered.bailT!==0||bail.recovered.inv!==75||bai
   !bail.canRide||bail.airT!==40)fail(`rider did not recover cleanly: ${JSON.stringify(bail.recovered)}`);
 if(!bail.finite)fail('bail fixture produced non-finite state');
 
-console.log('6) session + manual courier: Enter gate, steer, jump, throw, trick');
+console.log('6) movement: push, brake, full-width carve, board follows travel');
+game=bootGame('deadline-deck',{seed:0xdead205,footer:FOOTER});
+const movement=game.sandbox.__ddMovementFixture();
+console.log(`  speed ${movement.start.toFixed(2)} -> ${movement.boosted.toFixed(2)} -> ${movement.braked.toFixed(2)}; `+
+  `carve ${movement.left.x.toFixed(1)}..${movement.right.x.toFixed(1)}; heading ${movement.left.heading.toFixed(2)} / ${movement.middle.toFixed(2)} / ${movement.right.heading.toFixed(2)}`);
+if(movement.boosted-movement.start<1.4||movement.boosted>4.81)
+  fail(`push did not build substantial capped speed: ${JSON.stringify(movement)}`);
+if(movement.boosted-movement.braked<1.15)fail(`brake did not scrub speed: ${JSON.stringify(movement)}`);
+if(movement.left.x>30.1||movement.right.x<129.9||movement.span<99.5)
+  fail(`carve did not span the widened route: ${JSON.stringify(movement)}`);
+if(Math.abs(movement.middle)>.001||movement.left.heading>=-.35||movement.right.heading<=.35||movement.dot<.995)
+  fail(`board heading does not follow travel: ${JSON.stringify(movement)}`);
+if(!movement.finite)fail('movement fixture produced non-finite state');
+
+console.log('7) ramp aerial: wider ramp produces a higher, longer, faster launch');
+game=bootGame('deadline-deck',{seed:0xdead206,footer:FOOTER});
+const ramp=game.sandbox.__ddRampFixture();
+console.log(`  ollie ${ramp.normalMax}f / ${ramp.normalPeak.toFixed(1)}px; ramp ${ramp.rampMax}f / `+
+  `${ramp.rampPeak.toFixed(1)}px at ${ramp.takeoffSpeed.toFixed(2)} speed`);
+if(!ramp.used||ramp.ramps!==1||ramp.rampMax<ramp.normalMax+20||ramp.rampPeak<ramp.normalPeak+12||
+  ramp.takeoffSpeed<=4||!ramp.landed||ramp.landT!==18)fail(`ramp aerial contract regressed: ${JSON.stringify(ramp)}`);
+if(!ramp.finite)fail('ramp fixture produced non-finite state');
+
+console.log('8) motion render: speed, aerial, and grind states add readable effects');
+game=bootGame('deadline-deck',{seed:0xdead207,footer:FOOTER});
+const renderMode=mode=>{game.sandbox.__ddVisualState(mode);game.counter.calls=0;game.counter.byMethod={};
+  game.sandbox.draw();return{calls:game.counter.calls,fills:game.counter.byMethod.fillRect||0};};
+const idleFx=renderMode('idle'),fastFx=renderMode('fast'),airFx=renderMode('air'),grindFx=renderMode('grind');
+console.log(`  canvas calls idle ${idleFx.calls}, fast ${fastFx.calls}, air ${airFx.calls}, grind ${grindFx.calls}`);
+if(fastFx.calls<idleFx.calls+10||airFx.calls<idleFx.calls+14||grindFx.calls<idleFx.calls+6)
+  fail(`motion effects are not materially visible in render work: ${JSON.stringify({idleFx,fastFx,airFx,grindFx})}`);
+
+console.log('9) session + manual courier: Enter gate, push, steer, jump, throw, trick');
 game=bootGame('deadline-deck',{seed:0xdead300,footer:FOOTER});
 if(game.sandbox.__ddProbe().playing)fail('session started in playing mode');
 press(game,'Enter');if(game.sandbox.__ddProbe().playing)fail('first Enter skipped instructions');
 press(game,'Enter');if(!game.sandbox.__ddProbe().playing)fail('second Enter did not start the route');
 const started=game.sandbox.__ddProbe();
+game.key('keydown','ArrowUp');game.frames(90,false);game.key('keyup','ArrowUp');
+const pushed=game.sandbox.__ddProbe();
 game.key('keydown','ArrowRight');game.frames(20,false);game.key('keyup','ArrowRight');
 const steered=game.sandbox.__ddProbe();
 press(game,'Space');const jumped=game.sandbox.__ddProbe();
 press(game,'KeyX');const threw=game.sandbox.__ddProbe();
 press(game,'KeyZ');const tricked=game.sandbox.__ddProbe();
-console.log(`  steered ${(steered.rider.x-started.rider.x).toFixed(1)}px; jump ${jumped.rider.airT}f; `+
+console.log(`  speed ${started.speed.toFixed(2)} -> ${pushed.speed.toFixed(2)}; steered ${(steered.rider.x-pushed.rider.x).toFixed(1)}px; jump ${jumped.rider.airT}f; `+
   `papers ${jumped.papers}->${threw.papers}; trick ${tricked.rider.trick}`);
-if(steered.rider.x-started.rider.x<15)fail('manual right input did not carve across the road');
+if(pushed.speed-started.speed<1.4)fail('manual Up did not build speed');
+if(steered.rider.x-pushed.rider.x<24)fail('manual right input did not carve responsively across the road');
 if(jumped.rider.airT<=0||jumped.rider.h<=0)fail('manual Space did not launch an ollie');
 if(threw.throws!==jumped.throws+1||threw.papers!==jumped.papers-1)fail('manual X did not throw exactly one paper');
 if(!tricked.rider.trick||tricked.tricks!==threw.tricks+1)fail('manual Z did not start one aerial trick');

@@ -361,6 +361,11 @@ function drawSkyStatic(c,box,seed){
   c.strokeStyle='#263d5b';c.beginPath();c.moveTo(18,FLOOR);c.lineTo(50,118);c.moveTo(142,FLOOR);c.lineTo(110,118);c.stroke();
 }
 function drawCourtStatic(c,box){
+  box(0,WALL_TOP,6,WALL_BOTTOM-WALL_TOP,TEAM[0].dark);box(5,WALL_TOP,1,WALL_BOTTOM-WALL_TOP,TEAM[0].main);
+  box(W-6,WALL_TOP,6,WALL_BOTTOM-WALL_TOP,TEAM[1].dark);box(W-6,WALL_TOP,1,WALL_BOTTOM-WALL_TOP,TEAM[1].main);
+  for(let i=1;i<WALL_TILES;i++){
+    const y=WALL_TOP+i*WALL_TILE_H-1;box(0,y,6,2,'#0d1424');box(W-6,y,6,2,'#0d1424');
+  }
   for(const p of PLATS){
     if(p.ground){box(p.x,p.y,p.w,5,'#41536d');box(p.x,p.y,p.w,2,'#92b4d6');box(0,p.y+5,W,H-p.y-5,'#080b14');}
     else{box(p.x,p.y,p.w,4,'#263a55');box(p.x,p.y,p.w,1,'#82b5df');box(p.x+3,p.y+4,p.w-6,2,'#121b2c');}
@@ -387,6 +392,7 @@ function drawWalls(){
     const x=side?W-6:0,inner=side?W-6:5,threat=ball.last>=0&&ball.last!==side&&(side?ball.vx>0:ball.vx<0);
     for(let i=0;i<WALL_TILES;i++){
       const y=WALL_TOP+i*WALL_TILE_H+1,h=WALL_TILE_H-2,stage=walls[side][i],flash=wallFlash[side][i];
+      if(stage===0)continue;
       if(stage===2){
         rect(x,y,6,h,'#03050b');rect(side?x:x+5,y,1,h,TEAM[side].dark);
         rect(side?x:x+4,y,2,2,TEAM[side].main);rect(side?x:x+4,y+h-2,2,2,TEAM[side].main);continue;
@@ -433,7 +439,6 @@ function drawHUD(){
   ctx.font='bold 11px monospace';ctx.fillStyle='#fff';ctx.fillText(score[0],18,17);ctx.fillText(score[1],W-27,17);
   const secs=Math.max(0,Math.ceil(clock/60)),ts=Math.floor(secs/60)+':'+(''+secs%60).padStart(2,'0');
   ctx.font='bold 8px monospace';ctx.fillStyle=secs<=20?'#ff6b76':'#c8d2e0';ctx.fillText(ts,68,16);
-  const phase=ballPhase();for(let i=0;i<3;i++)rect(74+i*4,21,3,2,i<=phase?(ball.last>=0?TEAM[ball.last].light:'#ffd166'):'#273044');
   for(let side=0;side<2;side++)for(let i=0;i<WALL_TILES;i++){
     const stage=walls[side][i],x=side?W-39+i*4:9+i*4;
     rect(x,21,3,2,stage===2?'#050711':stage===1?TEAM[side].main:TEAM[side].dark);

@@ -22,27 +22,31 @@ const{controllerMux,skillProfile}=AI;
 
 // A newspaper route and a skate line are the same line: every delivery, flip,
 // curb grind, and clean gap contributes to one combo until it is banked.
-const ROAD_L=39,ROAD_R=121,PY=286,HUD_H=29;
+const ROAD_L=39,ROAD_R=121,PLAYER_L=30,PLAYER_R=130,PY=286,HUD_H=29;
 const ROUTE_FRAMES=90*60,QUOTA=24;
+const CRUISE_SPEED=2.05,MAX_SPEED=4.8;
 const INK='#14233c',PAPER='#fff0c7',TEAL='#42bca0',CORAL='#f06464',YELLOW='#ffd75a';
-const LANE_X=[55,80,105];
+const LANE_X=[52,80,108],RAMP_X=[39,55,80,105,121];
 
 let frame=0,state='route',stateT=0,routeFrame=0,routeNo=1,finishReason='';
-let distance=0,speed=2.15,genY=0,blockNo=0,nextId=1,nextSide=-1;
+let distance=0,speed=CRUISE_SPEED,genY=0,blockNo=0,nextId=1,nextSide=-1;
 let lives=3,papers=9,delivered=0,offered=0,missed=0,routeScore=0;
 let houses=[],obstacles=[],rails=[],ramps=[],bundles=[],flyers=[],texts=[];
 let comboPoints=0,comboCount=0,comboT=0,comboLabel='',comboSeen=new Set();
 let press=0,frontPage=0,lastProgressFrame=0;
-const stats={routes:0,clears:0,deliveries:0,misses:0,tricks:0,grinds:0,crashes:0,throws:0,
-  airMail:0,railMail:0,bestMult:0,bestCombo:0,maxStall:0};
+const stats={routes:0,clears:0,deliveries:0,misses:0,tricks:0,grinds:0,ramps:0,crashes:0,throws:0,
+  airMail:0,railMail:0,bestMult:0,bestCombo:0,maxStall:0,topSpeed:CRUISE_SPEED};
 const P={x:80,vx:0,h:0,airT:0,airMax:0,trick:'',trickAge:0,flip:0,grindId:0,
-  grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0};
+  grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0,
+  pushT:0,landT:0,rampAir:0,launchSpeed:0};
 
 const courierSkill=skillProfile({skill:.92,precision:.94,risk:.72,recovery:.9,reactionFrames:[2,4],
   lapseChance:.00034,lapseFrames:[16,34],rng:{chance:p=>!globalThis.__NO_LAPSE&&random()<p,int:RI,range:R}});
 
 const targetY=h=>h.y+27;
-const riderHeight=()=>P.grindId?7:P.airT>0?Math.sin(Math.PI*(1-P.airT/P.airMax))*24:0;
+const riderHeight=()=>P.grindId?7:P.airT>0?Math.sin(Math.PI*(1-P.airT/P.airMax))*
+  (P.rampAir?34+clamp((P.launchSpeed-CRUISE_SPEED)*3,0,9):24):0;
+const boardHeading=()=>clamp(Math.atan2(P.vx,Math.max(1,speed)),-1.05,1.05);
 const railById=id=>rails.find(r=>r.id===id);
 const score=n=>{n=Math.max(0,Math.round(n));routeScore+=n;if(playing())addScore(n);};
 const markProgress=()=>{stats.maxStall=Math.max(stats.maxStall,frame-lastProgressFrame);lastProgressFrame=frame;};
@@ -87,29 +91,34 @@ function genBlock(){
     const rs=side<0?-1:1;
     rails.push({id:nextId++,x:rs<0?46:114,y:y+RI(15,65),len:RI(54,78),side:rs});
   }
-  if(blockNo%3===0||random()<.28){
-    const safeLane=(lane+RI(1,2))%3;
-    ramps.push({id:nextId++,x:LANE_X[safeLane],y:y+RI(108,165),w:14,used:false});
+  if(blockNo%2===0||random()<.62){
+    const choices=RAMP_X.filter(x=>Math.abs(x-LANE_X[lane])>17),x=choices[RI(0,choices.length-1)];
+    ramps.push({id:nextId++,x,y:y+RI(104,158),w:18,power:R(1,1.24),used:false});
   }
   if(blockNo%4===0)bundles.push({id:nextId++,x:LANE_X[(lane+1)%3],y:y+RI(44,92),take:false});
 }
 function ensureStreet(){while(genY>-920)genBlock();}
 
 function resetRoute(){
-  state='route';stateT=0;routeFrame=0;finishReason='';distance=0;speed=2.15;genY=24;blockNo=0;nextSide=-1;
+  state='route';stateT=0;routeFrame=0;finishReason='';distance=0;speed=CRUISE_SPEED;genY=24;blockNo=0;nextSide=-1;
   lives=3;papers=9;delivered=0;offered=0;missed=0;routeScore=0;
   houses=[];obstacles=[];rails=[];ramps=[];bundles=[];flyers=[];texts=[];
   press=0;frontPage=0;resetCombo();courierSkill.reset();lastProgressFrame=frame;
   Object.assign(P,{x:80,vx:0,h:0,airT:0,airMax:0,trick:'',trickAge:0,flip:0,grindId:0,
-    grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0});
+    grindFrames:0,balance:0,balanceV:0,bailT:0,inv:0,throwCd:0,lean:0,boardT:0,
+    pushT:0,landT:0,rampAir:0,launchSpeed:0});
   ensureStreet();
 }
 
 function launchOllie(ramp){
   if(P.bailT>0||P.airT>0||P.grindId)return false;
-  P.airMax=ramp?52:40;P.airT=P.airMax;P.trick='';P.trickAge=0;P.flip=0;
+  P.rampAir=ramp?1:0;P.launchSpeed=speed;
+  P.airMax=ramp?clamp(Math.round((54+(speed-CRUISE_SPEED)*7)*(ramp.power||1)),54,76):40;
+  P.airT=P.airMax;P.trick='';P.trickAge=0;P.flip=0;
   addLine(ramp?'DRIVEWAY GAP':'OLLIE',ramp?90:25,ramp?'gap-ramp':'ollie');
-  dust(P.x,PY+2,4,'#d9c9aa');return true;
+  if(ramp){stats.ramps++;speed=clamp(speed+.32,CRUISE_SPEED,MAX_SPEED);P.launchSpeed=speed;
+    say('RAMP!',YELLOW,P.x,PY-43,42);ring(P.x,PY+1,YELLOW,1.8,24);burst(P.x,PY,10,PAPER,1.5,.04);shake(2);}
+  dust(P.x,PY+2,ramp?9:4,'#d9c9aa');return true;
 }
 function trickNow(steer){
   if(P.airT<=0||P.grindId||P.trick||P.bailT>0)return false;
@@ -119,19 +128,20 @@ function trickNow(steer){
 }
 function releaseGrind(){
   if(!P.grindId)return;
-  P.grindId=0;P.airMax=22;P.airT=22;P.trick='';P.trickAge=0;P.balance=0;P.balanceV=0;
-  dust(P.x,PY-2,4,YELLOW);
+  P.grindId=0;P.airMax=22;P.airT=22;P.rampAir=0;P.launchSpeed=speed;
+  P.trick='';P.trickAge=0;P.balance=0;P.balanceV=0;
+  dust(P.x,PY-2,6,YELLOW);ring(P.x,PY-2,YELLOW,1.1,16);
 }
 function captureRail(r){
   if(!r||P.grindId||P.bailT>0)return false;
-  P.grindId=r.id;P.airT=0;P.airMax=0;P.x=r.x;P.vx=0;P.grindFrames=0;
+  P.grindId=r.id;P.airT=0;P.airMax=0;P.rampAir=0;P.x=r.x;P.vx=0;P.grindFrames=0;
   P.balance=0;P.balanceV=(hash(r.id,routeNo)-.5)*.025;
   addLine('50-50 GRIND',80,'grind-'+(r.side<0?'l':'r'));stats.grinds++;
-  say('LOCKED!',YELLOW);return true;
+  say('LOCKED!',YELLOW);ring(P.x,PY-2,YELLOW,1.4,18);burst(P.x,PY,7,YELLOW,1.2,.04);shake(1);return true;
 }
 function bail(reason){
   if(P.bailT>0||P.inv>0||state!=='route')return false;
-  P.bailT=92;P.grindId=0;P.airT=0;P.h=0;P.vx=0;lives--;stats.crashes++;
+  P.bailT=92;P.grindId=0;P.airT=0;P.rampAir=0;P.h=0;P.vx=0;lives--;stats.crashes++;
   dropCombo(reason||'BAIL!');shake(7);burst(P.x,PY-8,16,PAPER,2.1,.05);
   for(let i=0;i<4;i++)spawn({x:P.x,y:PY-12,vx:R(-1.8,1.8),vy:R(-2,-.5),grav:.09,t:38,c:PAPER});
   if(lives<=0)finishRoute('WIPEOUT');return true;
@@ -186,23 +196,26 @@ function updateFlyers(){
 
 function humanIntent(){
   const steer=(keys.right?1:0)-(keys.left?1:0);
-  const jump=tap('a')||tap('up');
+  const throttle=(keys.up?1:0)-(keys.down?1:0),jump=tap('a');
   const throwNow=tap('b'),trick=tap('c');
-  return{steer,jump,throw:throwNow,throwSide:steer,trick,grind:keys.c};
+  return{steer,throttle,jump,throw:throwNow,throwSide:steer,trick,grind:keys.c};
 }
 function rawBotIntent(){
-  if(P.grindId)return{steer:Math.sign(P.balance),jump:false,throw:!!chooseThrowTarget(0),
+  if(P.grindId)return{steer:Math.sign(P.balance),throttle:speed<3.85?1:0,jump:false,throw:!!chooseThrowTarget(0),
     throwSide:chooseThrowTarget(0)?.side||0,trick:false,grind:true};
-  let desired=80,jump=false,grind=false;
+  let desired=80,jump=false,grind=false,throttle=speed<3.7?1:0;
   const h=houses.filter(o=>!o.delivered&&!o.missed&&targetY(o)>150&&targetY(o)<270)
     .sort((a,b)=>targetY(b)-targetY(a))[0];
-  if(h)desired=h.side<0?54:106;
+  if(h)desired=h.side<0?40:120;
   const rail=rails.filter(r=>r.y+r.len>PY-92&&r.y<PY+4)
     .sort((a,b)=>(b.y+b.len)-(a.y+a.len))[0];
   if(rail&&rail.id%3!==0){desired=rail.x;grind=true;
     if(rail.y+rail.len>PY-46&&rail.y+rail.len<PY-8&&Math.abs(P.x-rail.x)<15)jump=true;}
   const bundle=bundles.filter(b=>!b.take&&b.y>PY-115&&b.y<PY+5).sort((a,b)=>b.y-a.y)[0];
-  if(bundle&&papers<=4){desired=bundle.x;grind=false;}
+  const needsBundle=!!bundle&&papers<=4;
+  if(needsBundle){desired=bundle.x;grind=false;}
+  const ramp=ramps.filter(r=>!r.used&&r.y>PY-(125+speed*12)&&r.y<PY+6).sort((a,b)=>b.y-a.y)[0];
+  if(ramp&&!needsBundle){desired=ramp.x;grind=false;jump=false;throttle=speed<MAX_SPEED-.15?1:0;}
   // Plan against the line we are carving toward, not only the rider's current
   // hitbox. The older reactive check noticed cars after the carve was already
   // committed and left only a few frames for a panic ollie.
@@ -218,26 +231,40 @@ function rawBotIntent(){
     if(danger.kind==='car'){
       const pad=(danger.w+15)/2,left=ox-pad,right=ox+pad;
       const choices=[];
-      if(left>=ROAD_L+4)choices.push(clamp(left-3,ROAD_L+4,ROAD_R-4));
-      if(right<=ROAD_R-4)choices.push(clamp(right+3,ROAD_L+4,ROAD_R-4));
+      if(left>=PLAYER_L+4)choices.push(clamp(left-3,PLAYER_L+4,PLAYER_R-4));
+      if(right<=PLAYER_R-4)choices.push(clamp(right+3,PLAYER_L+4,PLAYER_R-4));
       if(choices.length)desired=choices.sort((a,b)=>Math.abs(a-P.x)-Math.abs(b-P.x))[0];
       // If the carve cannot reach its clearance line in time, turn the car
       // into a deliberate gap instead of clipping its rear corner.
       if(danger.y>PY-58&&Math.abs(ox-P.x)<(danger.w+15)/2)jump=true;
+      if(danger.y>PY-42)throttle=-.45;
     }else if(danger.y>PY-58)jump=true;
   }
-  const ramp=ramps.filter(r=>!r.used&&r.y>PY-84&&r.y<PY+5).sort((a,b)=>b.y-a.y)[0];
-  if(ramp&&!danger){desired=ramp.x;}
   const throwTarget=chooseThrowTarget(0),throwNow=!!throwTarget&&targetY(throwTarget)>190&&targetY(throwTarget)<250;
   const steer=clamp((desired-P.x)/14,-1,1);
   const trick=P.airT>0&&!P.trick&&P.airT<P.airMax-7&&P.airT>17;
-  return{steer,jump,throw:throwNow,throwSide:throwTarget?throwTarget.side:0,trick,grind};
+  return{steer,throttle,jump,throw:throwNow,throwSide:throwTarget?throwTarget.side:0,trick,grind};
 }
 function botIntent(){
-  return courierSkill.decide(frame,null,rawBotIntent,(_ctx,last)=>({steer:last?.steer||0,jump:false,
+  return courierSkill.decide(frame,null,rawBotIntent,(_ctx,last)=>({steer:last?.steer||0,throttle:last?.throttle||0,jump:false,
     throw:false,throwSide:0,trick:false,grind:false}));
 }
 const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function updateSpeed(intent){
+  const throttle=clamp(intent.throttle||0,-1,1),grounded=P.airT<=0&&!P.grindId&&P.bailT<=0;
+  if(P.bailT>0)speed+=(CRUISE_SPEED-speed)*.025;
+  else if(throttle>0&&grounded){
+    speed+=.018*throttle;P.pushT=10;
+    if(frame%6===0)dust(P.x-P.vx*2,PY+2,2,'#d9c9aa');
+  }else if(throttle<0&&grounded)speed+=.052*throttle;
+  else if(grounded)speed+=(Math.max(CRUISE_SPEED,2.35)-speed)*.0035;
+  if(P.grindId)speed+=.0035;
+  speed=clamp(speed,1.45,MAX_SPEED);stats.topSpeed=Math.max(stats.topSpeed,speed);
+  if(P.pushT>0)P.pushT--;if(P.landT>0)P.landT--;
+  if(grounded&&Math.abs(P.vx)>1.55&&frame%5===0)
+    spawn({x:P.x-P.vx*1.6,y:PY+1,vx:-P.vx*.16+R(-.15,.15),vy:R(.15,.6),t:12,c:'#d9c9aa',drag:.92});
+}
 
 function updatePlayer(intent){
   if(P.throwCd>0)P.throwCd--;if(P.inv>0)P.inv--;
@@ -254,20 +281,28 @@ function updatePlayer(intent){
     if(P.grindFrames%24===0){comboPoints+=20;comboT=frontPage>0?120:54;markProgress();}
     if(P.grindFrames%32===0)P.balanceV+=(hash(P.grindFrames,r.id)-.5)*.035;
     P.balanceV-=intent.steer*.006+P.balance*.0015;P.balanceV*=.93;P.balance+=P.balanceV;
+    if(P.grindFrames%3===0)spawn({x:P.x+R(-2,2),y:PY+1,vx:R(-1.2,1.2),vy:R(.3,1.5),
+      grav:.05,drag:.96,t:RI(10,20),c:P.grindFrames%6?YELLOW:CORAL});
+    if(P.grindFrames%14===0)shake(1);
     if(Math.abs(P.balance)>1.05)bail('SLIPPED!');
     P.h=7;return;
   }
 
-  P.vx+=intent.steer*.24;P.vx*=.82;P.vx=clamp(P.vx,-2.2,2.2);
-  P.x=clamp(P.x+P.vx,ROAD_L+3,ROAD_R-3);P.lean+=(intent.steer-P.lean)*.18;
+  P.vx+=intent.steer*.3;P.vx*=.86;P.vx=clamp(P.vx,-3,3);
+  P.x=clamp(P.x+P.vx,PLAYER_L,PLAYER_R);P.lean+=(intent.steer-P.lean)*.18;
   if(P.airT>0){
     P.airT--;if(P.trick){P.trickAge++;P.flip+=P.trick==='SHOVE-IT'?.34:.46;}
     P.h=riderHeight();
+    if((P.rampAir||speed>3.7)&&frame%4===0)spawn({x:P.x-P.vx*1.2+R(-2,2),y:PY-P.h+5,
+      vx:-P.vx*.12,vy:R(.5,1.4),t:12,c:P.rampAir?YELLOW:PAPER,drag:.94});
     if(P.airT===0){
-      P.h=0;
+      const rampLanding=P.rampAir,landingSpeed=P.launchSpeed;P.h=0;
       if(P.trick&&P.trickAge<12){bail('SKETCHY!');return;}
       if(P.trick)say('CLEAN!',TEAL,P.x,PY-40,34);
-      P.trick='';P.trickAge=0;P.flip=0;dust(P.x,PY+2,5,'#d9c9aa');
+      P.trick='';P.trickAge=0;P.flip=0;P.rampAir=0;P.landT=rampLanding?18:9;
+      dust(P.x,PY+2,rampLanding?12:6,'#d9c9aa');
+      ring(P.x,PY+1,rampLanding?YELLOW:TEAL,rampLanding?1.9:1.1,rampLanding?22:13);
+      if(rampLanding){shake(2);speed=clamp(Math.max(speed,landingSpeed)+.16,CRUISE_SPEED,MAX_SPEED);}
     }
   }else P.h=0;
 
@@ -293,8 +328,8 @@ function moveStreet(){
 function streetCollisions(){
   if(P.bailT>0||state!=='route')return;
   for(const r of ramps){
-    if(!r.used&&Math.abs(r.y-PY)<6&&Math.abs(r.x-P.x)<(r.w+7)/2&&P.airT<=0&&!P.grindId){
-      r.used=true;launchOllie(true);shake(1);
+    if(!r.used&&Math.abs(r.y-PY)<Math.max(7,speed+2)&&Math.abs(r.x-P.x)<(r.w+8)/2&&P.airT<=0&&!P.grindId){
+      r.used=true;launchOllie(r);
     }
   }
   for(const b of bundles){
@@ -324,8 +359,8 @@ function finishRoute(reason){
 function step(){
   frame++;sessionStep({reset:resetRoute});
   if(state==='route'){
-    routeFrame++;speed=2.15+Math.min(.8,routeFrame/ROUTE_FRAMES*.8);
-    const intent=controller();updatePlayer(intent);moveStreet();updateFlyers();streetCollisions();updateCombo();
+    routeFrame++;
+    const intent=controller();updateSpeed(intent);updatePlayer(intent);moveStreet();updateFlyers();streetCollisions();updateCombo();
     stats.maxStall=Math.max(stats.maxStall,frame-lastProgressFrame);
     if(routeFrame>=ROUTE_FRAMES)finishRoute();
   }else if(--stateT<=0&&!playing()){routeNo++;resetRoute();}
@@ -348,6 +383,16 @@ function drawRoad(){
     const y=((i*63+distance*.72)%570)-80;
     rect(7+(i%2)*139,y,10,2,'#46947d');
   }
+  const rush=clamp((speed-2.45)/(MAX_SPEED-2.45),0,1);
+  if(rush>.03){
+    ctx.globalAlpha=.08+rush*.24;
+    for(let i=0;i<8;i++){
+      const y=((i*71+frame*(3+speed*1.8))%(H+70))-35;
+      const x=i%2?ROAD_L+5+(i%3)*6:ROAD_R-6-(i%3)*6;
+      rect(x,y,1,5+rush*22,PAPER);
+    }
+    ctx.globalAlpha=1;
+  }
 }
 function drawHouse(h){
   const y=Math.round(h.y),left=h.side<0,x=left?-5:134;
@@ -365,10 +410,17 @@ function drawHouse(h){
 function drawRail(r){
   rect(r.x-1,r.y,3,r.len,'#495568');rect(r.x-4,r.y+6,3,2,'#9eabb8');
   rect(r.x-4,r.y+r.len-8,3,2,'#9eabb8');rect(r.x-3,r.y+7,2,r.len-14,'#707f90');
+  if(P.grindId===r.id){ctx.globalAlpha=.32+.18*Math.sin(frame*.6);rect(r.x-5,r.y,10,r.len,YELLOW);ctx.globalAlpha=1;}
 }
 function drawRamp(r){
-  const y=Math.round(r.y);rect(r.x-r.w/2,y-4,r.w,8,'#bb6b45');
-  rect(r.x-r.w/2+2,y-3,r.w-4,2,YELLOW);rect(r.x-2,y-7,4,3,'#d98a58');
+  const x=Math.round(r.x),y=Math.round(r.y),w=r.w,a=r.used ? .35 : 1;ctx.globalAlpha=a;
+  ctx.fillStyle='#a95242';ctx.beginPath();ctx.moveTo(x-w/2,y+8);ctx.lineTo(x+w/2,y+8);
+  ctx.lineTo(x+w*.32,y-7);ctx.lineTo(x-w*.32,y-7);ctx.closePath();ctx.fill();
+  rect(x-w*.32,y-7,w*.64,3,YELLOW);
+  for(const yy of[y+3,y-2]){ctx.fillStyle=PAPER;ctx.beginPath();ctx.moveTo(x,yy-3);ctx.lineTo(x+4,yy+2);
+    ctx.lineTo(x+1,yy+2);ctx.lineTo(x,yy);ctx.lineTo(x-1,yy+2);ctx.lineTo(x-4,yy+2);ctx.closePath();ctx.fill();}
+  if(!r.used){ctx.globalAlpha=.15+.08*Math.sin(frame*.14+r.id);rect(x-w/2-2,y-9,w+4,19,YELLOW);}
+  ctx.globalAlpha=1;
 }
 function drawObstacle(o){
   const x=Math.round(o.x),y=Math.round(o.y);
@@ -399,17 +451,31 @@ function drawFlyer(p){
   ctx.globalAlpha=.35;rect(p.x-p.side*7,p.y,4,1,PAPER);ctx.globalAlpha=1;
 }
 function drawRider(){
-  const x=Math.round(P.x),base=PY-Math.round(P.h);
+  const x=Math.round(P.x),compress=P.landT>0?Math.sin(P.landT/(P.landT>9?18:9)*Math.PI)*2:0,
+    base=PY-Math.round(P.h)+compress,yaw=P.grindId?0:boardHeading();
   ctx.globalAlpha=P.inv>0&&frame%6<3?.35:.28;
   ctx.fillStyle='#07101e';ctx.beginPath();ctx.ellipse(x,PY+3,clamp(10-P.h*.2,4,10),3,0,0,7);ctx.fill();ctx.globalAlpha=1;
-  ctx.save();ctx.translate(x,base);ctx.rotate(P.bailT>0?P.boardT:P.lean*.12);
+  if((speed>3.35||P.rampAir)&&P.bailT<=0){
+    for(let i=2;i>=1;i--){ctx.globalAlpha=.08+i*.04;
+      const gx=x-P.vx*i*1.8,gy=base+i*(2+speed*.5);rect(gx-2,gy-8,5,12,TEAL);rect(gx-1,gy+2,3,10,YELLOW);}
+    ctx.globalAlpha=1;
+  }
+  if(P.airT>0){
+    ctx.globalAlpha=.18;
+    for(let i=0;i<3;i++){const wx=x-9+i*9+Math.sin(frame*.17+i)*3,wy=base+12+i*5;
+      rect(wx,wy,1,7+P.h*.18,PAPER);}
+    ctx.globalAlpha=1;
+  }
+  ctx.save();ctx.translate(x,base);ctx.rotate(P.bailT>0?P.boardT:yaw);
   const boardSpin=P.trick?P.flip:0;
   ctx.save();ctx.translate(0,1);ctx.rotate(boardSpin);
-  rect(-9,-2,18,3,YELLOW);rect(-7,1,3,2,'#111827');rect(5,1,3,2,'#111827');ctx.restore();
+  rect(-3,-9,6,18,YELLOW);rect(-2,-9,4,3,PAPER);rect(-1,-9,2,2,CORAL);
+  rect(-5,-6,2,3,'#111827');rect(3,-6,2,3,'#111827');
+  rect(-5,5,2,3,'#111827');rect(3,5,2,3,'#111827');ctx.restore();
   if(P.bailT<=0){
     rect(-5,-11,10,10,'#f07167');rect(-7,-10,3,8,'#274a69');
     rect(-4,-17,8,7,'#d89668');rect(-5,-19,10,3,'#28a9a0');rect(3,-17,4,2,'#28a9a0');
-    const leg=P.grindId?2:Math.sin(frame*.28)*2;
+    const leg=P.grindId?2:Math.sin(frame*(.2+speed*.035))*(P.pushT>0?3:2);
     rect(-5+leg,-4,4,5,'#24365a');rect(2-leg,-4,4,5,'#24365a');
     rect(5,-10,5,3,'#d89668');rect(8,-9,4,5,'#fff0c7');
   }
@@ -434,9 +500,11 @@ function drawHUD(){
   ctx.fillStyle=left<=15?CORAL:YELLOW;ctx.fillText(tm,69,10);
   ctx.fillStyle=PAPER;ctx.fillText('DEL '+('0'+delivered).slice(-2)+'/'+QUOTA,112,10);
   for(let i=0;i<3;i++){ctx.fillStyle=i<lives?CORAL:'#39465c';ctx.fillText('♥',5+i*9,22);}
-  ctx.fillStyle=PAPER;ctx.fillText('▰ '+papers,35,22);
-  ctx.fillStyle='#91a0b7';ctx.font='bold 6px monospace';ctx.fillText(frontPage>0?'FRONT PAGE':'PRESS',68,21);
-  rect(105,17,48,5,'#334158');rect(105,17,48*(frontPage>0?frontPage/360:press/100),5,frontPage>0?YELLOW:TEAL);
+  ctx.fillStyle=PAPER;ctx.fillText('▰ '+papers,34,22);
+  ctx.fillStyle='#91a0b7';ctx.font='bold 6px monospace';ctx.fillText('SPD',57,21);
+  rect(76,17,22,5,'#334158');rect(76,17,22*clamp((speed-1.45)/(MAX_SPEED-1.45),0,1),5,speed>4.2?YELLOW:TEAL);
+  ctx.fillStyle='#91a0b7';ctx.fillText(frontPage>0?'PAGE':'PRESS',102,21);
+  rect(128,17,25,5,'#334158');rect(128,17,25*(frontPage>0?frontPage/360:press/100),5,frontPage>0?YELLOW:TEAL);
   if(comboPoints>0){
     const mult=Math.max(1,Math.min(8,comboCount)),s=comboPoints+' x'+mult;
     ctx.font='bold 10px monospace';ctx.fillStyle=YELLOW;ctx.fillText(s,80-s.length*3,248);
@@ -469,7 +537,7 @@ function draw(){
   drawHUD();drawFinish();drawSession(false);
 }
 
-initSession('deadline-deck',[['LEFT / RIGHT','CARVE · AIM'],['SPACE','OLLIE'],['X','THROW PAPER'],['Z / SHIFT','TRICK · GRIND']]);
+initSession('deadline-deck',[['LEFT / RIGHT','CARVE · AIM'],['UP / DOWN','PUSH · BRAKE'],['SPACE','OLLIE'],['X','THROW PAPER'],['Z / SHIFT','TRICK · GRIND']]);
 resetRoute();
 start(()=>{step();},()=>{draw();});
 </script>

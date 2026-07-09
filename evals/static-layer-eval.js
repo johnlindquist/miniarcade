@@ -3,7 +3,7 @@
 const{bootGame}=require('./harness');
 
 const BEFORE={rocket:87,wordfall:458,webslam:269,scrapshift:null};
-const MAX={rocket:80,wordfall:60,webslam:150,scrapshift:230};
+const MAX={rocket:80,wordfall:60,webslam:100,scrapshift:230};
 let failed=false;
 const fail=m=>{console.error('  FAIL:',m);failed=true;};
 const snap=c=>({calls:c.calls,byMethod:{...c.byMethod}});

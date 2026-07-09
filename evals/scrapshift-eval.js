@@ -5,26 +5,36 @@ const{bootGame}=require('./harness');
 const FOOTER=`
 globalThis.__ssEval={matches:0,wrecks:0,kills:[0,0,0,0],deaths:[0,0,0,0],
   uses:{DISC:0,MINE:0,FLUX:0},hits:{DISC:0,MINE:0,FLUX:0},pickups:0,pulses:0,
-  phases:new Set(),finite:true,entityFinite:true,arenaSafe:true,cannonHits:0,rams:0,maxShots:0,maxMines:0};
+  phases:new Set(),finite:true,entityFinite:true,arenaSafe:true,cannonHits:0,rams:0,maxShots:0,maxMines:0,
+  activeSteps:0,lowSteps:0,wallContacts:0,unsafeSpecials:0,validTargets:0,invalidTargets:0,
+  damageLull:0,maxDamageLull:0,directorDrops:0,directorSweeps:0,wins:[0,0,0,0],
+  modes:[new Set(),new Set(),new Set(),new Set()]};
 const __wreck0=wreckCar;wreckCar=function(victim,source,kind){
   const before=cars.map(c=>c.kills),deathsBefore=victim.deaths,out=__wreck0(victim,source,kind);
   if(victim.deaths>deathsBefore){__ssEval.wrecks++;__ssEval.deaths[victim.id]++;
     cars.forEach((c,i)=>__ssEval.kills[i]+=c.kills-before[i]);}return out;};
 const __special0=useSpecial;useSpecial=function(car){const type=car.weapon,out=__special0(car);
-  if(out)__ssEval.uses[type]++;return out;};
+  if(out){__ssEval.uses[type]++;if(/DODGE|ESCAPE|REPAIR|REARM|REFUEL|REPLAN/.test(car.aiMode))__ssEval.unsafeSpecials++;}return out;};
 const __damage0=damageCar;damageCar=function(victim,amount,source,kind,...rest){
   const out=__damage0(victim,amount,source,kind,...rest);
-  if(out&&__ssEval.hits[kind]!==undefined)__ssEval.hits[kind]++;if(out&&kind==='RIVET')__ssEval.cannonHits++;return out;};
+  if(out){__ssEval.damageLull=0;if(__ssEval.hits[kind]!==undefined)__ssEval.hits[kind]++;if(kind==='RIVET')__ssEval.cannonHits++;}return out;};
 const __pickup0=collectPickup;collectPickup=function(car,pickup){const out=__pickup0(car,pickup);
   if(out)__ssEval.pickups++;return out;};
 const __core0=stepCore;stepCore=function(){const before=CORE.pulses,out=__core0();
   __ssEval.pulses+=CORE.pulses-before;return out;};
 const __phase0=updatePhase;updatePhase=function(){const out=__phase0();__ssEval.phases.add(roundPhase);return out;};
 const __over0=matchOver;matchOver=function(win,reason){const before=matchState,out=__over0(win,reason);
-  if(before!=='over'&&matchState==='over')__ssEval.matches++;return out;};
+  if(before!=='over'&&matchState==='over'){__ssEval.matches++;if(win)__ssEval.wins[win.id]++;}return out;};
 const __collisions0=carCollisions;carCollisions=function(){const before=ramHits,out=__collisions0();
   __ssEval.rams+=ramHits-before;return out;};
-const __physics0=physicsStep;physicsStep=function(){const out=__physics0();
+const __carStep0=carStep;carStep=function(car,intent){const walls=car.wallHits,out=__carStep0(car,intent);
+  if(matchState==='play'&&active(car)){__ssEval.activeSteps++;if(Math.hypot(car.vx,car.vy)<.38)__ssEval.lowSteps++;
+    __ssEval.wallContacts+=car.wallHits-walls;__ssEval.modes[car.id].add(car.aiMode);
+    if(active(cars[car.target]))__ssEval.validTargets++;else __ssEval.invalidTargets++;}return out;};
+const __reset0=resetGame;resetGame=function(){const out=__reset0();__ssEval.damageLull=0;return out;};
+const __physics0=physicsStep;physicsStep=function(){const drops=director.drops,sweeps=director.sweeps;
+  if(matchState==='play'){__ssEval.damageLull++;__ssEval.maxDamageLull=Math.max(__ssEval.maxDamageLull,__ssEval.damageLull);}
+  const out=__physics0();__ssEval.directorDrops+=Math.max(0,director.drops-drops);__ssEval.directorSweeps+=Math.max(0,director.sweeps-sweeps);
   __ssEval.maxShots=Math.max(__ssEval.maxShots,shots.length);__ssEval.maxMines=Math.max(__ssEval.maxMines,mines.length);
   if(!cars.every(c=>[c.x,c.y,c.vx,c.vy,c.a,c.hp,c.nitro].every(Number.isFinite)))__ssEval.finite=false;
   if(![...shots,...mines].every(item=>[item.x,item.y,item.vx===undefined?0:item.vx,item.vy===undefined?0:item.vy,item.ttl].every(Number.isFinite)))__ssEval.entityFinite=false;
@@ -34,13 +44,17 @@ globalThis.__ssProbe=()=>({matches:__ssEval.matches,wrecks:__ssEval.wrecks,kills
   deaths:[...__ssEval.deaths],uses:{...__ssEval.uses},hits:{...__ssEval.hits},pickups:__ssEval.pickups,
   pulses:__ssEval.pulses,phases:[...__ssEval.phases],finite:__ssEval.finite,entityFinite:__ssEval.entityFinite,
   arenaSafe:__ssEval.arenaSafe,cannonHits:__ssEval.cannonHits,rams:__ssEval.rams,
-  maxShots:__ssEval.maxShots,maxMines:__ssEval.maxMines,state:matchState,clock,
+  maxShots:__ssEval.maxShots,maxMines:__ssEval.maxMines,state:matchState,clock,wins:[...__ssEval.wins],
+  wallRate:__ssEval.wallContacts/Math.max(1,__ssEval.activeSteps),lowRate:__ssEval.lowSteps/Math.max(1,__ssEval.activeSteps),
+  invalidTargetRate:__ssEval.invalidTargets/Math.max(1,__ssEval.validTargets+__ssEval.invalidTargets),
+  unsafeSpecials:__ssEval.unsafeSpecials,maxDamageLull:__ssEval.maxDamageLull,
+  directorDrops:__ssEval.directorDrops,directorSweeps:__ssEval.directorSweeps,modes:__ssEval.modes.map(set=>[...set]),
   cars:cars.map(c=>({x:c.x,y:c.y,vx:c.vx,vy:c.vy,hp:c.hp,lives:c.lives,kills:c.kills,
     weapon:c.weapon,ammo:c.ammo,nitro:c.nitro,mode:c.aiMode,shots:c.shots,specials:c.specials}))});
 globalThis.__ssWeaponFixture=type=>{
   resetGame();matchState='play';shots=[];mines=[];barrels.forEach(b=>b.dead=1e9);
   const attacker=cars[0],victim=cars[1];cars[2].lives=cars[3].lives=0;cars[2].dead=cars[3].dead=1e9;
-  Object.assign(attacker,{x:45,y:58,a:0,vx:0,vy:0,weapon:type,ammo:WAMMO[type],specialCd:0,inv:0});
+  Object.assign(attacker,{x:45,y:58,a:0,aimA:0,vx:0,vy:0,weapon:type,ammo:WAMMO[type],specialCd:0,inv:0});
   Object.assign(victim,{x:type==='MINE'?37:57,y:58,a:Math.PI,vx:0,vy:0,hp:victim.maxHp,inv:0,dead:0,lives:3});
   const before=victim.hp,ammo=attacker.ammo,ok=useSpecial(attacker);
   for(let i=0;i<100;i++){frame++;if(type==='MINE')stepMines();else stepShots();}
@@ -83,7 +97,7 @@ globalThis.__ssAiFixture=()=>{
 globalThis.__ssCannonFixture=()=>{
   resetGame();matchState='play';shots=[];mines=[];barrels.forEach(b=>b.dead=1e9);
   const attacker=cars[0],victim=cars[1];cars[2].lives=cars[3].lives=0;cars[2].dead=cars[3].dead=1e9;
-  Object.assign(attacker,{x:45,y:58,a:0,vx:0,vy:0,gunCd:0,inv:0,kills:0});
+  Object.assign(attacker,{x:45,y:58,a:0,aimA:0,vx:0,vy:0,gunCd:0,inv:0,kills:0});
   Object.assign(victim,{x:62,y:58,vx:0,vy:0,hp:.5,inv:0,dead:0,lives:3});
   const fired=fireCannon(attacker);for(let i=0;i<20;i++){frame++;stepShots();}
   return{fired,shots:shots.length,kills:attacker.kills,victimLives:victim.lives,victimDead:victim.dead};
@@ -91,7 +105,7 @@ globalThis.__ssCannonFixture=()=>{
 globalThis.__ssChainFixture=()=>{
   resetGame();matchState='play';shots=[];mines=[];const attacker=cars[0],victim=cars[1],first=barrels[0],second=barrels[1];
   barrels.slice(2).forEach(b=>b.dead=1e9);cars[2].lives=cars[3].lives=0;cars[2].dead=cars[3].dead=1e9;
-  Object.assign(attacker,{x:45,y:60,a:0,vx:0,vy:0,gunCd:0,inv:0});Object.assign(victim,{x:76,y:60,hp:victim.maxHp,inv:0});
+  Object.assign(attacker,{x:45,y:60,a:0,aimA:0,vx:0,vy:0,gunCd:0,inv:0});Object.assign(victim,{x:76,y:60,hp:victim.maxHp,inv:0});
   Object.assign(first,{x:58,y:60,hp:1,dead:0});Object.assign(second,{x:68,y:60,hp:2,dead:0});
   const before=victim.hp,booms=explosions,fired=fireCannon(attacker);for(let i=0;i<8;i++){frame++;stepShots();}
   const chained={fired,first:first.dead,second:second.dead,damage:before-victim.hp,explosions:explosions-booms};
@@ -115,6 +129,79 @@ globalThis.__ssRepairRun=()=>{
   let steps=0;for(;steps<240&&car.hp===1;steps++){frame++;carStep(car);stepPickups();}
   return{steps,hp:car.hp,pickupT:repair.t,distance:Math.hypot(car.x-repair.x,car.y-repair.y)};
 };
+function __ssFixture(activeIds){
+  resetGame();matchState='play';roundPhase='OPEN SHIFT';CORE.state='idle';CORE.t=0;lastCoreState='idle';shots=[];mines=[];
+  barrels.forEach(b=>b.dead=1e9);cars.forEach(c=>{if(activeIds.includes(c.id))Object.assign(c,{dead:0,lives:3,inv:0,vx:0,vy:0,target:-1,retarget:0,escape:0});
+    else Object.assign(c,{dead:1e9,lives:0});});
+}
+globalThis.__ssTargetFixture=()=>{
+  __ssFixture([0,1,2,3]);const hunter=cars[0];Object.assign(hunter,{x:40,y:55,a:0,aimA:0});
+  Object.assign(cars[1],{x:60,y:55,hp:cars[1].maxHp,kills:0});Object.assign(cars[2],{x:100,y:55,hp:2,kills:0});
+  Object.assign(cars[3],{x:70,y:55,hp:cars[3].maxHp,kills:3});
+  let target=targetFor(hunter),finish={id:target.id,reason:hunter.targetReason};
+  hunter.target=-1;hunter.retarget=0;cars[2].inv=30;target=targetFor(hunter);const invulnerable={id:target.id,reason:hunter.targetReason};
+  cars[2].inv=0;Object.assign(cars[1],{x:70,y:55,hp:cars[1].maxHp,kills:0});Object.assign(cars[2],{x:72,y:55,hp:cars[2].maxHp-1,kills:0});
+  cars[3].lives=0;hunter.target=1;hunter.retarget=20;target=targetFor(hunter);
+  return{finish,invulnerable,hysteresis:{id:target.id,current:targetUtility(hunter,cars[1]),challenger:targetUtility(hunter,cars[2])}};
+};
+globalThis.__ssThreatFixture=()=>{
+  __ssFixture([0,1]);const car=cars[0],foe=cars[1];Object.assign(car,{x:80,y:60,a:-Math.PI/2,aimA:0,nitro:80});Object.assign(foe,{x:130,y:60});
+  shots=[{kind:'rivet',owner:1,x:40,y:60,vx:4.7,vy:0,a:0,ttl:30,target:-1}];
+  const threat=incomingThreat(car),intent=decide(car),incoming={kind:threat&&threat.kind,t:threat&&threat.t,score:threat&&threat.score,mode:car.aiMode,intent};
+  shots=[{kind:'rivet',owner:1,x:72,y:61,vx:-4.7,vy:0,a:Math.PI,ttl:30,target:-1}];const receding=incomingThreat(car);
+  shots=[{kind:'rivet',owner:1,x:40,y:74,vx:4.7,vy:0,a:0,ttl:30,target:-1}];const miss=incomingThreat(car);
+  shots=[];Object.assign(car,{x:60,y:60,vx:3,vy:0});mines=[{owner:1,x:105,y:60,arm:0,ttl:300,blink:0}];const mine=incomingThreat(car);
+  return{incoming,receding:receding&&receding.kind,miss:miss&&miss.kind,mine:{kind:mine&&mine.kind,t:mine&&mine.t,score:mine&&mine.score}};
+};
+globalThis.__ssRouteFixture=()=>{
+  __ssFixture([0]);const car=cars[0],repair=pickups.find(p=>p.type==='repair'),goal={x:80,y:153};
+  pickups.forEach(p=>p.t=1e9);Object.assign(repair,{x:goal.x,y:goal.y,t:0});
+  Object.assign(car,{x:80,y:114,a:Math.PI/2,aimA:Math.PI/2,hp:1,navX:80,navY:114,navGoalX:80,navGoalY:114,navT:0,
+    goalX:80,goalY:114,bestGoal:1e9,goalT:0,progressX:80,progressY:114,progressT:0,wallHits:0});
+  const direct=clearLane(car,goal,6.5),path=findDrivePath(car,goal,false).map(n=>n.id);let steps=0,inside=false,maxDistance=0,replans=0,lastMode='';
+  for(;steps<240&&car.hp===1;steps++){frame++;carStep(car);stepPickups();inside||=pointInWall(car.x,car.y,6);
+    maxDistance=Math.max(maxDistance,Math.hypot(car.x-goal.x,car.y-goal.y));if(car.aiMode==='REPLAN'&&lastMode!=='REPLAN')replans++;lastMode=car.aiMode;}
+  const routed={direct,path,steps,hp:car.hp,pickupT:repair.t,inside,maxDistance,wallHits:car.wallHits,replans};
+  __ssFixture([0]);Object.assign(cars[0],{x:14,y:153,navX:14,navY:153,navGoalX:14,navGoalY:153,navT:0});const puddleGoal={x:45,y:201},risk=laneDanger(cars[0],puddleGoal,cars[0],false),waypoint=navigate(cars[0],puddleGoal,false);
+  return{...routed,puddle:{risk,waypoint,direct:clearLane(cars[0],puddleGoal,6.5)}};
+};
+globalThis.__ssRoleFixture=()=>{
+  __ssFixture([0,1]);Object.assign(cars[0],{x:40,y:55,a:0,aimA:0});Object.assign(cars[1],{x:90,y:55,hp:5});let intent=decide(cars[0]);
+  const hunter={mode:cars[0].aiMode,fire:intent.fire,special:intent.special};
+  __ssFixture([0,1]);Object.assign(cars[1],{x:80,y:114,a:0,aimA:0,planT:0,stage:0});Object.assign(cars[0],{x:50,y:114,vx:1});intent=decide(cars[1]);
+  const trapper={mode:cars[1].aiMode,special:intent.special,plan:[cars[1].planX,cars[1].planY],goal:[intent.goalX,intent.goalY]};
+  __ssFixture([0,2]);Object.assign(cars[2],{x:35,y:180,a:0,aimA:0});Object.assign(cars[0],{x:80,y:180});intent=decide(cars[2]);
+  const brawler={mode:cars[2].aiMode,boost:intent.boost,goal:[intent.goalX,intent.goalY]};
+  __ssFixture([0,3]);Object.assign(cars[3],{x:40,y:300,a:0,aimA:0,orbitDir:-1,planT:0});Object.assign(cars[0],{x:100,y:300});intent=decide(cars[3]);
+  const flanker={mode:cars[3].aiMode,orbit:cars[3].orbitDir,goal:[intent.goalX,intent.goalY],lateral:Math.abs(intent.goalY-cars[3].y)};
+  const lead=interceptPoint({x:40,y:60,vx:0,vy:0},{x:90,y:60,vx:0,vy:1.5},4.7);
+  return{hunter,trapper,brawler,flanker,lead};
+};
+globalThis.__ssUnsafeFixture=()=>{
+  __ssFixture([0,1]);Object.assign(cars[0],{x:40,y:133,a:0,aimA:0});Object.assign(cars[1],{x:120,y:133,hp:5});let intent=decide(cars[0]);const blocked=intent.special;
+  __ssFixture([0,1]);Object.assign(cars[0],{x:40,y:60,a:0,aimA:0});Object.assign(cars[1],{x:90,y:60,hp:5,inv:30});intent=decide(cars[0]);const invulnerable=intent.special;
+  __ssFixture([0,1]);Object.assign(cars[1],{x:60,y:55,a:0,aimA:0,plan:'BAIT',planT:50,stage:1});Object.assign(cars[0],{x:100,y:55});intent=decide(cars[1]);const mine=intent.special;
+  __ssFixture([0,2]);Object.assign(cars[2],{x:60,y:180,a:0,aimA:0});Object.assign(cars[0],{x:82,y:180});intent=decide(cars[2]);const fluxSolo=intent.special;
+  __ssFixture([0,1,2]);Object.assign(cars[2],{x:60,y:180,a:0,aimA:0});Object.assign(cars[0],{x:82,y:180});Object.assign(cars[1],{x:70,y:190});intent=decide(cars[2]);
+  return{blocked,invulnerable,mine,fluxSolo,fluxCluster:intent.special};
+};
+globalThis.__ssCollisionSafetyFixture=()=>{
+  __ssFixture([0,1]);const a=cars[0],b=cars[1];Object.assign(a,{x:50,y:60,vx:-2,vy:0,hp:a.maxHp,ramCd:0});Object.assign(b,{x:61.5,y:60,vx:2,vy:0,hp:b.maxHp,ramCd:0});
+  const hp=[a.hp,b.hp],rams=ramHits;carCollisions();return{damage:[hp[0]-a.hp,hp[1]-b.hp],rams:ramHits-rams,velocity:[a.vx,b.vx]};
+};
+globalThis.__ssBarrelAiFixture=()=>{
+  __ssFixture([0,1]);const car=cars[0],foe=cars[1],barrel=barrels[0];Object.assign(barrel,{x:70,y:60,hp:2,dead:0});
+  Object.assign(car,{x:45,y:60,a:0,aimA:0});Object.assign(foe,{x:78,y:60});const intent=decide(car);
+  return{mode:car.aiMode,fire:intent.fire,goal:[intent.goalX,intent.goalY],finite:[intent.goalX,intent.goalY].every(Number.isFinite)};
+};
+globalThis.__ssDirectorFixture=()=>{
+  __ssFixture([0,1]);for(let i=0;i<149;i++)stepDirector();const early={drops:director.drops,sweeps:director.sweeps};stepDirector();const drop={drops:director.drops,sweeps:director.sweeps,quiet:director.quietT};
+  for(let i=0;i<89;i++)stepDirector();const beforeSweep={sweeps:director.sweeps};stepDirector();const first={sweeps:director.sweeps,next:director.nextSweep,sweepT:director.sweepT};
+  const car=cars[0];cars[1].lives=0;Object.assign(car,{x:14,y:180,vx:0,vy:0,inv:0});stepCore();const pull={state:CORE.state,vx:car.vx,pulses:CORE.pulses};
+  for(let i=0;i<210;i++)stepDirector();const repeat={sweeps:director.sweeps,next:director.nextSweep};car.inv=0;damageCar(car,.1,null,'RIVET');const reset={quiet:director.quietT,dropSent:director.dropSent,next:director.nextSweep};
+  __ssFixture([0,1]);Object.assign(cars[0],{x:60,y:180,a:0,aimA:0});Object.assign(cars[1],{x:100,y:180});director.sweepT=50;const intent=decide(cars[0]);
+  return{early,drop,beforeSweep,first,pull,repeat,reset,showdown:{mode:cars[0].aiMode,fire:intent.fire,goal:[intent.goalX,intent.goalY]}};
+};
 globalThis.__ssWinFixture=()=>{
   resetGame();matchState='play';cars[0].kills=4;const before=playing();matchOver(cars[0],'LAST RIG');
   return{before,after:playing(),state:matchState,winner:winner&&winner.id};
@@ -131,6 +218,8 @@ for(let run=1;run<=3;run++){
   game.frames(24000,false);const p=game.sandbox.__ssProbe();
   console.log(`  run ${run}: ${p.matches} matches, ${p.wrecks} wrecks, kills ${p.kills.join('/')}, `+
     `specials ${p.uses.DISC}/${p.uses.MINE}/${p.uses.FLUX}, pickups ${p.pickups}, press pulses ${p.pulses}`);
+  console.log(`    intelligence: walls ${(p.wallRate*100).toFixed(1)}%, low-speed ${(p.lowRate*100).toFixed(1)}%, `+
+    `invalid targets ${(p.invalidTargetRate*100).toFixed(2)}%, max lull ${p.maxDamageLull}f, director ${p.directorDrops}/${p.directorSweeps}`);
   if(!p.finite)fail(`run ${run}: non-finite vehicle state`);
   if(!p.entityFinite)fail(`run ${run}: non-finite projectile or mine state`);
   if(!p.arenaSafe)fail(`run ${run}: a living rig escaped the arena or remained inside a wall`);
@@ -145,6 +234,14 @@ for(let run=1;run<=3;run++){
   if(p.pulses<15)fail(`run ${run}: magnetic press pulsed only ${p.pulses} times`);
   if(!p.phases.includes('OPEN SHIFT')||!p.phases.includes('MAGNET HOT'))fail(`run ${run}: escalation phases missing (${p.phases.join(', ')})`);
   if(p.maxShots>18||p.maxMines>10)fail(`run ${run}: projectile clutter reached ${p.maxShots} shots / ${p.maxMines} mines`);
+  if(p.wallRate>.03)fail(`run ${run}: wall contacts ${(p.wallRate*100).toFixed(1)}% exceeded 3%`);
+  if(p.lowRate>.43)fail(`run ${run}: low-speed time ${(p.lowRate*100).toFixed(1)}% exceeded 43%`);
+  if(p.invalidTargetRate>.01)fail(`run ${run}: invalid target time ${(p.invalidTargetRate*100).toFixed(2)}% exceeded 1%`);
+  if(p.unsafeSpecials!==0)fail(`run ${run}: ${p.unsafeSpecials} specials fired during survival/resource plans`);
+  if(p.maxDamageLull>480)fail(`run ${run}: live-play damage lull reached ${p.maxDamageLull}f (>8s)`);
+  if(p.directorDrops<1||p.directorSweeps<1)fail(`run ${run}: anti-stall director never completed both beats (${p.directorDrops}/${p.directorSweeps})`);
+  if(!p.modes[0].includes('EXECUTE')||!p.modes[0].includes('DISC RAM')||!p.modes[1].includes('MINE AMBUSH')||!p.modes[1].includes('BAIT')||
+    !p.modes[2].includes('HERD')||!p.modes[3].includes('FLANK'))fail(`run ${run}: a signature role plan was missing (${JSON.stringify(p.modes)})`);
 }
 
 console.log('2) arsenal contracts: each limited weapon spends one charge and deals damage');
@@ -179,7 +276,35 @@ if(life.wrecked.lives!==2||life.wrecked.dead!==112||life.wrecked.kills!==1||life
   !life.tied.overtime||life.tied.state!=='play'||life.sudden.state!=='over'||life.sudden.winner!==0||
   life.last.state!=='over'||life.last.winner!==0||life.phase!=='REDLINE')fail(`match lifecycle regressed: ${JSON.stringify(life)}`);
 
-console.log('4) session + manual takeover: two-stage Enter, drive, cannon, special, nitro');
+console.log('4) tactical intelligence: targets, prediction, routing, roles, restraint, and anti-stall');
+const target=game.sandbox.__ssTargetFixture(),threat=game.sandbox.__ssThreatFixture(),route=game.sandbox.__ssRouteFixture(),
+  roles=game.sandbox.__ssRoleFixture(),unsafe=game.sandbox.__ssUnsafeFixture(),separating=game.sandbox.__ssCollisionSafetyFixture(),
+  barrelAi=game.sandbox.__ssBarrelAiFixture(),director=game.sandbox.__ssDirectorFixture();
+console.log(`  target finish/invulnerable/hysteresis: ${target.finish.id}/${target.invulnerable.id}/${target.hysteresis.id}; threat ${threat.incoming.kind} @ ${threat.incoming.t.toFixed(1)}f`);
+console.log(`  route ${route.path.join(' > ')} in ${route.steps}f; roles ${roles.hunter.mode}/${roles.trapper.mode}/${roles.brawler.mode}/${roles.flanker.mode}`);
+console.log(`  restraint ${Object.values(unsafe).join('/')}; director drop ${director.drop.quiet}f, sweep ${director.first.sweeps} + repeat ${director.repeat.sweeps}`);
+if(target.finish.id!==2||target.finish.reason!=='FINISH'||target.invulnerable.id!==3||target.invulnerable.reason!=='LEADER'||target.hysteresis.id!==1||
+  target.hysteresis.challenger<=target.hysteresis.current)fail(`target utility/hysteresis regressed: ${JSON.stringify(target)}`);
+if(threat.incoming.kind!=='RIVET'||threat.incoming.t<8||threat.incoming.t>10||threat.incoming.score<=26||threat.incoming.mode!=='DODGE RIVET'||
+  !threat.incoming.intent.boost||threat.incoming.intent.fire||threat.incoming.intent.special||threat.receding||threat.miss||threat.mine.kind!=='MINE')
+  fail(`predictive threat response regressed: ${JSON.stringify(threat)}`);
+if(route.direct||route.path.length<3||route.path.at(-1)!=='goal'||route.hp!==6||route.pickupT<=0||route.steps>240||route.inside||
+  route.maxDistance>80||route.wallHits>2||route.replans>1||!route.puddle.direct||route.puddle.risk<12||
+  (Math.abs(route.puddle.waypoint.x-45)<.01&&Math.abs(route.puddle.waypoint.y-201)<.01))fail(`safe routing regressed: ${JSON.stringify(route)}`);
+if(roles.hunter.mode!=='EXECUTE'||!roles.hunter.fire||!roles.hunter.special||roles.trapper.mode!=='MINE AMBUSH'||!roles.trapper.special||
+  Math.hypot(roles.trapper.plan[0]-75,roles.trapper.plan[1]-114)>1||roles.brawler.mode!=='HERD'||!roles.brawler.boost||
+  roles.flanker.mode!=='FLANK'||roles.flanker.orbit!==1||roles.flanker.lateral<25||roles.lead.y<=60)
+  fail(`role doctrine regressed: ${JSON.stringify(roles)}`);
+if(unsafe.blocked||unsafe.invulnerable||unsafe.mine||unsafe.fluxSolo||!unsafe.fluxCluster)fail(`special restraint regressed: ${JSON.stringify(unsafe)}`);
+if(separating.damage.some(n=>n!==0)||separating.rams!==0||separating.velocity[0]>=0||separating.velocity[1]<=0)
+  fail(`separating vehicles registered a false ram: ${JSON.stringify(separating)}`);
+if(barrelAi.mode!=='BARREL SHOT'||!barrelAi.fire||!barrelAi.finite)fail(`barrel opportunity planning regressed: ${JSON.stringify(barrelAi)}`);
+if(director.early.drops!==0||director.early.sweeps!==0||director.drop.drops!==1||director.drop.quiet!==150||director.beforeSweep.sweeps!==0||
+  director.first.sweeps!==1||director.first.next!==450||director.first.sweepT!==150||director.pull.state!=='active'||director.pull.vx<=.02||
+  director.repeat.sweeps!==2||director.repeat.next!==660||director.reset.quiet!==0||director.reset.dropSent||director.reset.next!==240||
+  director.showdown.mode!=='SHOWDOWN'||!director.showdown.fire)fail(`anti-stall director regressed: ${JSON.stringify(director)}`);
+
+console.log('5) session + manual takeover: two-stage Enter, drive, cannon, special, nitro');
 game=bootGame('scrapshift',{seed:0x551fc0,footer:FOOTER});
 let p=game.sandbox.__ssProbe();if(p.cars[0].shots!==0)fail('fresh player rig already fired');
 press(game,'Enter');if(game.sandbox.__ssProbe().state!=='countdown'||game.sandbox.__engine.playing())fail('first Enter skipped instructions');

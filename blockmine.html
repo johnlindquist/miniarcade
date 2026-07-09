@@ -22,7 +22,7 @@ const{ctx,W,H,random,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,s
 const TS=8,COLS=20,SURFACE=12;
 const AIR=0,GRASS=1,DIRT=2,STONE=3,COAL=4,IRON=5,GOLD=6,DIAMOND=7,
   WOOD=8,LEAVES=9,LAVA=10,BEDROCK=11,BRIDGE=12,FORT=13,BEACON=14,WATER=15,OBSIDIAN=16,PORTAL=17,
-  LADDER=18,ROPE=19,SAPLING=20;
+  LADDER=18,ROPE=19,SAPLING=20,WINDOW=21;
 const BC={
   [GRASS]:['#6f9f38','#8fc94a','#4f7b2c'],[DIRT]:['#80552f','#9a693d','#654226'],
   [STONE]:['#777b80','#94989b','#5e6267'],[COAL]:['#777b80','#26282c','#a1a4a7'],
@@ -33,7 +33,8 @@ const BC={
   [FORT]:['#4e5967','#738091','#303844'],[BEACON]:['#1a777b','#56f0e7','#d5fffb'],
   [WATER]:['#2369b5','#52a9e8','#b8e8ff'],[OBSIDIAN]:['#1b1030','#3d2a66','#7a55cc'],
   [PORTAL]:['#2c1450','#9a5cf0','#e0c3ff'],[LADDER]:['#6b4a26','#a97e46','#3f2c12'],
-  [ROPE]:['#8a7a5e','#d8ccb0','#5e523c'],[SAPLING]:['#4f7b2c','#8fc94a','#6b4a26']
+  [ROPE]:['#8a7a5e','#d8ccb0','#5e523c'],[SAPLING]:['#4f7b2c','#8fc94a','#6b4a26'],
+  [WINDOW]:['#4e5967','#9fd8ff','#1a2434']
 };
 const NAMES=['HAND','WOOD PICK','STONE PICK','IRON PICK','DIAMOND PICK'];
 const TOOLCOL=['#d5a06f','#a66d3d','#9aa0a6','#d8c9b5','#52e5df'];
@@ -43,7 +44,7 @@ const DURMAX=[0,120,260,520,1000];
 const VAL={[COAL]:12,[IRON]:35,[GOLD]:70,[DIAMOND]:180,[OBSIDIAN]:130,[WOOD]:5,[STONE]:2,[DIRT]:1,[GRASS]:1,[LEAVES]:1};
 const HARD={[GRASS]:20,[DIRT]:18,[STONE]:48,[COAL]:55,[IRON]:66,[GOLD]:74,[DIAMOND]:88,
   [WOOD]:40,[LEAVES]:16,[FORT]:100,[BEACON]:120,[OBSIDIAN]:150,[PORTAL]:1e9,[BEDROCK]:1e9,
-  [LADDER]:10,[ROPE]:8,[BRIDGE]:14,[SAPLING]:6};
+  [LADDER]:10,[ROPE]:8,[BRIDGE]:14,[SAPLING]:6,[WINDOW]:40};
 
 // Hot queues and route frontiers stay allocation-light. Fluids used to shift
 // an Array on every cell update, while A* linearly scanned and spliced its
@@ -494,7 +495,10 @@ function findRoute(sx,sy,gx,gy,opt){
           else continue;
         }
       }
-      if(t===LAVA)c=30*(P.hp<=2?4:P.hp<=3?2:1);else if(t===WATER)c=3.5;else if(solid(t))c=2+mineFrames(t)/18+(t===FORT||t===BEACON?24:0);
+      // Windows carry the fort surcharge too: glass is soft, but a route that
+      // smashes through the tower's own windows instead of using the door is
+      // vandalism, not pathfinding.
+      if(t===LAVA)c=30*(P.hp<=2?4:P.hp<=3?2:1);else if(t===WATER)c=3.5;else if(solid(t))c=2+mineFrames(t)/18+(t===FORT||t===BEACON||t===WINDOW?24:0);
       // Fall awareness: passing through a cell with no floor and no wall to
       // grab risks a plunge, so the planner prices in the drop below it.
       if(!solid(t)&&t!==WATER&&t!==LADDER&&t!==ROPE){
@@ -787,8 +791,9 @@ function pickTarget(){
   const cand=[];
   if(P.tool===0&&P.wood<3)for(const x of[4,15])for(let y=7;y<=11;y++)if(tile(x,y)===WOOD)cand.push({x,y,s:1000});
   // Grove harvest: when he's topside and wants timber (or sapling seed for
-  // stage 9), the grown trees are the richest wood in the world.
-  if(P.cy<=SURFACE+6&&(P.wood<3||goalState.stage===9||(goalState.stage>=10&&P.ladder<2)))
+  // stage 9), the grown trees are the richest wood in the world. The tower's
+  // floors keep a standing appetite for planks.
+  if(P.cy<=SURFACE+6&&(P.wood<3||goalState.stage===9||(goalState.stage>=10&&(P.ladder<2||P.wood<4))))
     for(let y=3;y<SURFACE;y++)for(let x=4;x<COLS-4;x++){
       const t=tile(x,y);if(t===WOOD)cand.push({x,y,s:600});else if(t===LEAVES)cand.push({x,y,s:300});
     }
@@ -819,7 +824,7 @@ function pickTarget(){
   return false;
 }
 // --- Surface work: the grove and the tower -----------------------------------
-const TOWER_X=2,GROVE_XS=[5,6,14,15];
+const TOWER_X=3,GROVE_XS=[14,15,16];
 function groveSpot(){
   for(const x of GROVE_XS)if(tile(x,SURFACE)===GRASS&&tile(x,SURFACE-1)===AIR)return x;
   return -1;
@@ -831,8 +836,11 @@ function routeAndFollow(x,y,mode){
     if(!r||!r.length)return false;
     P.route=r;P.target={x,y};P.targetT=600;
   }
+  // If the executor balks (a rise it can't climb with empty pockets, a stale
+  // cell), hand the turn back to the rest of the brain instead of claiming it
+  // forever — that wedge was an infinite watchdog loop at the surface.
+  if(!followRoute()){P.route=[];P.target=null;return false;}
   P.aiMode=mode;lastDeepFrame=frame;
-  if(!followRoute()){P.route=[];P.target=null;}
   return true;
 }
 function plantGroveAct(){
@@ -846,19 +854,47 @@ function plantGroveAct(){
   }
   return routeAndFollow(x,SURFACE-1,'PLANT GROVE');
 }
-// One layer of Babel: stone shoulders around a ladder spine, laid from the
-// top of the spine itself. Two cobble and a rung per meter of heaven.
+// One row of Babel — a real tower, not a ladder with delusions. Five cells
+// wide: stone walls two out from the spine, a wood-plank floor spanning the
+// interior at the base of every 4-row story, window rows mid-story, and a
+// two-tall doorway at ground level. Stone for walls, timber for floors and
+// rungs: the grove and the mine both feed the build.
+function babelRowPlan(h){
+  // h = absolute row index (0 at the meadow). Story pattern, bottom to top:
+  // floor / wall / window / wall.
+  const r=h%4;
+  return{
+    wall:r===2?WINDOW:FORT,
+    floor:r===0&&h>0, // the ground story stands on grass, not planks
+    door:h<2, // east wall stays open two cells high so he can walk in
+    wood:(r===0&&h>0)?2:0,cobble:2
+  };
+}
 function babelAct(){
   if(goalState.stage<9||towerH>=TOWER_MAX)return false;
-  ensureClimbStock();
-  if(P.cobble<4||P.ladder<1)return false;
+  // On site, rungs are carved from spare stone first: crafting them from wood
+  // would eat the very timber the floors are waiting on.
+  if(P.ladder<=0&&P.cobble>=6){P.cobble-=3;P.ladder+=2;say('CARVED STONE STEPS','#9aa0a6');}
+  else ensureClimbStock();
+  const plan=babelRowPlan(towerH);
+  // Keep a survival reserve: a builder who spends his last cobble on walls
+  // dives back into the deep with nothing to bridge lava or plank gaps.
+  if(P.cobble<plan.cobble+8||P.ladder<1||P.wood<plan.wood)return false;
   const top={x:TOWER_X,y:SURFACE-1-towerH};
   if(P.cx===top.x&&P.cy===top.y&&P.moveT<=0){
-    for(const s of[-1,1])setTile(TOWER_X+s,top.y,FORT);
-    setTile(TOWER_X,top.y,LADDER);
-    P.cobble-=2;P.ladder--;towerH++;P.progressFrame=frame;lastDeepFrame=frame;
+    const y=top.y;
+    setTile(TOWER_X-2,y,plan.wall);
+    if(!plan.door)setTile(TOWER_X+2,y,plan.wall);
+    if(plan.floor){setTile(TOWER_X-1,y,BRIDGE);setTile(TOWER_X+1,y,BRIDGE);P.wood-=plan.wood;}
+    setTile(TOWER_X,y,LADDER);
+    P.cobble-=plan.cobble;P.ladder--;towerH++;P.progressFrame=frame;lastDeepFrame=frame;
     buildScore+=15;if(playing())addScore(15);
-    if(towerH%5===0){say('BABEL RISES: '+towerH+'M','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
+    if(towerH%4===0){say('BABEL: STORY '+(towerH/4)+' DONE','#7ef0ff');burst(P.x,P.y,10,'#7ef0ff',1.3);}
+    if(towerH>=TOWER_MAX){
+      // The crown: a beacon burning at the top of the world.
+      setTile(TOWER_X,y-1,BEACON);
+      say('BABEL TOUCHES HEAVEN','#9af7ff');burst(P.x,centerY(y-1),30,'#9af7ff',2.6);shake(4);
+    }
     P.aiMode='BUILD BABEL';return true;
   }
   return routeAndFollow(top.x,top.y,'BUILD BABEL');
@@ -955,12 +991,16 @@ function aiAct(){
       say('HOMEWARD BOUND','#ffd166');
     }
   }
-  // Surface errands, in daylight order: plant the grove, raise the tower, and
-  // when there is nothing left to do topside, ride the gate back down.
+  // Surface errands, in daylight order: plant the grove, raise the tower,
+  // walk over for camp services when they're due, and when there is nothing
+  // left to do topside, ride the gate back down.
   if(!P.homing&&P.cy<=SURFACE+1){
     if(plantGroveAct())return;
     if(babelAct())return;
     const business=(P.tool>=2&&P.dur<P.durMax*0.6)||(P.gold>0&&!isNight())||(isNight()&&P.hp<4.5);
+    // Wanting the anvil while standing across the meadow is not a reason to
+    // start mining a new shaft: camp is a short walk, so walk.
+    if(business&&!campNear()&&routeAndFollow(CAMP_X,SURFACE-1,'BACK TO CAMP'))return;
     if(!business&&gateReturnAct())return;
   }
   // Depth watchdog: a miner can graze visible coal in explored caves forever.
@@ -1377,9 +1417,12 @@ function step(){
       if(frame-s.at<2400)continue;
       if(Math.abs(P.cx-s.x)<=1&&P.cy>=s.y-4&&P.cy<=s.y)continue;
       if(tile(s.x,s.y)!==SAPLING){grown.push(s);continue;} // trampled or mined
-      for(let i=0;i<3;i++)setTile(s.x,s.y-i,WOOD);
-      for(const dx of[-1,0,1])setTile(s.x+dx,s.y-3,LEAVES);
-      setTile(s.x,s.y-4,LEAVES);
+      // Trees fill only open air — a growing trunk never eats a wall, a
+      // portal corner, or the tower.
+      setTile(s.x,s.y,WOOD);
+      for(let i=1;i<3;i++)if(tile(s.x,s.y-i)===AIR)setTile(s.x,s.y-i,WOOD);
+      for(const dx of[-1,0,1])if(tile(s.x+dx,s.y-3)===AIR)setTile(s.x+dx,s.y-3,LEAVES);
+      if(tile(s.x,s.y-4)===AIR)setTile(s.x,s.y-4,LEAVES);
       grown.push(s);say('THE GROVE GROWS','#8fc94a');burst(centerX(s.x),centerY(s.y-2),10,'#8fc94a',1.4);
     }
     if(grown.length)saplings=saplings.filter(s=>!grown.includes(s));
@@ -1428,6 +1471,8 @@ function drawBlock(t,x,y,sy){
   else if(t===BEDROCK){rect(x*TS+(n>0.5?1:4),sy+2,3,2,c[1]);rect(x*TS+2,sy+6,4,1,c[2]);}
   else if(t===BRIDGE){rect(x*TS,sy+1,TS,2,c[1]);rect(x*TS,sy+5,TS,2,c[1]);rect(x*TS+2,sy,1,TS,c[2]);rect(x*TS+6,sy,1,TS,c[2]);}
   else if(t===FORT){rect(x*TS,sy+3,TS,1,c[1]);rect(x*TS+3,sy,1,TS,c[2]);rect(x*TS+1,sy+1,1,1,'#a9b6c4');rect(x*TS+6,sy+6,1,1,'#a9b6c4');}
+  else if(t===WINDOW){rect(x*TS+1,sy+1,6,6,c[2]);rect(x*TS+2,sy+2,4,4,c[1]);
+    rect(x*TS+3,sy+1,1,6,c[0]);rect(x*TS+1,sy+4,6,1,c[0]);}
   else if(t===BEACON){rect(x*TS+1,sy+1,6,6,c[1]);rect(x*TS+3,sy,2,TS,c[2]);rect(x*TS,sy+3,TS,2,c[2]);}
   else if(t===OBSIDIAN){rect(x*TS+(n>0.5?1:4),sy+1,3,2,c[1]);rect(x*TS+2,sy+5,2,2,c[1]);
     rect(x*TS+5,sy+3,1,1,c[2]);rect(x*TS+1,sy+6,1,1,c[2]);}
