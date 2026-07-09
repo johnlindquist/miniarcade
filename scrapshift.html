@@ -504,6 +504,8 @@ function stepCore(){
   CORE.state=next;if(next==='active'&&lastCoreState!=='active'){CORE.pulses++;if(director.sweepT<=0){banner='PRESS LIVE';bannerC='#ffd166';bannerT=45;}}
   lastCoreState=next;if(next!=='active')return;
   const sweep=director.sweepT>0,range=sweep?170:roundPhase==='REDLINE'?78:64;
+  if(sweep&&director.quietT>=420){const stalled=cars.find(c=>active(c)&&c.inv<=0);if(stalled){const dx=CORE.x-stalled.x,dy=CORE.y-stalled.y,d=Math.hypot(dx,dy)||1;
+    damageCar(stalled,.18,null,'PRESS',dx/d*.18,dy/d*.18,2);}}
   for(const c of cars){if(!active(c))continue;const dx=CORE.x-c.x,dy=CORE.y-c.y,d=Math.hypot(dx,dy)||1;
     if(d<range){const pull=(1-d/range)*(sweep ? .13 : roundPhase==='REDLINE' ? .078 : .065);c.vx+=dx/d*pull;c.vy+=dy/d*pull;
       if(d<CORE.r+7&&frame%13===c.id*3){const source=c.lastHitT>0?cars[c.lastHit]:null;damageCar(c,.65,source,'PRESS',dx/d*.25,dy/d*.25,2);c.a+=.18;}}
