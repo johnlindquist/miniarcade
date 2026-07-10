@@ -28,13 +28,14 @@ const manifestHash=crypto.createHash('sha256').update(manifestBytes).digest('hex
 if(!index.includes(`games.js?v=${manifestHash}`))fail(`gallery cachebuster does not match games.js (${manifestHash})`);
 const readme=fs.readFileSync(path.join(ROOT,'README.md'),'utf8').toLowerCase();
 if(!readme.includes('sixteen self-playing'))fail('runtime README count is stale');
-if(!index.includes('scroll-snap-type:x proximity'))fail('gallery rail does not provide horizontal carousel snapping');
-if(!index.includes("card.addEventListener('pointerenter'"))fail('gallery cards do not activate on hover');
-if(!index.includes("card.addEventListener('focusin'"))fail('gallery cards do not activate from keyboard focus');
-if(!index.includes("track.addEventListener('wheel'"))fail('gallery does not translate desktop wheel input into horizontal browsing');
-if(!index.includes("frame.tabIndex=-1")||!index.includes("aria-hidden','true"))fail('preview iframes can steal carousel keyboard focus');
-if(!index.includes("Math.abs(index-activeIndex)<=1"))fail('gallery does not bound live previews to the active neighborhood');
-if(!index.includes('(hover:none),(pointer:coarse)'))fail('gallery does not provide full-width touch cards');
+if(!index.includes('repeat(auto-fill,minmax('))fail('gallery grid does not reflow responsively');
+if(!index.includes('aspect-ratio:4/9'))fail('preview viewports lost the 4:9 game aspect');
+if(!index.includes("link.className='card-link'"))fail('gallery cards are not whole-card click targets');
+if(!index.includes('.card-link{position:absolute;inset:0'))fail('card link does not cover the entire card');
+if(!index.includes('pointer-events:none'))fail('preview iframes intercept card clicks');
+if(!index.includes("frame.tabIndex=-1")||!index.includes("aria-hidden','true"))fail('preview iframes can steal keyboard focus');
+if(!index.includes('IntersectionObserver'))fail('gallery does not pause offscreen previews');
+if(!index.includes('(hover:none),(pointer:coarse)'))fail('gallery does not keep the PLAY affordance visible on touch');
 
 const engine=fs.readFileSync(path.join(ROOT,'engine.js'),'utf8');
 if(!engine.includes("if(preview||recording"))fail('preview canvases still advertise direct-game controls');

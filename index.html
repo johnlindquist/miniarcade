@@ -17,25 +17,25 @@
       --ink:#edf1f8;
       --dim:#8d94a8;
       --cyan:#2de2e6;
-      --expanded-width:280px;
-      --peek-width:108px;
       --ease:cubic-bezier(.2,.75,.25,1);
     }
     *{box-sizing:border-box}
     html{background:var(--bg);scrollbar-color:#3b4055 var(--bg)}
     body{
-      margin:0;width:100%;max-width:100vw;height:100dvh;min-height:560px;overflow:hidden;
+      margin:0;width:100%;max-width:100vw;min-height:100dvh;
       background:
         radial-gradient(circle at 50% -40%,rgba(45,226,230,.10),transparent 45%),
         linear-gradient(180deg,#0b0c12 0%,var(--bg) 45%);
       color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
-      display:grid;grid-template-rows:auto minmax(0,1fr) auto;
+      display:flex;flex-direction:column;
     }
     button,input,select{font:inherit}
     a{color:inherit}
     .site-header{
-      min-width:0;display:flex;align-items:flex-end;gap:20px;padding:18px clamp(16px,3vw,42px) 14px;
+      position:sticky;top:0;z-index:10;min-width:0;display:flex;align-items:flex-end;gap:20px;
+      padding:18px clamp(16px,3vw,42px) 14px;
       border-bottom:1px solid rgba(39,43,60,.68);
+      background:rgba(8,9,13,.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     }
     .brand{min-width:0}
     h1{margin:0;font-size:clamp(16px,2vw,24px);line-height:1;letter-spacing:.26em;font-weight:800}
@@ -51,81 +51,61 @@
       border-radius:4px;font-size:10px;padding:4px 7px;
     }
     #clip input{width:54px;text-align:right}
-    #clip button,.nav-button{
+    #clip button{
       min-height:30px;border:1px solid transparent;border-radius:4px;color:#fff;
       font-size:10px;font-weight:800;letter-spacing:.1em;cursor:pointer;
+      background:#c52332;padding:5px 11px;
     }
-    #clip button{background:#c52332;padding:5px 11px}
     #clip button:hover{background:#e33b49}
-    button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,input:focus-visible,.game-card:focus-visible{
+    button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,input:focus-visible{
       outline:2px solid var(--cyan);outline-offset:3px;
     }
-    .carousel-shell{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);padding-top:10px}
-    .rail-toolbar{
-      width:100%;max-width:100vw;min-width:0;display:flex;align-items:center;gap:12px;padding:0 clamp(16px,3vw,42px) 10px;
-      color:var(--dim);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    #game-grid{
+      flex:1;width:100%;max-width:1560px;margin:0 auto;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+      gap:14px;padding:16px clamp(16px,3vw,42px) 26px;
     }
-    .rail-toolbar p{min-width:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .rail-controls{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
-    #position{min-width:46px;text-align:center;color:#b7bdcb;font-variant-numeric:tabular-nums}
-    .nav-button{
-      width:34px;padding:0;background:var(--panel);border-color:var(--line);color:var(--ink);
-      font-size:17px;line-height:1;
-    }
-    .nav-button:hover:not(:disabled){background:var(--panel-raised);border-color:#41465d;color:var(--cyan)}
-    .nav-button:disabled{opacity:.3;cursor:default}
-    #game-track{
-      width:100%;max-width:100vw;min-width:0;min-height:0;display:flex;align-items:stretch;gap:10px;overflow-x:auto;overflow-y:hidden;
-      padding:0 clamp(16px,8vw,120px) 10px;scroll-padding-inline:clamp(16px,8vw,120px);
-      scroll-snap-type:x proximity;overscroll-behavior-inline:contain;scrollbar-gutter:stable;
-      scrollbar-width:thin;scrollbar-color:#34394d transparent;
-    }
-    #game-track::-webkit-scrollbar{height:8px}
-    #game-track::-webkit-scrollbar-track{background:transparent}
-    #game-track::-webkit-scrollbar-thumb{background:#34394d;border:2px solid var(--bg);border-radius:99px}
     .game-card{
       --accent:var(--cyan);
-      position:relative;display:flex;flex:0 0 var(--peek-width);min-width:0;min-height:0;
-      flex-direction:column;scroll-snap-align:center;overflow:hidden;border:1px solid var(--line);
-      border-radius:7px;background:var(--panel);transition:flex-basis 260ms var(--ease),border-color 180ms ease,box-shadow 180ms ease;
+      position:relative;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+      border:1px solid var(--line);border-radius:8px;background:var(--panel);
+      transition:border-color 150ms ease,box-shadow 150ms ease,transform 150ms var(--ease);
     }
-    .game-card.is-active,.game-card:focus-within{
-      flex-basis:var(--expanded-width);border-color:color-mix(in srgb,var(--accent) 55%,var(--line));
+    .game-card:hover,.game-card:focus-within{
+      transform:translateY(-2px);
+      border-color:color-mix(in srgb,var(--accent) 55%,var(--line));
       box-shadow:0 14px 44px rgba(0,0,0,.42),0 0 0 1px color-mix(in srgb,var(--accent) 12%,transparent);
     }
     .card-head{
-      position:relative;z-index:2;flex:0 0 52px;width:var(--expanded-width);min-width:var(--expanded-width);
-      padding:10px 11px 8px;background:linear-gradient(180deg,#171a24,#11131b);
-      border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;
+      min-width:0;padding:10px 11px 9px;background:linear-gradient(180deg,#171a24,#11131b);
+      border-bottom:1px solid var(--line);
     }
-    .game-title{display:flex;align-items:center;gap:8px;width:max-content;text-decoration:none}
-    .game-number{color:var(--accent);font-size:8px;letter-spacing:.08em}
-    .game-title strong{font-size:11px;letter-spacing:.13em}
-    .tagline{display:block;margin:6px 0 0 24px;color:var(--dim);font-size:8px;letter-spacing:.035em}
-    .preview-viewport{position:relative;flex:1 1 auto;min-height:0;width:100%;overflow:hidden;background:#000}
+    .game-title{display:flex;align-items:baseline;gap:8px;min-width:0}
+    .game-number{color:var(--accent);font-size:8px;letter-spacing:.08em;flex:0 0 auto}
+    .game-title strong{font-size:11px;letter-spacing:.13em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .tagline{
+      display:block;margin:6px 0 0 24px;color:var(--dim);font-size:8px;letter-spacing:.035em;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .preview-viewport{position:relative;width:100%;aspect-ratio:4/9;background:#000}
     .preview-viewport iframe{
-      position:absolute;inset-block:0;left:50%;display:block;height:100%;width:auto;max-width:none;
-      aspect-ratio:4/9;border:0;background:#000;transform:translateX(-50%);pointer-events:none;
+      position:absolute;inset:0;display:block;width:100%;height:100%;
+      border:0;background:#000;pointer-events:none;
     }
-    .preview-viewport::after{
-      content:"";position:absolute;inset:0;pointer-events:none;
-      background:linear-gradient(90deg,rgba(0,0,0,.22),transparent 20%,transparent 80%,rgba(0,0,0,.22));
-      opacity:.7;transition:opacity 180ms ease;
+    .card-link{position:absolute;inset:0;z-index:3;border-radius:inherit;text-decoration:none}
+    .open-hint{
+      position:absolute;right:9px;bottom:9px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--accent) 50%,#fff);
+      border-radius:4px;background:rgba(8,9,13,.88);color:#fff;font-size:8px;
+      font-weight:800;letter-spacing:.1em;opacity:0;transform:translateY(5px);
+      transition:opacity 150ms ease,transform 180ms var(--ease);
     }
-    .game-card.is-active .preview-viewport::after,.game-card:focus-within .preview-viewport::after{opacity:0}
-    .open-game{
-      position:absolute;z-index:3;right:9px;bottom:9px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--accent) 50%,#fff);
-      border-radius:4px;background:rgba(8,9,13,.88);color:#fff;text-decoration:none;font-size:8px;
-      font-weight:800;letter-spacing:.1em;opacity:0;transform:translateY(5px);pointer-events:none;
-      transition:opacity 150ms ease,transform 180ms var(--ease),background 150ms ease;
-    }
-    .open-game:hover{background:color-mix(in srgb,var(--accent) 26%,#08090d)}
-    .game-card.is-active .open-game,.game-card:focus-within .open-game{opacity:1;transform:none;pointer-events:auto}
+    .game-card:hover .open-hint,.game-card:focus-within .open-hint{opacity:1;transform:none}
     .hz{--accent:#41e8ff}.ml{--accent:#e63946}.rk{--accent:#ff8a2a}.sg{--accent:#ff70a6}
     .sf{--accent:#2de2e6}.wf{--accent:#c792ea}.hc{--accent:#ffd166}.bm{--accent:#58e08a}.ws{--accent:#8fc8ff}
     .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mr{--accent:#ed3b86}.sy{--accent:#ffb86c}.af{--accent:#b69cff}.tl{--accent:#4dd9e8}.cc{--accent:#ffcf72}
     .site-footer{
-      min-width:0;display:flex;align-items:center;gap:18px;min-height:42px;padding:8px clamp(16px,3vw,42px) calc(8px + env(safe-area-inset-bottom));
+      min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:12px 18px;min-height:42px;
+      padding:10px clamp(16px,3vw,42px) calc(10px + env(safe-area-inset-bottom));
       border-top:1px solid rgba(39,43,60,.68);color:var(--dim);font-size:8px;line-height:1.45;letter-spacing:.06em;
     }
     .footer-status{white-space:nowrap;text-transform:uppercase}
@@ -153,33 +133,21 @@
     .site-footer p{
       position:absolute;right:0;bottom:24px;width:min(620px,calc(100vw - 32px));margin:0;padding:12px 14px;
       border:1px solid var(--line);border-radius:6px;background:#11131bf2;color:#a9b0c1;box-shadow:0 12px 38px #0009;
+      z-index:11;
     }
     .site-footer code{color:var(--ink)}
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-    @media (hover:hover) and (pointer:fine){
-      .game-card:hover{flex-basis:var(--expanded-width);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
-      .game-card:hover .preview-viewport::after{opacity:0}
-      .game-card:hover .open-game{opacity:1;transform:none;pointer-events:auto}
-    }
     @media (hover:none),(pointer:coarse){
-      #game-track{scroll-snap-type:x mandatory;gap:12px}
-      .game-card{flex-basis:min(var(--expanded-width),82vw)}
-      .open-game{opacity:1;transform:none;pointer-events:auto}
-      .preview-viewport::after{opacity:0}
-      .rail-toolbar p{white-space:normal}
+      .open-hint{opacity:1;transform:none}
+      .game-card:hover{transform:none}
     }
     @media (max-width:760px){
-      body{min-height:500px}
       .site-header{align-items:flex-start;padding-top:14px;gap:10px;flex-wrap:wrap}
       .brand{width:100%;display:flex;align-items:baseline;gap:12px}
       .brand p{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       #clip{margin-left:0;width:100%;flex:1 1 100%}
       #clip select{flex:1;min-width:0}
-      #game-track{scroll-snap-type:x mandatory;gap:12px}
-      .game-card{flex-basis:min(var(--expanded-width),82vw)}
-      .open-game{opacity:1;transform:none;pointer-events:auto}
-      .preview-viewport::after{opacity:0}
-      .rail-toolbar{padding-bottom:8px}
+      #game-grid{gap:12px}
       .footer-status{display:none}
     }
     @media (max-width:430px){
@@ -189,7 +157,7 @@
       #clip{gap:5px}
       #clip label:first-child{display:none}
       #clip button{padding-inline:8px}
-      .rail-toolbar,#game-track{padding-inline:12px;scroll-padding-inline:12px}
+      #game-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding-inline:12px}
       .site-footer{gap:9px;padding-inline:12px}
       .maker-promo{gap:6px}
       .workshop-wide{display:none}
@@ -197,7 +165,7 @@
     }
     @media (prefers-reduced-motion:reduce){
       html{scroll-behavior:auto}
-      .game-card,.open-game,.preview-viewport::after,.workshop-link,.workshop-arrow{transition:none!important}
+      .game-card,.open-hint,.workshop-link,.workshop-arrow{transition:none!important}
     }
   </style>
 </head>
@@ -216,21 +184,10 @@
     </form>
   </header>
 
-  <section class="carousel-shell" aria-labelledby="browse-label">
-    <div class="rail-toolbar">
-      <p id="browse-label">Hover to reveal · scroll, swipe, or use arrow keys to browse</p>
-      <div class="rail-controls">
-        <button class="nav-button" id="previous-game" type="button" aria-label="Previous game" aria-controls="game-track">‹</button>
-        <output id="position" aria-live="polite">01 / 16</output>
-        <button class="nav-button" id="next-game" type="button" aria-label="Next game" aria-controls="game-track">›</button>
-      </div>
-    </div>
-    <main id="game-track" role="list" aria-label="Mini Arcade games" aria-describedby="carousel-help"></main>
-    <p class="sr-only" id="carousel-help">Use Left and Right Arrow, Home, or End to choose a game. Press Enter on a game title to open it.</p>
-  </section>
+  <main id="game-grid" role="list" aria-label="Mini Arcade games"></main>
 
   <footer class="site-footer">
-    <span class="footer-status">Self-playing previews · full controls inside each game</span>
+    <span class="footer-status">Self-playing previews · click any card to play</span>
     <div class="maker-promo">
       <span class="maker-credit">Built by <strong>John Lindquist</strong></span>
       <span class="maker-separator" aria-hidden="true">·</span>
@@ -242,38 +199,28 @@
     </div>
     <details>
       <summary>play &amp; record</summary>
-      <p>Open any game for full-speed play. Press <code>ENTER</code> for instructions, then <code>ENTER</code> again to start a scored run. The gallery plays previews at 30fps and pauses distant games. RECORD opens the selected game and turbo-renders an exact 60fps <code>.webm</code>; add <code>&amp;speed=1</code> to its URL for realtime capture.</p>
+      <p>Open any game for full-speed play. Press <code>ENTER</code> for instructions, then <code>ENTER</code> again to start a scored run. The gallery plays previews at 30fps and pauses offscreen games. RECORD opens the selected game and turbo-renders an exact 60fps <code>.webm</code>; add <code>&amp;speed=1</code> to its URL for realtime capture.</p>
     </details>
   </footer>
 
   <script src="games.js?v=16d67c09"></script>
   <script>
   (()=>{
-    const track=document.getElementById('game-track');
+    const grid=document.getElementById('game-grid');
     const select=document.getElementById('clip-game');
-    const position=document.getElementById('position');
-    const previous=document.getElementById('previous-game');
-    const next=document.getElementById('next-game');
-    const cards=[];
     const frames=[];
-    const intersections=new WeakMap();
     const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
-    const coarsePointer=matchMedia('(hover: none), (pointer: coarse)');
-    const swipeLayout=matchMedia('(max-width: 760px)');
-    let activeIndex=0;
-    let scrollTimer=0;
-    let hoverLockUntil=0;
 
     SIDEQUEST_GAMES.forEach((game,index)=>{
       const option=document.createElement('option');
       option.value=game.id;option.textContent=game.label;select.appendChild(option);
 
       const card=document.createElement('article');
-      card.className=`game-card ${game.tone}${index===0?' is-active':''}`;
+      card.className=`game-card ${game.tone}`;
       card.dataset.index=index;card.setAttribute('role','listitem');
 
       const head=document.createElement('div');head.className='card-head';
-      const title=document.createElement('a');title.className='game-title';title.href=`${game.id}.html`;
+      const title=document.createElement('div');title.className='game-title';
       const number=document.createElement('span');number.className='game-number';number.textContent=String(index+1).padStart(2,'0');
       const strong=document.createElement('strong');strong.textContent=game.title;
       const tagline=document.createElement('span');tagline.className='tagline';tagline.textContent=game.tagline;
@@ -282,21 +229,16 @@
       const viewport=document.createElement('div');viewport.className='preview-viewport';
       const frame=document.createElement('iframe');
       frame.src=`${game.id}.html?preview=1`;frame.title=`${game.title} self-playing preview`;
-      frame.loading=index<2?'eager':'lazy';frame.tabIndex=-1;frame.setAttribute('aria-hidden','true');
-      const open=document.createElement('a');open.className='open-game';open.href=`${game.id}.html`;
-      open.textContent='OPEN GAME ↗';open.setAttribute('aria-label',`Open ${game.title}`);
-      viewport.append(frame,open);card.append(head,viewport);track.appendChild(card);
-      cards.push(card);frames.push(frame);
+      frame.loading=index<4?'eager':'lazy';frame.tabIndex=-1;frame.setAttribute('aria-hidden','true');
+      viewport.append(frame);
 
-      card.addEventListener('pointerenter',()=>{
-        if(coarsePointer.matches||performance.now()<hoverLockUntil)return;
-        hoverLockUntil=performance.now()+650;
-        setActive(index);
-        setTimeout(()=>{
-          if(activeIndex===index)card.scrollIntoView({behavior:'auto',block:'nearest',inline:'nearest'});
-        },280);
-      });
-      card.addEventListener('focusin',()=>setActive(index,{reveal:true}));
+      const link=document.createElement('a');link.className='card-link';link.href=`${game.id}.html`;
+      link.setAttribute('aria-label',`Play ${game.title}`);
+      const hint=document.createElement('span');hint.className='open-hint';hint.setAttribute('aria-hidden','true');
+      hint.textContent='PLAY ↗';link.append(hint);
+
+      card.append(head,viewport,link);grid.appendChild(card);
+      frames.push(frame);
     });
 
     function setPreviewActive(frame,active){
@@ -305,75 +247,20 @@
       frame.dataset.active=value;
       if(frame.contentWindow)frame.contentWindow.postMessage({type:'sidequest:active',active},location.origin);
     }
-    function refreshPreviews(){
-      frames.forEach((frame,index)=>{
-        const close=Math.abs(index-activeIndex)<=1;
-        setPreviewActive(frame,close&&intersections.get(frame)!==false);
-      });
-    }
-    function updateControls(){
-      position.value=`${String(activeIndex+1).padStart(2,'0')} / ${String(cards.length).padStart(2,'0')}`;
-      position.textContent=position.value;
-      previous.disabled=activeIndex===0;next.disabled=activeIndex===cards.length-1;
-    }
-    function setActive(index,{reveal=false,focus=false}={}){
-      const nextIndex=Math.max(0,Math.min(cards.length-1,index));
-      cards.forEach((card,i)=>card.classList.toggle('is-active',i===nextIndex));
-      activeIndex=nextIndex;select.value=SIDEQUEST_GAMES[nextIndex].id;updateControls();refreshPreviews();
-      const card=cards[nextIndex];
-      if(reveal){
-        hoverLockUntil=Math.max(hoverLockUntil,performance.now()+800);
-        card.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth',block:'nearest',inline:'center'});
-      }
-      if(focus)card.querySelector('.game-title').focus({preventScroll:true});
-    }
-    function updateGeometry(){
-      const viewport=cards[0]?.querySelector('.preview-viewport');
-      if(!viewport)return;
-      const full=Math.max(176,Math.min(340,Math.round(viewport.clientHeight*4/9)));
-      const peek=Math.max(88,Math.min(140,Math.round(full*.46)));
-      track.style.setProperty('--expanded-width',`${full}px`);
-      track.style.setProperty('--peek-width',`${peek}px`);
-    }
-    function nearestToCenter(){
-      const bounds=track.getBoundingClientRect();const center=bounds.left+bounds.width/2;
-      let best=activeIndex,distance=Infinity;
-      cards.forEach((card,index)=>{
-        const rect=card.getBoundingClientRect();const d=Math.abs(rect.left+rect.width/2-center);
-        if(d<distance){distance=d;best=index;}
-      });
-      return best;
-    }
-
-    previous.addEventListener('click',()=>setActive(activeIndex-1,{reveal:true,focus:true}));
-    next.addEventListener('click',()=>setActive(activeIndex+1,{reveal:true,focus:true}));
-    track.addEventListener('keydown',event=>{
-      const key=event.key;
-      if(!['ArrowLeft','ArrowRight','Home','End'].includes(key))return;
-      event.preventDefault();
-      const index=key==='Home'?0:key==='End'?cards.length-1:activeIndex+(key==='ArrowRight'?1:-1);
-      setActive(index,{reveal:true,focus:true});
-    });
-    track.addEventListener('wheel',event=>{
-      if(coarsePointer.matches||Math.abs(event.deltaY)<=Math.abs(event.deltaX)||track.scrollWidth<=track.clientWidth)return;
-      event.preventDefault();track.scrollBy({left:event.deltaY,behavior:'auto'});
-    },{passive:false});
-    track.addEventListener('scroll',()=>{
-      clearTimeout(scrollTimer);
-      if(coarsePointer.matches||swipeLayout.matches)scrollTimer=setTimeout(()=>setActive(nearestToCenter()),110);
-    },{passive:true});
-
     if('IntersectionObserver' in window){
       const observer=new IntersectionObserver(entries=>{
-        entries.forEach(entry=>intersections.set(entry.target,entry.isIntersecting&&entry.intersectionRatio>.02));
-        refreshPreviews();
-      },{root:track,threshold:[0,.02]});
-      frames.forEach(frame=>{intersections.set(frame,true);frame.addEventListener('load',refreshPreviews);observer.observe(frame);});
-    }else frames.forEach(frame=>intersections.set(frame,true));
-
-    const resizeObserver='ResizeObserver' in window?new ResizeObserver(()=>requestAnimationFrame(updateGeometry)):null;
-    if(resizeObserver)resizeObserver.observe(track);else addEventListener('resize',updateGeometry,{passive:true});
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{updateGeometry();setActive(0);refreshPreviews();}));
+        for(const entry of entries)setPreviewActive(entry.target,entry.isIntersecting&&entry.intersectionRatio>.02);
+      },{threshold:[0,.02]});
+      frames.forEach(frame=>{
+        frame.addEventListener('load',()=>{
+          // A freshly loaded document starts active; re-send state unconditionally.
+          const active=frame.dataset.active!=='0';
+          delete frame.dataset.active;
+          setPreviewActive(frame,active);
+        });
+        observer.observe(frame);
+      });
+    }
 
     document.getElementById('clip').addEventListener('submit',event=>{
       event.preventDefault();
@@ -383,7 +270,8 @@
     });
     select.addEventListener('change',()=>{
       const index=SIDEQUEST_GAMES.findIndex(game=>game.id===select.value);
-      if(index>=0)setActive(index,{reveal:true});
+      const card=grid.children[index];
+      if(card)card.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth',block:'center'});
     });
   })();
   </script>
