@@ -22,5 +22,6 @@
   {id:'star-salvage',title:'STAR SALVAGE',label:'star salvage',tagline:'break · tether · haul it home',tone:'sv'},
   {id:'neon-getaway',title:'NEON GETAWAY',label:'neon getaway',tagline:'swerve · swap · lose the heat',tone:'ng'},
   {id:'pico-cap',title:'PICO CAP',label:'pico cap',tagline:'shrink · slash · restore the glades',tone:'pc'},
-  {id:'frog-convoy',title:'FROG CONVOY',label:'frog convoy',tagline:'lead · gather · arrive together',tone:'fc'}
+  {id:'frog-convoy',title:'FROG CONVOY',label:'frog convoy',tagline:'lead · gather · arrive together',tone:'fc'},
+  {id:'tower-panic',title:'TOWER PANIC',label:'tower panic',tagline:'climb · reroute · bring them home',tone:'tp'}
 ]));

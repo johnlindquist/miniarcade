@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs=require('fs');
+const path=require('path');
+const{bootRenderedGame,rgbaFrame,encodeRgbaPng}=require('../render/runtime');
+const{
+  sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,analyzeBurst,
+  measureDrawnActorExtent,assertActorScale,writeContactSheet,verifyReviewReceipt,writeJson,quantile
+}=require('./visual-harness');
+
+const ROOT=path.join(__dirname,'..','..'),GAME_PATH=path.join(__dirname,'..','tower-panic.html');
+const ARTIFACT_DIR=path.join(ROOT,'.artifacts','visual','tower-panic'),FRAME_DIR=path.join(ARTIFACT_DIR,'frames');
+const CONTACT_PATH=path.join(ARTIFACT_DIR,'contact-sheet.png'),METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json'),TEMPLATE_PATH=path.join(ARTIFACT_DIR,'review-template.json');
+const TRACKED_CONTACT_PATH=path.join(__dirname,'visual-receipts','tower-panic-contact-sheet.png');
+const REVIEW_PATH=path.join(__dirname,'visual-reviews','tower-panic.json');
+const SEED=0x745052,WORLD_CROP={x:0,y:40,width:160,height:282},RENDER_EVERY=2,PADDING=8,THRESHOLD=8;
+const median=values=>quantile(values,.5);
+
+if(!fs.existsSync(GAME_PATH)){console.error('TOWER PANIC VISUAL EVAL FAILED: missing game');process.exit(1)}
+
+function visualProbe(runtime){const fn=runtime.sandbox.__towerPanicVisualProbe;if(typeof fn!=='function')throw new Error('missing __towerPanicVisualProbe');const p=fn();if(!p||p.finite===false)throw new Error('non-finite visual fixture');return p}
+function captureFixture(name,offsets,options){
+  options=options||{};const runtime=bootRenderedGame('tower-panic',{seed:SEED});if(options.beforeSet)options.beforeSet(runtime);const set=runtime.sandbox.__towerPanicSetVisualBeat;if(typeof set!=='function'||set(name)!==true)throw new Error('unknown visual beat '+name);if(options.actorSelector!==undefined)runtime.sandbox.__TP_VISUAL_ONLY_ACTOR=options.actorSelector;if(options.hideRoute)runtime.sandbox.__TP_HIDE_ROUTE=1;if(options.afterSet)options.afterSet(runtime);
+  const frames=new Map();for(const target of[...new Set(offsets)].sort((a,b)=>a-b)){runtime.advanceTo(target,{renderEvery:RENDER_EVERY,renderLast:true});const frame=runtime.snapshot({native:true});frame.probe=visualProbe(runtime);frame.fixture=name;frame.offset=target;frames.set(target,frame)}return frames;
+}
+function captureTimeline(game,seed,targets){const runtime=bootRenderedGame(game,{seed}),frames=new Map();for(const target of targets){runtime.advanceTo(Math.max(runtime.frame,target-120));runtime.advanceTo(target,{renderEvery:RENDER_EVERY,renderLast:true});frames.set(target,runtime.snapshot({native:true}))}return frames}
+function fixedCrop(frame,box,size){
+  size=size||36;const source=toNativeFrame(frame),cx=Math.round(box.x+box.width/2),cy=Math.round(box.y+box.height/2),rgba=Buffer.alloc(size*size*4),left=cx-(size>>1),top=cy-(size>>1);
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){const sx=left+x,sy=top+y,d=(y*size+x)*4;if(sx<0||sy<0||sx>=source.width||sy>=source.height){rgba[d+3]=255;continue}const s=(sy*source.width+sx)*4;rgba[d]=source.rgba[s];rgba[d+1]=source.rgba[s+1];rgba[d+2]=source.rgba[s+2];rgba[d+3]=source.rgba[s+3]}return rgbaFrame(rgba,size,size);
+}
+function alignedBurst(frames,boxName,size){const crops=[];for(const frame of frames){const box=frame.probe&&frame.probe[boxName];if(!box)return null;crops.push(fixedCrop(frame,box,size))}const differences=[];for(let i=1;i<crops.length;i++)differences.push(frameDifference(crops[i-1],crops[i],{native:false}));const values=differences.map(d=>d.changedFraction);return{frames:crops.length,differences,changedFraction:{min:Math.min(...values),median:median(values),max:Math.max(...values)},firstLast:frameDifference(crops[0],crops.at(-1),{native:false})}}
+function limits(actor){if(actor.kind==='machine'||actor.kind==='structure')return{maxWidth:24,maxHeight:24};return{maxWidth:20,maxHeight:32}}
+function measureActors(fixture,offset,probe){
+  const actors=probe.actors;if(!Array.isArray(actors)||!actors.length)throw new Error(fixture+': actors missing');const base=captureFixture(fixture,[offset],{actorSelector:'none'}).get(offset),measurements=[];
+  for(const actor of actors){const isolated=captureFixture(fixture,[offset],{actorSelector:actor.id}).get(offset),measurement=measureDrawnActorExtent(isolated,base,{id:actor.id,kind:actor.kind,type:actor.type,probeBox:actor.box,padding:PADDING,threshold:THRESHOLD}),assertion=assertActorScale(measurement,Object.assign({label:actor.kind+' '+actor.type},limits(actor)));measurements.push(Object.assign(measurement,{assertion:{ok:assertion.ok,failures:assertion.failures,limits:assertion.limits}}))}return{fixture,offset,measurements};
+}
+function footprint(label,set,playfield){const area=playfield.width*playfield.height,sum=set.measurements.reduce((n,m)=>n+(m.bounds?m.width*m.height:0),0),failures=set.measurements.flatMap(m=>m.assertion.failures);return{label,actors:set.measurements.length,sumBboxArea:sum,fraction:+(sum/area).toFixed(6),scaleOk:failures.length===0,failures,ok:failures.length===0&&sum/area<=.20}}
+function approach(layout){const list=layout&&layout.approaches||[];return list.map(a=>{const measured=Math.abs(a.contact-a.visibleSpawn)/Math.abs(a.goal-a.visibleSpawn);return Object.assign({},a,{measured:+measured.toFixed(6),matches:Math.abs(measured-a.reported)<1e-6,ok:measured>=.55&&Math.abs(measured-a.reported)<1e-6})})}
+function routeEvidence(fixture){const on=captureFixture(fixture,[12]).get(12),off=captureFixture(fixture,[12],{hideRoute:true}).get(12);return{on,off,delta:frameDifference(off,on,{native:false,crop:WORLD_CROP}),probe:on.probe}}
+function gameEvidence(){
+  const specs={
+    opening:{fixture:'opening',offsets:[12]},plan:{fixture:'plan',offsets:[3,7,12]},climb:{fixture:'climb',offsets:[1,4,8,12]},cascade:{fixture:'cascade',offsets:[1,4,8,12,20]},reroute:{fixture:'reroute',offsets:[12]},rescue:{fixture:'rescue',offsets:[1,4,8,12,20]},danger:{fixture:'danger',offsets:[12]},later:{fixture:'later',offsets:[1,5,9,12]},apex:{fixture:'apex',offsets:[1,6,12,24,48]}
+  },runs={};for(const[id,s]of Object.entries(specs))runs[id]=captureFixture(s.fixture,s.offsets);const beats=[
+    {id:'opening',label:'opening',offset:12},{id:'plan',label:'visible plan',offset:12},{id:'climb',label:'ladder climb',offset:8},{id:'cascade',label:'cascade',offset:12},{id:'reroute',label:'live reroute',offset:12},{id:'rescue',label:'worker joins',offset:8},{id:'danger',label:'danger',offset:12},{id:'later',label:'dynamo spire',offset:12},{id:'apex',label:'extraction',offset:12}
+  ];return{specs,runs,beats,frames:Object.fromEntries(beats.map(b=>[b.id,runs[b.id].get(b.offset)]))};
+}
+function reviewTemplate(montageHash,gameHash,beats){const pending=note=>({meetsMachineHunt:false,meetsBlockMine:false,note});return{schema:1,game:'tower-panic',verdict:'pending',references:['horizon','blockmine'],montageSha256:montageHash,gameSha256:gameHash,seed:'0x'+SEED.toString(16),checkpoints:beats.map(b=>b.id+'@'+b.offset),reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size review',categories:{characterCraft:pending('Inspect the rigger, four worker trades, barrel construction, facing, gait, climbing, bracing, hurt, panic, and convoy poses at 160x360.'),environmentCraft:pending('Inspect built steel decks, ladders, broken gantries, pipes, tanks, turbines, crane, skyline, foreground, lighting, and material separation with HUD mentally hidden.'),levelVariety:pending('Confirm freight, boiler, dynamo, and crane compositions change silhouettes, landmarks, light, props, and structure rather than palette alone.'),animationImpact:pending('Confirm climbing, convoy gait, rotating barrels, pistons, live reroute, warning, cascade, rescue join, and rooftop extraction have anticipation and follow-through.'),readability:pending('Confirm the thin route, next junction, small actors, full-width hazard runway, warning column, convoy count, and extraction remain legible beside video.'),artDirectionCohesion:pending('Confirm the industrial material language, helmet colors, safety accents, hazard grammar, HUD, and celebration effects feel authored as one game.')}}}
+
+async function main(){
+  fs.mkdirSync(FRAME_DIR,{recursive:true});for(const f of fs.readdirSync(FRAME_DIR))if(f.endsWith('.png'))fs.unlinkSync(path.join(FRAME_DIR,f));
+  const evidence=gameEvidence(),repeat=gameEvidence(),determinism=[];for(const beat of evidence.beats){const a=evidence.frames[beat.id],b=repeat.frames[beat.id];determinism.push({beat:beat.id,a:sha256(a.rgba),b:sha256(b.rgba),ok:sha256(a.rgba)===sha256(b.rgba)})}
+  const refTargets=[60,600,1200,2400,3600,5400,7200,9000,12000],horizon=captureTimeline('horizon',0xa1020401,refTargets),blockmine=captureTimeline('blockmine',0xb10c0050,refTargets),horizonFrames={},blockmineFrames={};
+  evidence.beats.forEach((beat,i)=>{horizonFrames[beat.id]=horizon.get(refTargets[i]);blockmineFrames[beat.id]=blockmine.get(refTargets[i]);fs.writeFileSync(path.join(FRAME_DIR,String(i+1).padStart(2,'0')+'-'+beat.id+'.png'),encodeRgbaPng(evidence.frames[beat.id]))});
+  const sheet=writeContactSheet({beats:evidence.beats.map(b=>({id:b.id,label:b.label})),rows:[{label:'TOWER PANIC',frames:evidence.frames},{label:'MACHINE HUNT',frames:horizonFrames},{label:'BLOCK MINE',frames:blockmineFrames}],outPath:CONTACT_PATH});fs.mkdirSync(path.dirname(TRACKED_CONTACT_PATH),{recursive:true});fs.writeFileSync(TRACKED_CONTACT_PATH,sheet.png);
+
+  const candidateMetrics=Object.fromEntries(evidence.beats.map(b=>[b.id,analyzeFrame(evidence.frames[b.id],{native:false,crop:WORLD_CROP})])),cm=Object.values(candidateMetrics),horizonMetrics=evidence.beats.map(b=>analyzeFrame(horizonFrames[b.id],{native:false,crop:WORLD_CROP})),blockmineMetrics=evidence.beats.map(b=>analyzeFrame(blockmineFrames[b.id],{native:false,crop:WORLD_CROP}));
+  const refEdge=Math.min(median(horizonMetrics.map(m=>m.edge[1].energy)),median(blockmineMetrics.map(m=>m.edge[1].energy))),refRich=Math.min(median(horizonMetrics.map(m=>m.richCellFraction)),median(blockmineMetrics.map(m=>m.richCellFraction)));
+
+  const scaleFrame=captureFixture('scale-contract',[12]).get(12),scale=measureActors('scale-contract',12,scaleFrame.probe),scaleKinds=new Map();for(const m of scale.measurements){const set=scaleKinds.get(m.kind)||new Set();set.add(m.type);scaleKinds.set(m.kind,set)}
+  const footprintSets={};for(const id of['plan','cascade','convoy']){const fixture=id==='convoy'?'convoy':id,frame=id==='convoy'?captureFixture('convoy',[12]).get(12):evidence.frames[id],set=measureActors(fixture,12,frame.probe);footprintSets[id]=footprint(id,set,frame.probe.layout.playfield)}
+  const approaches=approach(scaleFrame.probe.layout),planRoute=routeEvidence('plan'),warnRoute=routeEvidence('warning'),calmRoute=routeEvidence('warning-calm');
+  const warning=frameDifference(calmRoute.on,warnRoute.on,{native:false,crop:WORLD_CROP}),land=captureFixture('land',[12]).get(12),landDelta=frameDifference(warnRoute.on,land,{native:false,crop:WORLD_CROP});
+  const apexNoFx=captureFixture('apex',[12],{beforeSet:r=>{r.sandbox.__NO_PAYOFF_FX=1}}).get(12),apexDelta=frameDifference(apexNoFx,evidence.frames.apex,{native:false,crop:WORLD_CROP});
+  const environment={opening:captureFixture('opening',[12],{actorSelector:'none',hideRoute:true}).get(12),later:captureFixture('later',[12],{actorSelector:'none',hideRoute:true}).get(12),crown:captureFixture('apex',[12],{actorSelector:'none',hideRoute:true,beforeSet:r=>{r.sandbox.__NO_PAYOFF_FX=1}}).get(12)},zonePairs={};for(const[a,b]of[['opening','later'],['opening','crown'],['later','crown']])zonePairs[a+'-'+b]=structureDistance(environment[a],environment[b],{crop:WORLD_CROP});
+  const heroBurst=alignedBurst([1,4,8,12].map(o=>evidence.runs.climb.get(o)),'heroBox',32),workerBurst=alignedBurst([1,4,8,12,20].map(o=>evidence.runs.rescue.get(o)),'workerBox',28),barrelBurst=alignedBurst([1,4,8,12,20].map(o=>evidence.runs.cascade.get(o)),'barrelBox',28),apexBurst=analyzeBurst([1,6,12,24,48].map(o=>evidence.runs.apex.get(o)),{native:false,crop:WORLD_CROP});
+
+  // Locked after inspecting the fixed-seed candidate captures. Candidate cells
+  // measured 132..215 quantized colors, 3.848..4.594 entropy, .151..185 luma
+  // deviation, .035..046 single-pixel edge energy, and 1.0 rich cells.
+  // Floors below preserve approximately 10-20% regression margin; semantic art
+  // quality remains independently bound to the native-size review receipt.
+  const bands={colors:110,entropy:3.45,luma:.13,largest:.27,edge:.029,richEach:.90,richMedian:.94,routeChanged:.0025,routeGrid:.04,warningChanged:.025,warningGrid:.25,landChanged:.07,landGrid:.35,zonePair:.075,heroAnim:.025,workerAnim:.018,barrelAnim:.018,apexFx:.0065,apexFxGrid:.12,apexBurst:.025,apexBurstGrid:.30};
+  const gates=[],gate=(name,ok,detail)=>gates.push({name,ok:!!ok,detail});
+  gate('same-seed real pixels deterministic',determinism.every(d=>d.ok),determinism);
+  gate('all native checkpoints are finite and semantic',evidence.beats.every(b=>evidence.frames[b.id].probe&&evidence.frames[b.id].probe.finite),evidence.beats.map(b=>({id:b.id,probe:evidence.frames[b.id].probe})));
+  gate('scale fixture covers rigger, four trades, rolling/falling barrels, fire, machinery, and cage',(scaleKinds.get('rigger')||new Set()).size===1&&(scaleKinds.get('worker')||new Set()).size===4&&(scaleKinds.get('barrel')||new Set()).has('rolling')&&(scaleKinds.get('barrel')||new Set()).has('falling')&&(scaleKinds.get('hazard')||new Set()).has('fire')&&(scaleKinds.get('machine')||new Set()).has('piston')&&(scaleKinds.get('structure')||new Set()).has('cage'),Object.fromEntries([...scaleKinds].map(([k,v])=>[k,[...v]])));
+  gate('drawn actor extents obey standard 20x32 and structure 24x24 caps',scale.measurements.every(m=>m.assertion.ok),scale.measurements);
+  gate('normal, cascade, and full-convoy footprints remain under 20%',Object.values(footprintSets).every(v=>v.ok),footprintSets);
+  gate('rolling threat has at least 55% visible runway',approaches.length&&approaches.every(a=>a.ok),approaches);
+  gate('frames are opaque, rich, contrasted, and non-flat',cm.every(m=>m.opaqueFraction===1&&m.quantizedColors>=bands.colors&&m.colorEntropy>=bands.entropy&&m.lumaStdDev>=bands.luma&&m.largestColorShare<=bands.largest),cm.map(m=>({colors:m.quantizedColors,entropy:m.colorEntropy,luma:m.lumaStdDev,largest:m.largestColorShare})));
+  gate('multiscale industrial detail is reference-comparable',cm.every(m=>m.edge[1].energy>=bands.edge&&m.edge[4].energy>m.edge[1].energy)&&median(cm.map(m=>m.edge[1].energy))>=refEdge*.85,{candidate:cm.map(m=>m.edge),referenceFloor:refEdge});
+  gate('spatial richness fills the native strip',cm.every(m=>m.richCellFraction>=bands.richEach)&&median(cm.map(m=>m.richCellFraction))>=Math.max(bands.richMedian,refRich*.88),{candidate:cm.map(m=>m.richCellFraction),referenceFloor:refRich});
+  gate('visible forecast route paints real pixels',planRoute.probe.routePoints>=4&&planRoute.delta.changedFraction>=bands.routeChanged&&planRoute.delta.changedGridFraction>=bands.routeGrid,planRoute.delta);
+  gate('warning changes the route identity before land',calmRoute.probe.routeHash!==warnRoute.probe.routeHash&&warnRoute.probe.routePoints>=4&&warnRoute.delta.changedFraction>=bands.routeChanged,{calm:calmRoute.probe.routeHash,warn:warnRoute.probe.routeHash,warning});
+  gate('overload warning and physical cascade land are visually distinct',warning.changedFraction>=bands.warningChanged&&warning.changedGridFraction>=bands.warningGrid&&landDelta.changedFraction>=bands.landChanged&&landDelta.changedGridFraction>=bands.landGrid,{warning,landDelta});
+  gate('freight, dynamo, and crane environments change composition',Object.values(zonePairs).every(v=>v.structureDistance>=bands.zonePair),zonePairs);
+  gate('rigger climbing, worker joining, and barrels animate in aligned crops',heroBurst&&workerBurst&&barrelBurst&&heroBurst.changedFraction.max>=bands.heroAnim&&workerBurst.changedFraction.max>=bands.workerAnim&&barrelBurst.changedFraction.max>=bands.barrelAnim,{heroBurst,workerBurst,barrelBurst});
+  gate('rooftop extraction has physical staging plus authored payoff motion',apexNoFx.probe.rescued===4&&apexDelta.changedFraction>=bands.apexFx&&apexDelta.changedGridFraction>=bands.apexFxGrid&&apexBurst.changedFraction.max>=bands.apexBurst&&apexBurst.changedGridFraction.max>=bands.apexBurstGrid,{apexNoFx:apexNoFx.probe,apexDelta,apexBurst});
+
+  const gameHash=sha256(GAME_PATH);writeJson(TEMPLATE_PATH,reviewTemplate(sheet.sha256,gameHash,evidence.beats));let review;if(fs.existsSync(REVIEW_PATH)){review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});if(review.receipt.game!=='tower-panic'||review.receipt.gameSha256!==gameHash||review.receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(review.receipt.checkpoints)!==JSON.stringify(evidence.beats.map(b=>b.id+'@'+b.offset))){review.ok=false;review.errors.push('review identity, game hash, seed, or checkpoints are stale')}}else review={ok:false,errors:['missing semantic review '+REVIEW_PATH,'inspect '+CONTACT_PATH+' and complete '+TEMPLATE_PATH]};gate('fresh native-size semantic comparison receipt',review.ok,review.errors);
+  const report={schema:1,game:'tower-panic',gameSha256:gameHash,seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,contactSheet:{path:CONTACT_PATH,trackedPath:TRACKED_CONTACT_PATH,sha256:sheet.sha256,width:sheet.width,height:sheet.height},checkpoints:Object.fromEntries(evidence.beats.map(b=>[b.id,{fixture:evidence.specs[b.id].fixture,offset:b.offset,probe:evidence.frames[b.id].probe}])),thresholds:{actorScale:{standard:{maxWidth:20,maxHeight:32},structure:{maxWidth:24,maxHeight:24},runway:.55,footprint:.20,extentThreshold:THRESHOLD},bands,referenceEdge:refEdge,referenceRich:refRich},metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,scale:scale.measurements,footprints:footprintSets,approaches,planDelta:planRoute.delta,warningRouteDelta:warnRoute.delta,warning,landDelta,zonePairs,heroBurst,workerBurst,barrelBurst,apexDelta,apexBurst},gates,automatedOk:gates.slice(0,-1).every(g=>g.ok),semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}};writeJson(METRICS_PATH,report);
+  console.log('TOWER PANIC visual evidence · seed 0x'+SEED.toString(16));for(const g of gates)console.log('  '+(g.ok?'PASS':'FAIL')+' '+g.name);console.log('  contact: '+CONTACT_PATH);console.log('  tracked contact: '+TRACKED_CONTACT_PATH);console.log('  montage sha256: '+sheet.sha256);console.log('  metrics: '+METRICS_PATH);console.log('  review template: '+TEMPLATE_PATH);if(!gates.every(g=>g.ok)){console.error('\nTOWER PANIC VISUAL EVAL FAILED');process.exit(1)}console.log('\nTOWER PANIC VISUAL EVAL PASSED');
+}
+main().catch(error=>{console.error('TOWER PANIC VISUAL EVAL FAILED:',error.stack||error);process.exit(1)});
