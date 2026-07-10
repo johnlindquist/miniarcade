@@ -277,6 +277,49 @@ act telegraphs with physical warning-phase divergence, common human/bot intent
 paths, three native-resolution 60-second render probes, and deterministic
 15-minute ending renders.
 
+## Fusion-ultra addition: CRESTCRASH (2026-07-09)
+
+Council session:
+`~/.fusion/sessions/2026/07/10/2026-07-10T00-19-37-808Z-244d24`.
+All six seats completed successfully. Five seats and the finalizer selected the
+one-body design: terrain stores the launch energy and the ridge runner itself is
+the projectile. One seat proposed a detachable bolt; that mode split was rejected.
+
+**CRESTCRASH** implements the council's irreducible core: deterministic generated
+ridges, one shared human/bot intent and physics path, physical support-graph tower
+collapses, a copied-state arc planner, honest misses and shell repairs, Headwind and
+Plating acts, a strict three-tier show ladder, and an earned frame-54,000 ending.
+The maximum-speed terrain sweep uses bounded deterministic chord sampling and a
+refined first-contact time, so neither runtime nor planner can tunnel through a
+crest. The exposed-joint recovery is also physical: the joint lowers visibly over
+36 frames and the bot replans; `__NO_EXPOSED_RECOVERY` restores the old geometry.
+
+Thirty fixed ten-minute seeds on game SHA-256 `232b6f19...` were all finite and
+reset-free. Measured p05..p95: 111..126 launches, 108..122 landings, 108..120
+impacts, 90..99 joint breaks, 13..15 core breaks, 21..30 misses, 14..22 tumbles,
+3..4 repairs, 6..9 recoveries, and 3..5 coil recoveries. Every run produced four
+warnings, lands, and real structural changes for each scheduled act. The maximum
+viewer-time break gap was 1,193f against the hard 1,200f contract; maximum story
+lull was 985f and maximum one-step capsule motion was 4.604px.
+
+The planned arc policy won payoff rate 12/12 same-seed five-minute pairs: 78.6%
+versus 39.9% (+38.7 percentage points), with 82 versus 59 cores and median maximum
+payoff lull 780f versus 1,082.5f. Across thirty additional paired ten-minute runs,
+visible exposed-joint recovery reduced mean/median maximum break gaps from
+977/876.5f to 831/795.5f, eliminated five hard-gap breaches (5 -> 0), and improved
+aggregate breaks 2,836 -> 2,856, cores 414 -> 422, misses 803 -> 776, and progress
+5,857 -> 5,894. Permanent switches are `__NO_ARC_PLAN`,
+`__NO_EXPOSED_RECOVERY`, `__NO_ACTS`, `__NO_ADMIRE`, and `__NO_PAYOFF_FX`.
+
+Deliberate council cuts are recorded rather than hidden: the narrow-strip release
+omits defender NPCs, slag rollers, shutters, wardens, branching upgrades,
+secondary-joint variants, and the proposed three-tower Crown staging. It keeps
+time-gated deterministic upgrades, escalating target mass/support geometry, two
+measured acts, and a single earned Crown target. The planner replans every 60f
+rather than the proposed 12f to keep headless and production CPU bounded. These
+cuts follow the council's defender/secondary-system cut order and do not weaken
+the measured watchability, determinism, act, show, or ending contracts.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

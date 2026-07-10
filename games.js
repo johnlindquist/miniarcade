@@ -17,5 +17,6 @@
   {id:'misregister',title:'MISREGISTER',label:'misregister',tagline:'vault · align · print',tone:'mr'},
   {id:'skyhook',title:'SKYHOOK YARD',label:'skyhook yard',tagline:'swing · release · launch',tone:'sy'},
   {id:'apogee',title:'APOGEE FOUNDRY',label:'apogee foundry',tagline:'phase · capture · ignite',tone:'af'},
-  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'route · store · crown the city',tone:'tl'}
+  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'route · store · crown the city',tone:'tl'},
+  {id:'crestcrash',title:'CRESTCRASH',label:'crestcrash',tagline:'dive · crest · topple',tone:'cc'}
 ]));
