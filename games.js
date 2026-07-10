@@ -14,11 +14,9 @@
   {id:'webslam',title:'WEB SLAM',label:'web slam',tagline:"swing · serve · send 'em",tone:'ws'},
   {id:'deadline-deck',title:'DEADLINE DECK',label:'deadline deck',tagline:'throw · grind · beat the press',tone:'dd'},
   {id:'scrapshift',title:'SCRAP SHIFT',label:'scrap shift',tagline:'ram · arm · outlast',tone:'ss'},
-  {id:'skyhook',title:'SKYHOOK YARD',label:'skyhook yard',tagline:'catch parts · build airship · launch',tone:'sy'},
-  {id:'apogee',title:'APOGEE FOUNDRY',label:'apogee foundry',tagline:'tow scrap · build ring · ignite',tone:'af'},
-  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'send water · light four districts',tone:'tl'},
-  {id:'misregister',title:'PRESS RUN',label:'press run',tagline:'ride the belts · stamp three · print the page',tone:'mr'},
-  {id:'crestcrash',title:'CRESTCRASH',label:'crestcrash',tagline:'dive · crest · topple',tone:'cc'},
   {id:'motobowl',title:'MOTO BOWL',label:'moto bowl',tagline:'huddle · hurdle · touchdown',tone:'mb'},
-  {id:'ghost-shift',title:'GHOST SHIFT',label:'ghost shift',tagline:'loot · unlock · evade',tone:'gs'}
+  {id:'ghost-shift',title:'GHOST SHIFT',label:'ghost shift',tagline:'loot · unlock · evade',tone:'gs'},
+  {id:'wingrush',title:'WINGRUSH',label:'wingrush',tagline:'dive · soar · shatter',tone:'wr'},
+  {id:'grave-garden',title:'GRAVE GARDEN',label:'grave garden',tagline:'plant · fortify · survive',tone:'gg'},
+  {id:'swarm-keeper',title:'SWARM KEEPER',label:'swarm keeper',tagline:'lead · build · bring them home',tone:'sk'}
 ]));

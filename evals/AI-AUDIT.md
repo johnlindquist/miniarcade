@@ -1,8 +1,7 @@
 # SIDE/QUEST Bot Intelligence Audit
 
-Audit of the AI in the original eleven self-playing games, plus the three-game
-fusion-max expansion and proven-improvement log for later additions, and a plan
-for evals that measure what actually matters:
+Audit of the AI in the original eleven self-playing games, the proven-improvement
+log for later additions, and a plan for evals that measure what actually matters:
 **fun to watch, sometimes creative, never stuck**.
 
 Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.js`,
@@ -12,9 +11,6 @@ Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.
 
 | Game | Intelligence | Variety/Creativity | autoplay.js usage | Deliberate imperfection | Eval watchability coverage |
 |---|---|---|---|---|---|
-| APOGEE FOUNDRY | 5/5 — phase targeting, copied-state orbital planning, dock guidance, physical recovery | 4/5 — three personas, cutoff lapses, three mechanical upgrade stages | `controllerMux` | bounded late cutoffs, visible calibrated replans | 20 seeded 15m endings, planner and sensor-policy A/Bs, exact trajectory/show/recovery contracts |
-| SKYHOOK YARD | 5/5 — exact pendulum/free-flight release planning and next-frame catcher validation | 4/5 — Rigger/Slinger/Closer profiles, showboat and steady-hands arcs | `controllerMux`, `skillProfile` | reaction delay, lapses, confidence-driven risky drops | 20 seeded 10m bands, two independent policy A/Bs, 100-job solvability, final-airship proof |
-| TIDELATCH | 5/5 — copied fixed-point flow schedules with conserved water and sediment | 4/5 — three reserve/risk personas, honest dry districts and breaches | `controllerMux`, `moveToward` | persona overflow tolerance and retained failures | 20 seeded 10m bands, planner A/B, conservation/order proofs, exact River Crown |
 | SCRAP SHIFT | 5/5 — A* over nav graph, intercept solving, target hysteresis, roles | 4/5 — four personas (VOLT/FORK/BULWARK/WISP), director set-pieces | `findPath`, `controllerMux` | plan-duration jitter, fire spread | **Best in repo**: damage-lull cap, low-speed cap, mode presence, action bands |
 | MEAT LAD | 5/5 — model-predictive: simulates real physics over jump candidates | 3/5 — depth-scaled deliberate fumbles (`err` up to 0.3) | **none** (doesn't load it) | yes — intentional under-powered jumps | progress + solvability only; can't tell clean play from warp-rescues |
 | BLOCK MINE | 4/5 — weighted A* w/ state-dependent costs, trips, combat tactics | 3/5 — world seed + seeded tower blueprints; **no persona** | `BinaryHeap` only | none | rich competence floors + 30m never-stuck seed search; no variety/pacing metric |
@@ -199,33 +195,6 @@ being accepted; the proof is wired into the evals so it re-runs forever.
    - Horizon's Aloy legitimately holds a stealth hide for ~28s while machines prowl;
      the soak tracks world motion, not just the avatar.
 
-6. **Misregister — three physical parallax planes with measured route planning.**
-   A clockwork proofreader now moves continuously between independently projected
-   yellow plate, cyan blanket, and magenta stock surfaces; every plane owns its
-   phase, acceleration/braking, collision restitution, seams, hazards, and marks.
-   Transfers have a 12f cancelable wind-up, immutable commit, continuous depth
-   travel, and frame-48 footprint/relative-speed validation; failures tumble or
-   ride a visible 72f paper-return chute instead of teleporting. The copied-state
-   register planner is permanently ablated by `__NO_REGISTER_LOOKAHEAD`: across
-   12 paired ten-minute seeds it won 12/12, printed 299 vs 256 posters (+16.8%),
-   stayed inside the 0..2 chute band (2 vs 0), and kept both policies above .99 normalized
-   plane-occupancy entropy. A golden-ratio-spaced 30-seed calibration measured
-   20..28 posters, 87..122 transfers, 92.0..95.1% clean landings, 8..11 smudges,
-   0..1 chutes, and 28.6..38.1% occupancy per plane. PAPER JAM and SOLVENT WASH
-   first change applied physical intent and actor motion during their exact
-   240f/210f warnings, never merely a tactic label. The shipping soak records
-   0s frozen, 8s quiet, 17s without story progress, balanced 36.5/32.2/31.3%
-   plane dwell, both transfer edges 52/53 times, and zero hard
-   rescues; poster apexes spend exactly 6 held + 18 slowed + 42 admire frames.
-   2026-07-09 the game shipped a presentation-only genre realign to **PRESS RUN**:
-   the cream letterpress diorama became a dark press-hall of three conveyor
-   belts (family palette, rect-stack pressman, chunky stamp pickups, floating
-   pop text, an always-visible page-under-construction in the station strip),
-   with "misregister" demoted to the smudge failure state. The realign was
-   proven a perfect sim no-op — 10-minute signatures on three seeds match the
-   pre-change build byte-for-byte — so every band, A/B, and calibration above
-   still holds unchanged.
-
 Iteration lessons worth keeping: measure before believing (two of four "improvements"
 initially failed their own bands or instruments); paired same-seed A/B via a
 `__NO_<FEATURE>` switch is cheap and makes the proof permanent; watchability bands
@@ -278,165 +247,68 @@ bounded, so long-window telegraph pairing needs a footer note collector
 (Deadline Deck); pick A/B seeds so the pre-positioning situation actually
 arises during the first warn window, and document the rejected seeds.
 
-## Fusion-max expansion: three new simulation families (2026-07-09)
+## Visual-gate rejection (2026-07-10)
 
-Council session:
-`~/.fusion/sessions/2026/07/09/2026-07-09T23-58-46-002Z-e3db4e`.
-The selected slate deliberately avoids every existing primary mechanic:
-conserved-fluid routing, pendulum logistics, and orbital phasing/construction.
+Six simulations were removed from the active arcade after review: SKYHOOK YARD
+(`skyhook` / BUILD AIRSHIP), APOGEE FOUNDRY (`apogee` / BUILD RING),
+TIDELATCH (`tidelatch` / LIGHT CITY), PRESS RUN (`misregister`), CRESTCRASH
+(`crestcrash` / TOPPLE RANGE), and DUNGEON EXPRESS (`dungeon-express`).
 
-1. **Tidelatch.** Twenty measured ten-minute seeds produced 134–156 deliveries,
-   5–19 dry failures, and 0–2 breaches. The copied-state flow planner beat greedy
-   routing 10/10 seeds and raised median deliveries 122.5→144.5 (+18.0%).
-   Water/sediment ledgers and edge-order independence are exact; breach repair is
-   a physical drone trip. The 12-minute River Crown spends exactly 6 held, 18
-   slowed, and 36 admire frames. The council's provisional 40–120 delivery range
-   was rejected after measurement; the permanent 125–190 band is derived from
-   the 20-seed distribution with margin.
-2. **Skyhook Yard.** The release planner beats reactive sight-lines 10/10 seeds
-   (141 vs 56 catches, +152%). A separate stale-release guard A/B reduces crashes
-   23→16 while preserving catches (129 vs 125); `__NO_RELEASE_GUARD` restores
-   the complete old patience policy. Across twenty ten-minute seeds: 61–73
-   catches, 3–9 crashes, 1–6 visible salvages, 70–77 releases, and a 16.2s worst
-   release gap. All 100 legal job fixtures solve, and the final engine unfolds
-   into an airship lift at 12.32 minutes.
-3. **Apogee Foundry.** Twenty fixed seeds consume exactly 20 delivered parts to
-   build Relay/Habitat/Crown and ignite 20/20 endings; all three personas and 20
-   distinct outcomes appear. Phase planning wins 9/10, improves median docks
-   9→12.5, and cuts p95 first capture 2878→693f. No fragment position or velocity
-   reset is invisible. Two independently ablated sensor fixes prove depot handoff
-   (10000→1657f progress lull) and physical pursuit calibration (5814→2064f);
-   replan/calibration behavior stays under 14.4% of commands across all endings.
-   Exact apex accounting is 6 hold / 24 slow / 60 kernel admire / 38 executed
-   admire, with zero sticky or ablated commands. After fixing the real
-   handed-off-fragment chase, the 20-seed progress-lull range was 29.3–63.7s;
-   the permanent ceiling is pinned at 65s rather than the rejected provisional
-   180s allowance.
+Their deterministic replays, behavior bands, same-seed policy A/Bs, and soak tests
+could all be green while the rendered characters, environments, level identity,
+and animation still fell below the MACHINE HUNT / BLOCK MINE release floor. None
+had an executable real-pixel visual eval plus preserved native-size reference
+comparison. Behavioral green is therefore not release approval; the historical
+commits remain provenance, but these games and their old positive scorecard claims
+are retired.
 
-All three retain `__NO_PAYOFF_FX` same-seed simulation parity, exact 180–240f
-act telegraphs with physical warning-phase divergence, common human/bot intent
-paths, three native-resolution 60-second render probes, and deterministic
-15-minute ending renders.
+## From-scratch replacement: WINGRUSH (2026-07-10)
 
-## Fusion-ultra spectator-story repair (2026-07-10)
+**WINGRUSH** is the from-scratch momentum successor to the removed CRESTCRASH /
+TOPPLE RANGE concept. The frozen behavioral registration is game SHA-256
+`16aacc661098304c5cb2c5c24b022a3d1bde425a4af9f48dbcb22ff42c2acc14`;
+all receipts below are executable in `wingrush-eval.js`. This is behavioral and
+simulation proof only — visual release approval remains the separate real-pixel,
+native-size reference gate required above.
 
-Council session:
-`~/.fusion/sessions/2026/07/10/2026-07-10T03-03-13-075Z-293c6b`.
-All six seats completed without quota degradation. The consensus rejected telemetry-first
-polish: the common failure was causal storytelling — the viewer could not reliably see
-one actor, one target, one intended path, a plain verb, persistent progress, and the
-payoff that advanced the ending.
+- **Tiny-Wings momentum is physical, not copy.** The deterministic bowl fixture
+  compares the same bird on the same hill. Holding the dive banked speed
+  4.53 vs 3.87 and charge 1.21 vs 0.25; opening at the exit crest produced a
+  579px flight, 124px apex rise, and 152 airborne frames, over 300px and 100
+  frames beyond the coast policy. Terrain hits all 121 sampled segment boundaries
+  exactly, with a sub-.001px numerical seam; five biomes expose nine named hill
+  families and five distinct family palettes, with measured relief 94.3..133.0px.
+- **Lookahead earns destruction.** `__NO_LOOKAHEAD` restores the reactive
+  feel-only release. Across ten paired two-minute seeds, lookahead won the
+  destructive score on 8/10 and delivered 154 vs 92 broken blocks, 24 vs 16
+  toppled towers, and 41 vs 25 cores (aggregate score 558 vs 352, where a block
+  is 1, a tower 10, and a core 4). Both policies remain inside the same measured
+  launch, flight, impact, failure, progress, and pacing bands. The planner is
+  same-state pure, exactly repeatable, and consumes no engine RNG.
+- **Power-ups alter momentum and architecture.** Isolated runtime fixtures prove
+  the gust core raises forward speed to 5.26 with a 240f boost, the spring launches
+  at 5.67 with a 300f boost, the star cage yields the 480f momentum/combo power-up,
+  and the blast heart breaks eight nearby blocks. Breaking the three foundations
+  of the 12-block crown keep propagates through the support graph until all twelve
+  blocks fall, settle, and register exactly one toppled tower.
+- **Acts and show timing are exact.** GUST and RAIN each warn for exactly 240
+  viewer and simulation frames; paired `__NO_ACTS` runs first diverge physically
+  on warning frame 1, before the act lands. The ten-minute runs emitted reproducible
+  warning/land pairs (allowing only the final still-live warning at the sample
+  boundary). Tier frequencies were strictly ordered: shown tiers 106/65/5 and
+  110/61/8. Apex budgets were exact at 6 hold / 24 slow / 48 admire frames each
+  (30/120/240 and 48/192/384 totals), with `__NO_ADMIRE` gating the bot pause.
+- **Long autoplay stays alive without cheating.** Two independent ten-minute
+  soaks had 0s still time, 8..9s maximum quiet and progress gaps, 491..616 visible
+  events, 256..280 progress marks, 51..61 great flights, 8..11 toppled towers,
+  and 14..16 cores. Both stayed finite, made no invisible reset, and had no
+  unaccounted one-step position discontinuity. Human dive/trim/brace uses the same
+  six-field intent schema and `advanceBody` physics path as the bot. Fixed-seed
+  headless, chunked, and rendered runs are signature-identical, and
+  `__NO_PAYOFF_FX` is a proven simulation no-op.
 
-1. **Skyhook — every catch now visibly builds an airship.** The HUD says
-   `BUILD AIRSHIP`, the green catcher is a dominant target, the release forecast says
-   `ON TARGET` / `SHORT` / `LONG`, and the hull is recognizable from frame one.
-   The previously unrendered `placedPieces` now persist as 1/3 -> 2/3 -> locked module.
-   `__NO_VIEWER_STORY` and `__NO_PARTIAL_HULL` restore the old presentation with
-   identical simulation signatures. `__NO_LONG_LAUNCH` restores the 342-frame finale;
-   the shipped ceremony is 982 frames, with identical pre-launch outcomes and exact
-   6/24/48 show budgets. Twenty-seed outcome bands remain 61..73 catches, 3..9 crashes,
-   1..6 salvages, 20..24 modules, and 70..77 releases.
-2. **Tidelatch — the route now explains the city.** A persistent `LIGHT CITY x/4`
-   goal, causal action line, River Crown forecast, cream planned route, one highlighted
-   district, and four distinct district silhouettes replace the engineering dashboard.
-   `__NO_VIEWER_STORY` / `__NO_FLOW_STORY` are simulation-exact. The separately
-   ablated `__NO_EARLY_CITY_ARC` restores 0/150/300/450-second unlocks; the shipped
-   0/75/195/315-second arc won 10/10 same-seed comparisons and raised median deliveries
-   143 -> 161 (+12.6%) while retaining 138 dry/breach failures, including four breaches.
-   Fresh runs stayed inside 152..182 deliveries, 9..21 dry events, and 0..3 breaches;
-   Crown timing remains exact at 6/18/36.
-3. **Apogee — scrap, tug, dock, and ring now form one visible chain.** One enlarged
-   tug and selected salvage dominate the field; all 12 ring slots exist from frame zero;
-   banked parts remain physical at the construction socket; the mission loop reads
-   `GET SCRAP -> TOW TO DOCK -> PLACE PART`. `__NO_VIEWER_STORY` and
-   `__NO_MISSION_STORY` preserve exact simulation parity. `__NO_PROMPT_IGNITION`
-   restores the old 48,000-frame ignition: the shipped ring ignites at frame 45,300,
-   five seconds after honest final construction at 45,000, still spending exactly 20
-   parts. All 20 seeded endings, three personas, 20 distinct outcomes, and exact
-   6/24/60 kernel / 38 executed admire budgets remain intact.
-
-The shared session API now accepts `{viewer:true}`: gallery previews and recordings
-show no play prompt, while direct pages reveal a low-contrast `ENTER · TAKE OVER`
-affordance only after eight seconds. Native 160x360 first-minute and ending renders
-were visually reviewed. Automated checks prove truth, timing, persistence, parity, and
-band preservation; a blinded naive-viewer comprehension/preference study remains the
-honest next evidence layer because counters cannot prove fun.
-
-
-## Fusion-ultra addition: CRESTCRASH (2026-07-09)
-
-Council session:
-`~/.fusion/sessions/2026/07/10/2026-07-10T00-19-37-808Z-244d24`.
-All six seats completed successfully. Five seats and the finalizer selected the
-one-body design: terrain stores the launch energy and the ridge runner itself is
-the projectile. One seat proposed a detachable bolt; that mode split was rejected.
-
-**CRESTCRASH** implements the council's irreducible core: deterministic generated
-ridges, one shared human/bot intent and physics path, physical support-graph tower
-collapses, a copied-state arc planner, honest misses and shell repairs, Headwind and
-Plating acts, a strict three-tier show ladder, and an earned frame-54,000 ending.
-The maximum-speed terrain sweep uses bounded deterministic chord sampling and a
-refined first-contact time, so neither runtime nor planner can tunnel through a
-crest. The exposed-joint recovery is also physical: the joint lowers visibly over
-36 frames and the bot replans; `__NO_EXPOSED_RECOVERY` restores the old geometry.
-
-Thirty fixed ten-minute seeds on game SHA-256 `232b6f19...` were all finite and
-reset-free. Measured p05..p95: 111..126 launches, 108..122 landings, 108..120
-impacts, 90..99 joint breaks, 13..15 core breaks, 21..30 misses, 14..22 tumbles,
-3..4 repairs, 6..9 recoveries, and 3..5 coil recoveries. Every run produced four
-warnings, lands, and real structural changes for each scheduled act. The maximum
-viewer-time break gap was 1,193f against the hard 1,200f contract; maximum story
-lull was 985f and maximum one-step capsule motion was 4.604px.
-
-The planned arc policy won payoff rate 12/12 same-seed five-minute pairs: 78.6%
-versus 39.9% (+38.7 percentage points), with 82 versus 59 cores and median maximum
-payoff lull 780f versus 1,082.5f. Across thirty additional paired ten-minute runs,
-visible exposed-joint recovery reduced mean/median maximum break gaps from
-977/876.5f to 831/795.5f, eliminated five hard-gap breaches (5 -> 0), and improved
-aggregate breaks 2,836 -> 2,856, cores 414 -> 422, misses 803 -> 776, and progress
-5,857 -> 5,894. Permanent switches are `__NO_ARC_PLAN`,
-`__NO_EXPOSED_RECOVERY`, `__NO_ACTS`, `__NO_ADMIRE`, and `__NO_PAYOFF_FX`.
-
-Deliberate council cuts are recorded rather than hidden: the narrow-strip release
-omits defender NPCs, slag rollers, shutters, wardens, branching upgrades,
-secondary-joint variants, and the proposed three-tower Crown staging. It keeps
-time-gated deterministic upgrades, escalating target mass/support geometry, two
-measured acts, and a single earned Crown target. The planner replans every 60f
-rather than the proposed 12f to keep headless and production CPU bounded. These
-cuts follow the council's defender/secondary-system cut order and do not weaken
-the measured watchability, determinism, act, show, or ending contracts.
-
-## Northstar: CRESTCRASH joins the viewer-story contract (2026-07-09)
-
-Picked as the northstar because crestcrash shipped from its own council and was
-the only new simulation left outside the fusion-ultra causal-story consensus
-(one actor, one target, a plain verb, persistent progress, payoffs that visibly
-advance the ending). Its ending contract — 80 relays, 10 cores, and the Crown
-Array by frame 54,000 — was computed but never shown: the HUD gave a raw relay
-count with no quota, the tactic line spoke bot jargon, and a viewer had no way
-to forecast whether the current flight would connect. That is exactly the
-prediction-payoff gap VISION.md names as the core psychology.
-
-The presentation-only layer (gated by `__NO_VIEWER_STORY`, like skyhook,
-tidelatch, and apogee):
-
-- **Persistent goal HUD.** `TOPPLE RANGE xx/80` with a relay progress bar, ten
-  core pips, and a crown chip that pulses while the Crown Array is targeted and
-  lights when it breaks — the whole 15-minute contract visible from frame one.
-- **Plain-verb line.** DIVE FOR SPEED, CLIMB TO CREST, BRACE TO STRIKE, CUT THE
-  HEADWIND — replacing the engineering tactic strings.
-- **Truthful flight forecast.** Every airborne frame projects the body through
-  the exact runtime integrator (copied state, no RNG) against the live joint and
-  labels the arc ON LINE / SHORT / LONG.
-- **Target callout.** STRIKE HERE over the live joint; a RELAY AHEAD edge chip
-  when the joint is off screen.
-
-Eval section 12 proves the frame-one HUD reads `TOPPLE RANGE 00/80`, the drawn
-receipts match simulation truth after two minutes of play, each forecast label
-matches its own projection's miss distance and sign, the 2-minute rendered A/B
-signature against `__NO_VIEWER_STORY` is identical, and the next engine RNG draw
-is untouched. A blinded naive-viewer comprehension study remains the honest next
-evidence layer here too.
+Permanent proof switches: `__NO_LOOKAHEAD`, `__NO_ACTS`, `__NO_ADMIRE`,
+`__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
 ## Genre-fusion addition: MOTO BOWL (2026-07-10)
 

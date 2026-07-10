@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GRAVE GARDEN</title>
+<style>
+  html,body{margin:0;height:100%;background:#070b0a}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#101812}
+  canvas:focus-visible{outline:2px solid #b8ed75;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Grave Garden. An autonomous gardener plants, uproots, and carries defenses between four lanes while telegraphed undead waves approach a greenhouse."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,hash,clamp,rect,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,
+  addScore,gameOver,createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// GRAVE GARDEN — Plants vs. Zombies crossed with a tiny formation-defense
+// diorama. Four broad lanes and three large beds keep the formation readable
+// at native size. The incoming roster is latched six seconds before every
+// wave; the gardener must physically uproot, carry, and replant any defense.
+const LANES=4,SLOTS=3,LANE_Y=[88,140,192,244],SLOT_X=[42,68,94],CYCLE=900,WARN=300,
+  MATCH_FRAMES=54000,GATE_X=154,GREENHOUSE_X=24,GREENHOUSE_MAX=200;
+const INK='#0a100d',CREAM='#f4eccd',GOLD='#f4c95d',MINT='#8fe06f',LEAF='#3f8b4c',
+  LIME='#b8ed75',SOIL='#62452d',SOIL2='#805b39',STONE='#66706b',STONE2='#89928a',
+  NIGHT='#121a28',PLUM='#8a5cb5',RED='#d95656',CYAN='#6fd3c8',ICE='#b9e1df';
+const PLANT={
+  bloom:{cost:25,hp:8,name:'SUNBLOOM',power:.35,color:GOLD},
+  pea:{cost:50,hp:9,name:'PEA WARD',power:3.5,color:MINT},
+  thorn:{cost:40,hp:20,name:'THORN WALL',power:4.7,color:'#a97848'},
+  lantern:{cost:70,hp:8,name:'MOON CAP',power:5.4,color:PLUM}
+};
+const ENEMY={
+  shambler:{hp:5,speed:.115,bite:.017,threat:5,name:'SHAMBLER'},
+  hound:{hp:4,speed:.18,bite:.021,threat:6,name:'BONE HOUND'},
+  bucket:{hp:11,speed:.082,bite:.024,threat:12,name:'BUCKET'},
+  brute:{hp:22,speed:.058,bite:.035,threat:25,name:'UNDERTAKER'}
+};
+const PERSONAS=[
+  {name:'ROWAN',color:MINT,showboat:0,bloomBias:.4,saveBias:1.2},
+  {name:'MOSS',color:CYAN,showboat:.2,bloomBias:1.1,saveBias:.9},
+  {name:'BRIAR',color:GOLD,showboat:.6,bloomBias:.1,saveBias:1.5}
+];
+
+let showFrame=0,runFrame=0,state='play',endingT=0,outcome='',waveNo=1,waveClock=0,stage=0;
+let sun=130,greenhouse=GREENHOUSE_MAX,wavePlan=[],spawned=new Set(),enemies=[],shots=[],slots=[],texts=[],barrows=[];
+let gardener=null,persona=PERSONAS[0],personaIndex=0,skill=null,planAt=-1e9,cachedPlan=null;
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0;
+let waveBreaches=0,visualFlash=0,visualFlashLane=0,manualLane=0,manualCol=0,lastLapsed=false;
+const act={phase:'calm',warnAt:4200,landAt:4440,endAt:5340,targetLane:0,count:0};
+const actNotes=[];
+const stats={waves:0,wavesHeld:0,kills:0,breaches:0,plants:0,transplants:0,harvests:0,
+  shots:0,saves:0,lapses:0,chapters:0,events:0,progress:0,appliedIntents:0,
+  admireIntents:0,plannerCalls:0,maxEventLull:0,maxProgressLull:0};
+
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},
+  2:{frames:46,minGap:120},
+  3:{frames:84,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:42}
+}});
+
+const finiteObject=o=>Object.values(o||{}).filter(v=>typeof v==='number').every(Number.isFinite);
+const allFinite=()=>finiteObject(gardener)&&enemies.every(finiteObject)&&shots.every(finiteObject)&&
+  slots.flat().filter(Boolean).every(finiteObject)&&Number.isFinite(sun)&&Number.isFinite(greenhouse);
+const laneName=l=>'LANE '+(l+1);
+const slotPlant=(l,c)=>slots[l]&&slots[l][c];
+const emptyIntent=(tactic)=>({action:'wait',lane:0,col:0,type:null,fromLane:-1,fromCol:-1,
+  tactic:tactic||'WATCH FORMATION'});
+function markEvent(score){
+  eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
+  lastEventFrame=showFrame;if(score&&playing())addScore(score);
+}
+function markProgress(score){
+  progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+  lastProgressFrame=showFrame;if(score&&playing())addScore(score);
+}
+function say(s,c,y,t){texts.push({s,c:c||CREAM,y:y||62,t:t||70});}
+function offer(id,tier,x,y,tag){
+  return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});
+}
+function noteAct(e){
+  actNotes.push({kind:e.kind,id:e.id,at:e.at,tag:e.tag,landsAt:e.landsAt});
+  SHOW.note(e);
+}
+function makePlant(type,lane,col){
+  const d=PLANT[type];
+  return{type,lane,col,hp:d.hp,maxHp:d.hp,cool:18+(lane*13+col*17)%50,age:0,hitT:0,
+    recoil:0,produce:180+(lane*37+col*29)%160,serial:runFrame*20+lane*4+col};
+}
+function baseFormation(){
+  slots=Array.from({length:LANES},()=>Array(SLOTS).fill(null));
+  slots[0][0]=makePlant('bloom',0,0);slots[0][1]=makePlant('pea',0,1);
+  slots[1][0]=makePlant('pea',1,0);slots[1][2]=makePlant('thorn',1,2);
+  slots[2][0]=makePlant('bloom',2,0);slots[2][1]=makePlant('pea',2,1);
+  slots[3][0]=makePlant('pea',3,0);slots[3][2]=makePlant('thorn',3,2);
+}
+function chooseType(wave,index){
+  const q=random(),tier=Math.floor((wave-1)/10);
+  if(wave%10===0&&index===0)return'brute';
+  if(tier>=2&&q<.17)return'brute';
+  if(tier>=1&&q<.40)return'bucket';
+  if(q<.63)return'hound';
+  return'shambler';
+}
+function buildWave(){
+  const count=4+Math.min(10,Math.floor((waveNo-1)/3));
+  const out=[];
+  // A wave owns its whole RNG draw up front. Bot/planner work can never
+  // perturb later rosters, and the right-edge silhouettes are exact.
+  const focus=RI(0,LANES-1);
+  for(let i=0;i<count;i++){
+    let lane=i<Math.ceil(count*.45)?focus:RI(0,LANES-1);
+    if(waveNo%7===0&&i<3)lane=(focus+1)%LANES;
+    out.push({at:WARN+Math.floor(i*Math.max(24,480/Math.max(1,count-1))),lane,
+      type:chooseType(waveNo,i),id:waveNo*100+i});
+  }
+  return out;
+}
+function resetActs(){
+  Object.assign(act,{phase:'calm',warnAt:4200,landAt:4440,endAt:5340,targetLane:0,count:0});
+}
+function resetGarden(full){
+  runFrame=0;state='play';endingT=0;outcome='';waveNo=1;waveClock=0;stage=0;
+  sun=130;greenhouse=GREENHOUSE_MAX;enemies=[];shots=[];texts=[];spawned=new Set();waveBreaches=0;
+  visualFlash=0;visualFlashLane=0;manualLane=0;manualCol=0;cachedPlan=null;planAt=-1e9;lastLapsed=false;
+  for(const k of Object.keys(stats))stats[k]=0;
+  personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];
+  skill=skillProfile({skill:.78,precision:.82,risk:.68,recovery:.9,reactionFrames:[10,18],
+    lapseFrames:[18,34],lapseChance:.0022,rng:createRng(RI(1,0x7fffffff))});
+  baseFormation();barrows=Array.from({length:LANES},(_,lane)=>({lane,x:19,active:false,ready:true,spin:0}));
+  resetActs();actNotes.length=0;
+  gardener={x:31,y:LANE_Y[1],face:1,walk:0,task:null,carrying:null,workT:0,intent:emptyIntent('READ THE GATE'),
+    lastX:31,lastY:LANE_Y[1],pose:'stand'};
+  wavePlan=buildWave();stats.waves=1;
+  if(full)SHOW.reset(showFrame);
+}
+function threatOf(type){return ENEMY[type].threat;}
+function forecastByLane(){
+  const a=[0,0,0,0];
+  for(const q of wavePlan)a[q.lane]+=threatOf(q.type);
+  return a;
+}
+function liveThreatByLane(){
+  const a=[0,0,0,0];
+  for(const z of enemies)a[z.lane]+=Math.max(0,z.hp)*(1+z.speed*2);
+  return a;
+}
+function defenseByLane(extra){
+  const out=[0,0,0,0];
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++){
+    let p=slots[l][c];if(extra&&extra.kind==='move'&&l===extra.fromLane&&c===extra.fromCol)p=null;
+    if(extra&&l===extra.lane&&c===extra.col)p={type:extra.type,hp:PLANT[extra.type].hp,maxHp:PLANT[extra.type].hp};
+    if(!p)continue;
+    const health=clamp(p.hp/(p.maxHp||PLANT[p.type].hp),0,1);
+    out[l]+=PLANT[p.type].power*(.45+.55*health);
+  }
+  return out;
+}
+function projectFormation(extra){
+  const incoming=forecastByLane(),live=liveThreatByLane(),def=defenseByLane(extra),lanes=[];
+  let breaches=0,margin=0;
+  for(let l=0;l<LANES;l++){
+    const moon=act.phase!=='calm'&&act.targetLane===l?7:0;
+    const load=live[l]+incoming[l]*.72+moon;
+    const hold=def[l]*6.4;
+    const risk=Math.max(0,(load-hold)/9);
+    lanes.push({lane:l,load,hold,risk,margin:hold-load});
+    breaches+=risk;margin+=hold-load;
+  }
+  return{breaches,margin,lanes};
+}
+function formationForecast(){
+  const p=projectFormation(null),worst=p.lanes.slice().sort((a,b)=>b.risk-a.risk||a.lane-b.lane)[0];
+  if(worst.risk<.35)return{label:'FORMATION HOLDS',lane:worst.lane,risk:worst.risk};
+  if(worst.risk<1.35)return{label:laneName(worst.lane)+' STRAINS',lane:worst.lane,risk:worst.risk};
+  return{label:'BREACH LIKELY · '+laneName(worst.lane),lane:worst.lane,risk:worst.risk};
+}
+function affordable(type){return sun>=PLANT[type].cost;}
+function candidateTasks(){
+  const base=projectFormation(null),tasks=[];
+  const types=['pea','thorn','lantern','bloom'];
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++)if(!slots[l][c]){
+    for(const type of types)if(affordable(type)){
+      const after=projectFormation({kind:'build',lane:l,col:c,type});
+      let score=(base.breaches-after.breaches)*155+(after.margin-base.margin)*.15-PLANT[type].cost*.035;
+      // A readable formation has jobs: income behind, fire in the middle,
+      // roots at the cemetery edge. Lookahead still chooses the weak lane;
+      // role bonuses stop equivalent zero-risk openings becoming pea soup.
+      if(c===2)score+=type==='thorn'?34:-18;
+      if(c===1)score+=(type==='pea'||type==='lantern')?25:-12;
+      if(c===0)score+=type==='bloom'?24*persona.bloomBias:type==='pea'?10:-8;
+      score+=base.lanes[l].load*.7-base.lanes[l].hold*.08;
+      if(type==='bloom')score+=(slots.flat().filter(p=>p&&p.type==='bloom').length<3?12:0)*persona.bloomBias;
+      if(act.phase==='warn'&&l===act.targetLane)score+=18;
+      tasks.push({action:'build',lane:l,col:c,type,fromLane:-1,fromCol:-1,score,
+        tactic:act.phase==='warn'&&l===act.targetLane?'FORTIFY MOON LANE':'PLANT '+PLANT[type].name});
+    }
+  }
+  // Once beds fill, formations stay alive by moving a healthy combat plant
+  // out of a surplus lane. The copied-state score prices the lost source lane.
+  for(let fl=0;fl<LANES;fl++)for(let fc=0;fc<SLOTS;fc++){
+    const p=slots[fl][fc];if(!p||p.type==='bloom'||p.hp<p.maxHp*.45)continue;
+    for(let l=0;l<LANES;l++)if(l!==fl)for(let c=0;c<SLOTS;c++)if(!slots[l][c]){
+      const move={kind:'move',lane:l,col:c,type:p.type,fromLane:fl,fromCol:fc};
+      const after=projectFormation(move);
+      const source=base.lanes[fl],dest=base.lanes[l];
+      if(act.phase!=='warn'&&dest.risk<.8)continue;
+      if(dest.risk<=source.risk+.25&&!(act.phase==='warn'&&l===act.targetLane))continue;
+      const score=(base.breaches-after.breaches)*165+(after.margin-base.margin)*.12+
+        (act.phase==='warn'&&l===act.targetLane?30:0)-12;
+      tasks.push({action:'move',lane:l,col:c,type:p.type,fromLane:fl,fromCol:fc,score,
+        tactic:act.phase==='warn'?'REPLANT BEFORE MOON':'SHIFT THE LINE'});
+    }
+  }
+  return tasks;
+}
+function smartPlan(){
+  stats.plannerCalls++;
+  const tasks=candidateTasks();
+  tasks.sort((a,b)=>b.score-a.score||a.lane-b.lane||a.col-b.col||a.type.localeCompare(b.type));
+  if(tasks.length&&tasks[0].score>1)return tasks[0];
+  const weak=projectFormation(null).lanes.slice().sort((a,b)=>a.margin-b.margin||a.lane-b.lane)[0];
+  return Object.assign(emptyIntent('WATCH '+laneName(weak.lane)),{lane:weak.lane});
+}
+function reactivePlan(){
+  // Ablation: plausible reactive gardening. It protects the closest thing it
+  // can see, but ignores the six-second roster and never rebalances a surplus.
+  let lane=(waveNo+stats.plants)%LANES,closest=1e9;
+  for(const z of enemies)if(z.x<closest){closest=z.x;lane=z.lane;}
+  let col=-1;for(let c=0;c<SLOTS;c++)if(!slots[lane][c]){col=c;break;}
+  if(col<0)return Object.assign(emptyIntent('WATCH THE FRONT'),{lane});
+  const type=closest<64&&affordable('thorn')?'thorn':affordable('pea')?'pea':
+    affordable('bloom')?'bloom':null;
+  return type?{action:'build',lane,col,type,fromLane:-1,fromCol:-1,
+    tactic:closest<64?'PANIC THORNS':'REACTIVE PLANT'}:emptyIntent('SAVE SUN');
+}
+function rawBotDecision(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'&&!enemies.some(z=>z.x<52)){
+    stats.admireIntents++;return emptyIntent('ADMIRE THE GARDEN');
+  }
+  if(gardener.task)return emptyIntent(gardener.task.action==='move'?'CARRY DEFENSE':'FINISH PLANTING');
+  if(runFrame-planAt>=30||!cachedPlan){
+    cachedPlan=typeof globalThis.__NO_FORMATION_PLAN==='undefined'?smartPlan():reactivePlan();
+    planAt=runFrame;
+  }
+  return Object.assign({},cachedPlan);
+}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return rawBotDecision();
+  const before=skill.isLapsed(runFrame);
+  const out=skill.decide(runFrame,null,()=>rawBotDecision(),(ctx,last)=>{
+    const hold=last?Object.assign({},last):emptyIntent('MISSED THE CUE');
+    hold.action='wait';hold.tactic='MISSED THE CUE';return hold;
+  })||emptyIntent('READ THE GATE');
+  const after=skill.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();say('DISTRACTED BY A CROW',CREAM,LANE_Y[gardener.intent.lane||0]-17,45);}
+  lastLapsed=after;
+  return out;
+}
+function humanIntent(){
+  if(tap('left'))manualCol=clamp(manualCol-1,0,SLOTS-1);
+  if(tap('right'))manualCol=clamp(manualCol+1,0,SLOTS-1);
+  if(tap('up'))manualLane=clamp(manualLane-1,0,LANES-1);
+  if(tap('down'))manualLane=clamp(manualLane+1,0,LANES-1);
+  let type=null;
+  if(tap('a'))type='pea';else if(tap('b'))type='thorn';else if(tap('c'))type='bloom';
+  return type?{action:'build',lane:manualLane,col:manualCol,type,fromLane:-1,fromCol:-1,tactic:'MANUAL'}:
+    Object.assign(emptyIntent('MANUAL'),{lane:manualLane,col:manualCol});
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+function validTask(t){
+  if(!t||t.lane<0||t.lane>=LANES||t.col<0||t.col>=SLOTS)return false;
+  if(t.action==='build')return!!PLANT[t.type]&&!slotPlant(t.lane,t.col)&&affordable(t.type);
+  if(t.action==='move')return!!slotPlant(t.fromLane,t.fromCol)&&!slotPlant(t.lane,t.col);
+  return false;
+}
+function applyIntent(intent){
+  gardener.intent=Object.assign(emptyIntent('WAIT'),intent||{});
+  stats.appliedIntents++;
+  if(!gardener.task&&validTask(gardener.intent)){
+    gardener.task=Object.assign({},gardener.intent,{phase:gardenerIntentPhase(gardener.intent),workT:0});
+    cachedPlan=null;
+  }
+  return gardener.intent;
+}
+function gardenerIntentPhase(intent){return intent.action==='move'?'source':'target';}
+function taskPoint(t){
+  if(t.phase==='source'||t.phase==='uproot')return{x:SLOT_X[t.fromCol],y:LANE_Y[t.fromLane]+8};
+  return{x:SLOT_X[t.col],y:LANE_Y[t.lane]+8};
+}
+function finishTask(t){
+  if(t.action==='build'){
+    if(!slotPlant(t.lane,t.col)&&affordable(t.type)){
+      sun-=PLANT[t.type].cost;slots[t.lane][t.col]=makePlant(t.type,t.lane,t.col);
+      stats.plants++;markEvent(10);markProgress(1);offer('plant',1,SLOT_X[t.col],LANE_Y[t.lane],t.type);
+      fxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,10,PLANT[t.type].color,1.2,.03);
+    }
+  }else if(t.action==='move'&&gardener.carrying&&!slotPlant(t.lane,t.col)){
+    const p=gardener.carrying;p.lane=t.lane;p.col=t.col;p.hitT=0;
+    slots[t.lane][t.col]=p;gardener.carrying=null;stats.transplants++;markEvent(14);markProgress(1);
+    offer('replant',2,SLOT_X[t.col],LANE_Y[t.lane],p.type);
+    fxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,14,PLANT[p.type].color,1.5,.04);
+  }
+  gardener.task=null;gardener.workT=0;gardener.pose='stand';cachedPlan=null;planAt=-1e9;
+}
+function stepGardener(intent){
+  applyIntent(intent);
+  const g=gardener;g.lastX=g.x;g.lastY=g.y;
+  if(!g.task){g.pose='stand';return;}
+  const t=g.task,p=taskPoint(t),dx=p.x-g.x,dy=p.y-g.y,d=Math.hypot(dx,dy);
+  g.face=dx>.15?1:dx<-.15?-1:g.face;
+  if((t.phase==='uproot'||t.phase==='dig')&&t.workT>0){
+    t.workT--;g.pose=t.phase==='uproot'?'uproot':'plant';
+    if(t.workT%7===0)fxDust(g.x,g.y+7,2,SOIL2);
+    if(t.workT<=0){
+      if(t.phase==='uproot'){
+        const p0=slotPlant(t.fromLane,t.fromCol);
+        if(!p0){g.task=null;cachedPlan=null;return;}
+        slots[t.fromLane][t.fromCol]=null;g.carrying=p0;t.phase='target';g.pose='carry';
+      }else finishTask(t);
+    }
+    return;
+  }
+  if(d>1.2){
+    const sp=g.carrying?.68:.82;g.x+=dx/d*sp;g.y+=dy/d*sp;g.walk+=sp;g.pose=g.carrying?'carry':'walk';
+    if(((showFrame+Math.floor(g.walk))%9)===0)fxDust(g.x-g.face*2,g.y+7,1,'#a18459');
+  }else{
+    g.x=p.x;g.y=p.y;
+    if(t.phase==='source'){t.phase='uproot';t.workT=26;g.pose='uproot';}
+    else if(t.phase==='target'){t.phase='dig';t.workT=34;g.pose='plant';}
+  }
+}
+function spawnEnemy(q){
+  const d=ENEMY[q.type],moon=act.phase==='live'&&q.lane===act.targetLane;
+  enemies.push({id:q.id,type:q.type,lane:q.lane,x:GATE_X+6+(q.id%3)*3,hp:d.hp*(moon?1.22:1),
+    maxHp:d.hp*(moon?1.22:1),speed:d.speed,bite:d.bite,hitT:0,biteT:0,walk:q.id%17,
+    moon:moon?1:0,dead:false});
+  markEvent();
+}
+function killEnemy(z,how){
+  if(z.dead)return;z.dead=true;stats.kills++;markEvent(8);markProgress(1);
+  offer('weeded',1,z.x,LANE_Y[z.lane],z.type);
+  if(z.x<55){
+    stats.saves++;visualFlash=24;visualFlashLane=z.lane;offer('last-save',2,z.x,LANE_Y[z.lane],'save');
+    say('LAST-SECOND SAVE!',LIME,LANE_Y[z.lane]-18,62);shake(3);
+    fxBurst(z.x,LANE_Y[z.lane],18,LIME,2.1,.04);
+  }else fxBurst(z.x,LANE_Y[z.lane],9,'#c9d1c4',1.3,.03);
+}
+function stepPlants(){
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++){
+    const p=slots[l][c];if(!p)continue;p.age++;if(p.hitT>0)p.hitT--;if(p.recoil>0)p.recoil--;
+    if(p.type==='bloom'){
+      if(--p.produce<=0){p.produce=330;sun=Math.min(300,sun+18);stats.harvests++;markEvent(2);
+        offer('sun',1,SLOT_X[c],LANE_Y[l],l);fxBurst(SLOT_X[c],LANE_Y[l]-5,6,GOLD,1.1,-.02);}
+      continue;
+    }
+    if(--p.cool>0)continue;
+    const target=enemies.filter(z=>!z.dead&&z.lane===l&&z.x>SLOT_X[c]-3)
+      .sort((a,b)=>a.x-b.x||a.id-b.id)[0];
+    if(!target){p.cool=12;continue;}
+    if(p.type==='pea'){
+      p.cool=62;p.recoil=7;shots.push({x:SLOT_X[c]+8,y:LANE_Y[l]-3,lane:l,vx:1.55,damage:1,type:'pea',life:90});
+    }else if(p.type==='lantern'){
+      p.cool=88;p.recoil=10;shots.push({x:SLOT_X[c]+6,y:LANE_Y[l]-6,lane:l,vx:1.15,damage:1.65,type:'moon',life:120});
+    }else p.cool=25;
+    if(p.type!=='thorn'){stats.shots++;markEvent();offer('shot',1,SLOT_X[c],LANE_Y[l],p.type);}
+  }
+}
+function stepShots(){
+  for(const s of shots){
+    s.x+=s.vx;s.life--;
+    const hit=enemies.filter(z=>!z.dead&&z.lane===s.lane&&z.x>=s.x-3&&z.x<=s.x+5)
+      .sort((a,b)=>a.x-b.x||a.id-b.id)[0];
+    if(hit){
+      hit.hp-=s.damage;hit.hitT=6;s.life=0;
+      if(s.type==='moon'){
+        for(const z of enemies)if(!z.dead&&z.lane===s.lane&&z!==hit&&Math.abs(z.x-hit.x)<15){
+          z.hp-=.55;z.hitT=4;if(z.hp<=0)killEnemy(z,'moon');}
+        ring(hit.x,LANE_Y[s.lane],PLUM,1.2,16);
+      }
+      fxBurst(hit.x,LANE_Y[s.lane]-2,s.type==='moon'?8:4,s.type==='moon'?PLUM:MINT,1.1,.01);
+      if(hit.hp<=0)killEnemy(hit,s.type);
+    }
+  }
+  shots=shots.filter(s=>s.life>0&&s.x<164);
+}
+function plantInFront(z){
+  let best=null;
+  for(let c=SLOTS-1;c>=0;c--){const p=slots[z.lane][c];if(p&&SLOT_X[c]<=z.x+3){best=p;break;}}
+  return best;
+}
+function breach(z){
+  if(z.dead)return;z.dead=true;stats.breaches++;greenhouse=Math.max(0,greenhouse-1);
+  markEvent();markProgress();say('BREACH · '+laneName(z.lane),RED,LANE_Y[z.lane]-17,70);shake(5);
+  fxBurst(GREENHOUSE_X,LANE_Y[z.lane],22,RED,2.2,.05);
+}
+function stepBarrows(){
+  for(const b of barrows){
+    if(!b.active){
+      const danger=enemies.some(z=>!z.dead&&z.lane===b.lane&&z.x<32);
+      if(b.ready&&danger){b.active=true;b.x=19;b.spin=0;markEvent(20);
+        offer('barrow-save',2,b.x,LANE_Y[b.lane],b.lane);
+        say('BARROW SAVE!',GOLD,LANE_Y[b.lane]-18,58);shake(3);}
+      continue;
+    }
+    b.x+=1.75;b.spin+=1.75;
+    for(const z of enemies)if(!z.dead&&z.lane===b.lane&&Math.abs(z.x-b.x)<7)killEnemy(z,'barrow');
+    if(b.x>166){b.active=false;b.ready=false;b.x=19;}
+  }
+}
+function stepEnemies(){
+  for(const z of enemies){
+    if(z.dead)continue;if(z.hitT>0)z.hitT--;if(z.biteT>0)z.biteT--;
+    const p=plantInFront(z),px=p?SLOT_X[p.col]:-99;
+    if(p&&z.x-px<9){
+      z.biteT=14;p.hp-=z.bite*(z.type==='brute'?1.15:1);p.hitT=5;
+      if(p.type==='thorn'){z.hp-=.032;if(z.hp<=0){killEnemy(z,'thorn');continue;}}
+      if(p.hp<=0){
+        slots[p.lane][p.col]=null;markEvent();say(PLANT[p.type].name+' UPROOTED',RED,LANE_Y[p.lane]-18,55);
+        fxBurst(px,LANE_Y[p.lane]+6,12,SOIL2,1.4,.04);cachedPlan=null;planAt=-1e9;
+      }
+    }else{
+      const moon=z.moon&&act.phase==='live'?1.28:1;
+      z.x-=z.speed*moon;z.walk+=z.speed*moon;
+    }
+    if(z.x<GREENHOUSE_X+2)breach(z);
+  }
+  enemies=enemies.filter(z=>!z.dead);
+}
+function finishWave(){
+  const held=stats.breaches===waveBreaches;
+  if(held){stats.wavesHeld++;markProgress(2);offer('wave-held',2,80,58,waveNo);
+    say('WAVE '+String(waveNo).padStart(2,'0')+' HELD',MINT,61,62);}
+  waveBreaches=stats.breaches;
+  if(waveNo%6===0){
+    stats.chapters++;offer('garden-apex',3,80,58,waveNo);markProgress(4);
+    say('THE GARDEN STILL STANDS',GOLD,118,100);fxBurst(80,168,34,GOLD,2.8,.025);shake(5);
+    for(const b of barrows)if(!b.active)b.ready=true;
+  }
+  waveNo++;stage=Math.min(5,Math.floor((waveNo-1)/10));waveClock=0;spawned=new Set();
+  wavePlan=buildWave();stats.waves++;cachedPlan=null;planAt=-1e9;
+  // Small visible recovery keeps breaches dramatic without ending the fifteen
+  // minute show early. It never erases the breach counter or formation damage.
+  if(waveNo%6===1&&greenhouse>0)greenhouse=Math.min(GREENHOUSE_MAX,greenhouse+2);
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
+  if(act.phase==='calm'&&runFrame===act.warnAt){
+    act.phase='warn';act.targetLane=(waveNo+stats.breaches+act.count)%LANES;cachedPlan=null;planAt=-1e9;
+    noteAct({kind:'act-warning',id:'blood-moon',at:showFrame,tag:runFrame,landsAt:showFrame+240});
+    say('BLOOD MOON · '+laneName(act.targetLane),RED,LANE_Y[act.targetLane]-19,100);
+  }else if(act.phase==='warn'&&runFrame>=act.landAt){
+    act.phase='live';noteAct({kind:'act-land',id:'blood-moon',at:showFrame,tag:runFrame});
+    say('THE DEAD QUICKEN',RED,LANE_Y[act.targetLane]-19,75);shake(3);
+  }else if(act.phase==='live'&&runFrame>=act.endAt){
+    act.phase='calm';act.count++;act.warnAt+=7200;act.landAt=act.warnAt+240;act.endAt=act.landAt+900;
+    offer('moon-survived',2,80,LANE_Y[act.targetLane],act.count);say('MOON PASSES',CYAN,62,60);
+  }
+}
+function finishMatch(){
+  if(state==='ending')return;
+  state='ending';endingT=420;outcome=greenhouse>0?'DAWN SAVED':'GARDEN LOST';
+  offer('dawn',3,80,150,outcome);markEvent(500);markProgress(10);
+  say(outcome,greenhouse>0?GOLD:RED,150,260);fxBurst(80,160,48,greenhouse>0?GOLD:RED,3.2,.02);
+}
+function stepWorld(){
+  runFrame++;stepActs();
+  if(runFrame>=MATCH_FRAMES){finishMatch();return;}
+  waveClock++;
+  for(const q of wavePlan)if(q.at<=waveClock&&!spawned.has(q.id)){spawned.add(q.id);spawnEnemy(q);}
+  const intent=controller();
+  stepGardener(intent);stepPlants();stepShots();stepBarrows();stepEnemies();
+  if(runFrame%60===0)sun=Math.min(300,sun+2);
+  if(waveClock>=CYCLE)finishWave();
+}
+function step(){
+  showFrame++;sessionStep({reset:()=>resetGarden(true)});pres=SHOW.step(showFrame);
+  if(visualFlash>0)visualFlash--;
+  if(state==='play'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  }else{
+    endingT--;
+    if(endingT<=0){if(playing())gameOver(outcome+' · '+stats.wavesHeld+' WAVES HELD');resetGarden(true);}
+  }
+  stepParts();stepRings();
+  for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+}
+
+// ---- authored pixel diorama ----------------------------------------------------
+function mix(a,b,t){
+  const pa=a.match(/\w\w/g).map(v=>parseInt(v,16)),pb=b.match(/\w\w/g).map(v=>parseInt(v,16));
+  return'#'+pa.map((v,i)=>Math.round(v+(pb[i]-v)*t).toString(16).padStart(2,'0')).join('');
+}
+function drawSkyAndLandmarks(){
+  const palettes=[
+    ['#162434','#496a59'],['#0d1424','#30445b'],['#2d1f2a','#8b5d3d'],
+    ['#182635','#65808a'],['#260f1d','#6b3038'],['#26364a','#d19a57']
+  ],pal=palettes[stage];
+  for(let i=0;i<5;i++)rect(0,52+i*5,W,6,mix(pal[0],pal[1],i/4));
+  // Celestial landmark changes shape and placement across the six chapters.
+  if(stage===0){rect(121,57,9,9,'#e8dba5');rect(124,58,7,7,pal[1]);}
+  else if(stage===1){rect(127,56,12,12,'#d9e2d4');rect(130,55,9,11,pal[0]);}
+  else if(stage===2){rect(118,59,10,7,'#e49b45');rect(121,57,4,2,'#6f4b2d');}
+  else if(stage===3){rect(126,55,11,11,'#d9f0ed');rect(129,58,2,2,'#a8c7c8');rect(133,62,2,2,'#a8c7c8');}
+  else if(stage===4||act.phase!=='calm'){
+    const r=act.phase==='warn'?7+Math.floor((runFrame-act.warnAt)/48):12;
+    ctx.globalAlpha=.24;ctx.fillStyle=RED;ctx.beginPath();ctx.arc(128,61,r+6,0,7);ctx.fill();ctx.globalAlpha=1;
+    ctx.fillStyle='#d95b63';ctx.beginPath();ctx.arc(128,61,r,0,7);ctx.fill();
+  }else{rect(118,55,13,13,'#f4c95d');rect(116,60,17,3,'#f4c95d');}
+  // Distant chapel / mausoleum silhouette evolves structurally by chapter.
+  const chapel=stage===0?'#25352f':stage===3?'#52666a':'#222a32';
+  rect(138,60,18,17,chapel);rect(142,54,10,7,chapel);rect(146,49,2,7,chapel);
+  if(stage>=1){rect(132,66,5,11,chapel);rect(134,62,1,5,chapel);}
+  if(stage>=3){rect(135,59,3,2,ICE);rect(145,52,8,2,ICE);}
+  if(stage===2){for(const x of[111,121,135]){rect(x,70,7,5,'#b96f32');rect(x+2,68,2,2,'#4d6b38');}}
+  // Fence is midground: pale posts against the dark approach, never HUD.
+  rect(106,74,54,3,'#4e5754');
+  for(let x=108;x<160;x+=9){rect(x,68,3,10,'#69726d');rect(x+1,66,1,2,'#89928a');}
+}
+function drawGreenhouse(){
+  rect(0,74,25,218,'#29332f');rect(3,78,19,210,'#3f4a43');
+  for(let l=0;l<LANES;l++){
+    const y=LANE_Y[l]-20;
+    rect(5,y,14,34,'#223b38');rect(7,y+3,10,27,'#6aa9a0');
+    ctx.globalAlpha=.35+.08*Math.sin(showFrame*.03+l);rect(8,y+4,4,25,'#b7e9cf');ctx.globalAlpha=1;
+    rect(12,y+3,2,27,'#304f4a');rect(7,y+16,10,2,'#304f4a');
+    rect(20,y+10,5,8,'#78604a');
+  }
+  // Sloped glass roof, chimney, water butt, and climbing vine make it a place.
+  ctx.fillStyle='#53645c';ctx.beginPath();ctx.moveTo(0,74);ctx.lineTo(13,62);ctx.lineTo(25,74);ctx.fill();
+  ctx.strokeStyle='#a4c7b8';ctx.beginPath();ctx.moveTo(3,73);ctx.lineTo(13,64);ctx.lineTo(22,73);ctx.stroke();
+  rect(2,64,4,12,'#594a3b');rect(1,63,6,3,'#756150');
+  rect(0,263,4,22,'#40514b');rect(4,269,4,16,'#53716a');
+  for(let i=0;i<9;i++){const y=82+i*22,x=20+Math.sin(i*1.7)*3;
+    rect(x,y,2,8,'#2f7045');if(i%2===0)rect(x-3,y+2,4,3,'#4c965a');}
+  // Heart lamps map greenhouse health into the built object itself.
+  const lit=Math.ceil(greenhouse/(GREENHOUSE_MAX/6));
+  for(let i=0;i<6;i++)rect(2+i*4,286,3,3,i<lit?MINT:'#26332e');
+}
+function drawLaneGround(){
+  for(let l=0;l<LANES;l++){
+    const y=LANE_Y[l]-23;
+    rect(25,y,135,46,l%2?'#253827':'#2b402b');
+    rect(25,y+36,135,10,l%2?'#1e2d22':'#223326');
+    // Cultivated beds use scalloped earth and furrows; the threat corridor
+    // switches to grave loam at x=106.
+    rect(29,y+9,74,26,SOIL);rect(29,y+10,74,3,SOIL2);
+    for(let x=31;x<102;x+=7)rect(x,y+16,1,15,hash(x,l)>0.45?'#4d3526':'#725038');
+    rect(104,y+5,56,31,l%2?'#35383a':'#303638');
+    for(let x=108;x<158;x+=10)if(hash(x,l*19+stage)>0.35){
+      rect(x,y+24,5,7,'#5a625f');rect(x+1,y+20,3,5,'#737c77');rect(x+2,y+19,1,2,'#8a938d');}
+    // Cobble separator / foreground lip.
+    rect(25,y+43,135,3,'#59605a');
+    for(let x=28;x<160;x+=12)rect(x,y+43,7,1,'#7a817a');
+    if(stage===2){rect(108+(l%2)*13,y+32,9,4,'#8f552d');rect(112+(l%2)*13,y+29,3,3,'#d58a36');}
+    if(stage===3){rect(25,y,135,2,ICE);for(let x=32;x<156;x+=19)rect(x,y+37,8,2,'#d9efed');}
+    if(stage>=4){for(let x=108;x<158;x+=14){rect(x,y+28,2,8,'#5e2634');rect(x-2,y+27,6,2,'#7d3444');}}
+  }
+}
+function drawStageLandmarks(){
+  // These are compositional chapter changes inside the playable world, not
+  // palette swaps: a viewer can identify the chapter from silhouette alone.
+  ctx.globalAlpha=.72;
+  if(stage===0){
+    // Patchwork scarecrow watches the opening rows.
+    const x=126,y=LANE_Y[1]+7;rect(x-1,y-24,3,30,'#795838');rect(x-11,y-18,23,3,'#8f6840');
+    rect(x-6,y-24,13,8,'#9a7147');rect(x-4,y-29,9,6,'#c6a356');rect(x-8,y-28,17,2,'#d2b666');
+  }else if(stage===1){
+    // A crooked family crypt occupies the middle distance.
+    const x=122,y=LANE_Y[1]+18;rect(x,y-32,28,29,'#343d43');rect(x+3,y-38,22,7,'#465159');
+    rect(x+11,y-47,4,10,'#343d43');rect(x+7,y-43,12,3,'#343d43');
+    rect(x+9,y-22,10,19,'#171e22');ctx.strokeStyle='#59656b';ctx.strokeRect(x+9.5,y-21.5,9,18);
+  }else if(stage===2){
+    // Harvest arch and clustered jack-o-lanterns change the right edge.
+    const y=LANE_Y[2]+16;rect(116,y-35,5,35,'#6e4428');rect(148,y-35,5,35,'#6e4428');
+    for(let i=0;i<6;i++){const x=118+i*6;rect(x,y-40-Math.abs(i-2.5)*2,7,5,'#9a5b2d');}
+    for(const x of[122,139]){rect(x,y-8,12,8,'#c77831');rect(x+3,y-11,4,3,'#496139');
+      rect(x+3,y-5,2,2,'#34221b');rect(x+8,y-5,2,2,'#34221b');}
+  }else if(stage===3){
+    // Frost crypt and a frozen stone well make a hard pale silhouette.
+    const y=LANE_Y[0]+17;rect(119,y-25,33,23,'#52666a');rect(116,y-29,39,5,'#8fb0af');
+    rect(126,y-18,11,16,'#26383d');rect(121,y-32,29,4,ICE);
+    const wy=LANE_Y[3]+9;ctx.fillStyle='#627a79';ctx.beginPath();ctx.ellipse(133,wy,17,7,0,0,7);ctx.fill();
+    ctx.fillStyle=ICE;ctx.beginPath();ctx.ellipse(133,wy-2,14,4,0,0,7);ctx.fill();
+  }else if(stage===4){
+    // A bone-white dead tree forks through two lanes under the red moon.
+    rect(145,LANE_Y[3]+12,6,-153,'#5d5550');
+    ctx.strokeStyle='#8e8177';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(148,LANE_Y[1]);ctx.lineTo(131,LANE_Y[0]-11);
+    ctx.moveTo(148,LANE_Y[2]);ctx.lineTo(124,LANE_Y[1]-8);ctx.moveTo(145,LANE_Y[2]+12);ctx.lineTo(129,LANE_Y[3]-2);ctx.stroke();ctx.lineWidth=1;
+  }else{
+    // Dawn replaces the cemetery silhouette with a flowering victory trellis.
+    rect(116,LANE_Y[0]-18,4,178,'#687749');rect(151,LANE_Y[0]-18,4,178,'#687749');
+    for(let y=LANE_Y[0]-17;y<LANE_Y[3]+15;y+=13){rect(118,y,34,2,'#819553');
+      for(let x=121;x<150;x+=9){rect(x,y-3,5,5,(x+y)%2?GOLD:MINT);rect(x+2,y-1,1,1,CREAM);}}
+  }
+  ctx.globalAlpha=1;
+}
+function drawForegarden(){
+  // Stone apron under the last row: foreground roots, a drainage grate and
+  // loose tools bridge the world into the seed-packet workbench.
+  rect(0,267,W,25,'#222b25');rect(0,267,W,4,'#657067');
+  for(let x=4;x<158;x+=17){rect(x,273+(x%3),12,2,'#364239');rect(x+4,277+(x%5),2,8,'#303a33');}
+  for(let x=34;x<124;x+=15){ctx.strokeStyle='#4f674b';ctx.beginPath();ctx.moveTo(x,268);ctx.lineTo(x-5,284);ctx.lineTo(x-11,289);ctx.stroke();}
+  rect(67,274,27,12,'#151c18');for(let x=70;x<93;x+=5)rect(x,276,2,8,'#4e5a52');
+  rect(9,281,18,2,'#86613e');rect(23,277,3,9,STONE2);rect(135,278,15,7,'#405e58');rect(146,275,4,12,'#58736c');
+}
+function drawForecast(){
+  if(waveClock>=WARN)return;
+  const left=Math.ceil((WARN-waveClock)/60),counts=[0,0,0,0];
+  for(const q of wavePlan)counts[q.lane]++;
+  for(let l=0;l<LANES;l++){
+    const y=LANE_Y[l];
+    if(!counts[l])continue;
+    ctx.globalAlpha=.38+.22*Math.sin(showFrame*.16+l);
+    rect(104,y-20,54,39,act.phase==='warn'&&act.targetLane===l?'#71313d':'#515349');
+    ctx.globalAlpha=1;
+    for(let i=0;i<Math.min(4,counts[l]);i++)drawEnemySilhouette(151-i*7,y+8,(wavePlan.find(q=>q.lane===l&&q.id%4===i)||wavePlan.find(q=>q.lane===l)).type,.55);
+    ctx.fillStyle=CREAM;ctx.font='bold 6px monospace';ctx.fillText(left+'s',136,y-13);
+    for(let i=0;i<3;i++){const x=109+i*9+(showFrame%18)/2;ctx.strokeStyle=GOLD;ctx.beginPath();
+      ctx.moveTo(x,y-2);ctx.lineTo(x-4,y-6);ctx.moveTo(x,y-2);ctx.lineTo(x-4,y+2);ctx.stroke();}
+  }
+}
+function drawSlotMarkers(){
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++)if(!slots[l][c]){
+    const x=SLOT_X[c],y=LANE_Y[l]+8;
+    ctx.globalAlpha=.26;ctx.strokeStyle=manualLane===l&&manualCol===c&&playing()?GOLD:'#c5ad7c';
+    ctx.beginPath();ctx.ellipse(x,y,9,4,0,0,7);ctx.stroke();ctx.globalAlpha=1;
+  }
+}
+function drawBarrows(){
+  for(const b of barrows){
+    if(!b.ready&&!b.active)continue;
+    const x=b.x,y=LANE_Y[b.lane]+8,tilt=b.active?Math.sin(b.spin*.22):0;
+    ctx.save();ctx.translate(x,y);ctx.rotate(tilt*.08);
+    // Garden barrow: iron wheel, timber tray, handles, and a tiny warding bell.
+    ctx.fillStyle='#1b201d';ctx.beginPath();ctx.arc(-3,3,5,0,7);ctx.fill();
+    ctx.fillStyle=STONE2;ctx.beginPath();ctx.arc(-3,3,3,0,7);ctx.fill();rect(-4,0,2,6,'#3b403d');
+    ctx.fillStyle='#a3633d';ctx.beginPath();ctx.moveTo(-8,-5);ctx.lineTo(6,-4);ctx.lineTo(3,3);ctx.lineTo(-6,2);ctx.fill();
+    rect(-6,-4,10,2,'#c17b4a');rect(4,-2,8,2,'#796044');rect(5,1,8,2,'#5c4935');
+    rect(-1,-9,2,5,'#d8c27a');rect(-3,-10,6,2,GOLD);
+    if(b.active){ctx.globalAlpha=.35;rect(-13,-7,9,12,GOLD);ctx.globalAlpha=1;}
+    ctx.restore();
+  }
+}
+function drawPlant(p,alpha){
+  alpha=alpha===undefined?1:alpha;const x=SLOT_X[p.col],base=LANE_Y[p.lane]+8;
+  const bob=Math.sin(showFrame*.08+p.serial)*1.2,wilt=1-clamp(p.hp/p.maxHp,0,1),hit=p.hitT>0;
+  ctx.globalAlpha=alpha;
+  // Rooted silhouette and cast shadow.
+  ctx.fillStyle='#172019';ctx.beginPath();ctx.ellipse(x+2,base+3,10,4,0,0,7);ctx.fill();
+  rect(x-2,base-8+wilt*4,4,12,hit?'#eef7d9':'#397b43');
+  rect(x-8,base-3,7,4,'#2f6d3d');rect(x+2,base-5,8,4,'#4b9854');
+  if(p.type==='bloom'){
+    const y=base-12+bob;
+    for(let i=0;i<8;i++){const a=i*Math.PI/4;rect(x+Math.cos(a)*6-2,y+Math.sin(a)*6-2,4,4,hit?'#fff2ca':GOLD);}
+    ctx.fillStyle='#80522b';ctx.beginPath();ctx.arc(x,y,5,0,7);ctx.fill();
+    rect(x-2,y-1,1,1,'#18130e');rect(x+2,y-1,1,1,'#18130e');rect(x-1,y+2,3,1,'#dba450');
+  }else if(p.type==='pea'){
+    const kick=p.recoil>0?p.recoil*.45:0,y=base-13+bob;
+    rect(x-2,base-11,4,5,'#4b9854');rect(x-1,y-5,7,9,hit?'#e7f7df':'#66b95d');
+    rect(x+4-kick,y-3,8,6,hit?'#f5ffe8':'#78ca68');rect(x+9-kick,y-1,3,2,'#203d26');
+    rect(x+1,y-3,2,2,'#102016');
+  }else if(p.type==='thorn'){
+    const y=base-7;
+    rect(x-8,y-4,16,10,hit?'#efe2ce':'#7b5838');rect(x-6,y-7,12,5,'#4f783e');
+    for(const d of[[-8,-3],[-4,-8],[1,-8],[7,-4],[-7,5],[6,5]]){
+      ctx.fillStyle='#d5c29b';ctx.beginPath();ctx.moveTo(x+d[0],y+d[1]);
+      ctx.lineTo(x+d[0]+(d[0]<0?-4:4),y+d[1]-2);ctx.lineTo(x+d[0],y+d[1]+2);ctx.fill();}
+    rect(x-3,y-2,2,2,'#211b16');rect(x+2,y-2,2,2,'#211b16');
+  }else{
+    const y=base-13+bob;
+    ctx.globalAlpha=alpha*(.18+.08*Math.sin(showFrame*.12+p.serial));ctx.fillStyle=PLUM;ctx.beginPath();ctx.arc(x,y,12,0,7);ctx.fill();
+    ctx.globalAlpha=alpha;rect(x-3,y-1,6,9,'#c8c1aa');
+    ctx.fillStyle=hit?'#f5eaff':PLUM;ctx.beginPath();ctx.ellipse(x,y-2,10,6,0,Math.PI,Math.PI*2);ctx.fill();
+    rect(x-8,y-3,16,3,hit?'#fff':'#9b6dbe');rect(x-2,y-1,1,1,'#251b2d');rect(x+2,y-1,1,1,'#251b2d');
+  }
+  if(p.hp<p.maxHp*.95){
+    rect(x-8,base+7,16,2,'#271c19');rect(x-8,base+7,16*clamp(p.hp/p.maxHp,0,1),2,p.hp>p.maxHp*.4?MINT:RED);
+  }
+  ctx.globalAlpha=1;
+}
+function drawEnemySilhouette(x,base,type,alpha){
+  const z={x,type,walk:0,hitT:0,biteT:0,hp:1,maxHp:1,moon:0};drawEnemyBody(z,base,alpha||1,true);
+}
+function drawEnemyBody(z,base,alpha,silhouette){
+  const x=z.x,step=Math.floor(z.walk/2)%2,bite=z.biteT>0?2:0,hit=z.hitT>0;
+  const bone=silhouette?'#242925':hit?'#f5f2df':'#c2c5af',cloth=silhouette?'#1b201d':'#4a5360';
+  ctx.globalAlpha=alpha===undefined?1:alpha;
+  ctx.fillStyle='#141917';ctx.beginPath();ctx.ellipse(x,base+7,9,3,0,0,7);ctx.fill();
+  if(z.type==='hound'){
+    rect(x-6,base-3,12,5,bone);rect(x-10,base-6,6,5,bone);rect(x-10,base-5,2,1,RED);
+    rect(x-5,base+1+(step?1:0),2,6,bone);rect(x+3,base+1+(step?0:1),2,6,bone);
+    rect(x+6,base-5,5,2,bone);
+  }else if(z.type==='brute'){
+    rect(x-5,base-15,10,16,cloth);rect(x-4,base-21,8,7,bone);rect(x-6,base-24,12,4,'#252b2b');
+    rect(x-4,base+1+(step?1:0),4,7,'#252725');rect(x+1,base+1+(step?0:1),4,7,'#252725');
+    rect(x-9-bite,base-12,5,3,bone);rect(x+5,base-12,3,13,'#6c4a32');rect(x+3,base,7,2,STONE2);
+    rect(x-2,base-19,1,1,RED);rect(x+2,base-19,1,1,RED);
+  }else{
+    rect(x-4,base-10,8,11,cloth);rect(x-3,base-16,7,7,bone);
+    rect(x-4,base+1+(step?1:0),3,7,'#343b38');rect(x+1,base+1+(step?0:1),3,7,'#2d3431');
+    rect(x-8-bite,base-9,5,2,bone);rect(x+3,base-8,5,2,bone);
+    rect(x-2,base-14,1,1,'#222');rect(x+1,base-14,1,1,RED);
+    if(z.type==='bucket'){
+      rect(x-5,base-20,10,7,hit?'#fff':STONE);rect(x-4,base-21,8,2,STONE2);rect(x+4,base-18,2,6,'#454d4b');
+    }else{rect(x-4,base-19,8,3,'#3d433d');rect(x-2,base-21,5,3,'#4a5149');}
+  }
+  if(z.moon){ctx.globalAlpha=.42;rect(x-7,base-24,14,32,RED);}
+  if(!silhouette&&z.hp<z.maxHp){rect(x-7,base-25,14,2,'#261a1b');rect(x-7,base-25,14*clamp(z.hp/z.maxHp,0,1),2,RED);}
+  ctx.globalAlpha=1;
+}
+function drawEnemy(z){drawEnemyBody(z,LANE_Y[z.lane]+7,1,false);}
+function carriedPlantProxy(p,x,y){
+  const clone=Object.assign({},p,{lane:0,col:0,serial:p.serial});
+  const ox=SLOT_X[0],oy=LANE_Y[0]+8;
+  ctx.save();ctx.translate(x-ox,y-oy);drawPlant(clone,1);ctx.restore();
+}
+function drawGardener(){
+  const g=gardener,x=g.x,y=g.y,bob=g.pose==='walk'||g.pose==='carry'?Math.floor(g.walk/3)%2:0;
+  const crouch=g.pose==='plant'||g.pose==='uproot'?3:0,face=g.face;
+  ctx.fillStyle='#121813';ctx.beginPath();ctx.ellipse(x,y+8,7,3,0,0,7);ctx.fill();
+  if(g.carrying)carriedPlantProxy(g.carrying,x,y-17-Math.sin(showFrame*.1));
+  rect(x-4,y+2+crouch+(bob?1:0),3,7,'#4b3928');rect(x+1,y+2+crouch+(bob?0:1),3,7,'#3b2d22');
+  rect(x-5,y-5+crouch,10,8,'#49705a');rect(x-3,y-4+crouch,6,7,'#d8b46a');
+  rect(x-3,y-11+crouch,7,7,'#c98f69');rect(x+face*2-1,y-8+crouch,2,1,'#282019');
+  // Straw hat has a broad asymmetric silhouette and a bouncing ribbon.
+  rect(x-7,y-13+crouch,14,3,'#d7b55c');rect(x-4,y-16+crouch,9,4,'#e4c66d');
+  rect(x-face*5,y-14+crouch,3,2,persona.color);
+  if(g.pose==='plant'||g.pose==='uproot'){
+    const a=(showFrame>>2)%2;rect(x+face*5,y-1+crouch+a,7,2,'#c98f69');
+    rect(x+face*9,y-3+crouch+a,2,9,'#6d4a2f');rect(x+face*8,y+5+crouch+a,5*face,2,STONE2);
+  }else if(g.carrying){
+    rect(x-6,y-9+crouch,3,8,'#c98f69');rect(x+3,y-9+crouch,3,8,'#c98f69');
+  }else rect(x+face*4,y-3+crouch,5,2,'#c98f69');
+}
+function drawShots(){
+  for(const s of shots){
+    if(s.type==='moon'){ctx.globalAlpha=.25;rect(s.x-5,s.y-5,10,10,PLUM);ctx.globalAlpha=1;rect(s.x-2,s.y-2,4,4,'#d9b9ef');}
+    else{rect(s.x-4,s.y-1,4,2,'#4f8d48');rect(s.x-1,s.y-3,5,5,MINT);rect(s.x+2,s.y-2,2,2,LIME);}
+  }
+}
+function drawHud(){
+  const story=formationForecast(),storyOn=typeof globalThis.__NO_VIEWER_STORY==='undefined';
+  rect(0,0,W,52,INK);rect(0,50,W,2,'#6f5841');
+  // Carved wood title plaque and sprouting slash.
+  rect(4,4,152,13,'#2c231b');rect(5,5,150,1,'#5c4631');
+  ctx.font='bold 8px monospace';ctx.fillStyle=LIME;ctx.fillText('GRAVE GARDEN',8,14);
+  ctx.font='bold 6px monospace';ctx.fillStyle=CREAM;if(storyOn)ctx.fillText('KEEP THE GREENHOUSE ALIVE',8,25);
+  const ws='WAVE '+String(waveNo).padStart(2,'0')+'/60';ctx.fillStyle=GOLD;ctx.fillText(ws,108,14);
+  rect(8,29,104,5,'#202b25');rect(9,30,102*clamp(greenhouse/GREENHOUSE_MAX,0,1),3,greenhouse>60?MINT:RED);
+  const glassPct=Math.round(100*greenhouse/GREENHOUSE_MAX);
+  ctx.fillStyle=greenhouse>60?MINT:RED;ctx.font='bold 5px monospace';ctx.fillText('GLASS '+glassPct+'%',120,34);
+  if(storyOn){
+    ctx.fillStyle=story.risk<.35?MINT:story.risk<1.35?GOLD:RED;ctx.font='bold 7px monospace';
+    ctx.fillText(story.label,8,45);
+  }
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(persona.name,132,45);
+}
+function drawBottom(){
+  rect(0,292,W,68,'#171d18');rect(0,292,W,4,'#574733');
+  // Workbench with individual authored seed packets.
+  rect(5,300,150,34,'#493522');rect(7,303,146,27,'#6a4b2d');
+  const types=['bloom','pea','thorn','lantern'];
+  for(let i=0;i<4;i++){
+    const x=11+i*36,p=PLANT[types[i]],active=affordable(types[i]);
+    rect(x,306,29,20,active?'#d9c998':'#756c55');rect(x+2,308,25,16,active?'#efe3b5':'#8a8067');
+    if(types[i]==='bloom'){rect(x+13,311,3,9,LEAF);rect(x+9,309,11,5,GOLD);rect(x+12,310,5,4,'#8b5d2e');}
+    else if(types[i]==='pea'){rect(x+10,316,4,7,LEAF);rect(x+12,310,9,7,MINT);rect(x+19,312,4,3,'#23472a');}
+    else if(types[i]==='thorn'){rect(x+7,313,16,7,'#7a5636');for(let q=0;q<4;q++)rect(x+8+q*4,310+(q%2),2,4,'#d8c49b');}
+    else{rect(x+12,314,4,9,'#c8c1aa');rect(x+7,309,14,7,PLUM);}
+    ctx.font='bold 5px monospace';ctx.fillStyle=active?'#2a2418':'#514b3c';ctx.fillText(''+p.cost,x+2,323);
+  }
+  ctx.font='bold 7px monospace';ctx.fillStyle=GOLD;ctx.fillText('SUN '+Math.floor(sun),7,344);
+  const verb=gardener.intent&&gardener.intent.tactic||'READ THE GATE';
+  ctx.fillStyle=persona.color;ctx.font='bold 6px monospace';
+  if(typeof globalThis.__NO_VIEWER_STORY==='undefined')ctx.fillText(verb.slice(0,24),57,344);
+  // Foreground silhouettes: trowel, watering can, roots and iron fence.
+  rect(5,350,18,3,'#8c6a42');rect(19,347,3,8,STONE2);
+  rect(137,348,13,7,'#4e6b68');rect(148,345,4,10,'#617e79');rect(140,345,7,3,'#617e79');
+  for(let x=0;x<160;x+=20){rect(x,356,2,4,'#2d352e');rect(x-3,355,8,2,'#394239');}
+}
+let viewerDraw={frame:-1,hud:'',forecast:'',verb:'',greenhouse:0,wave:0};
+function render(){
+  const storyOn=typeof globalThis.__NO_VIEWER_STORY==='undefined';
+  viewerDraw={frame:showFrame,hud:storyOn?'KEEP THE GREENHOUSE ALIVE':'',forecast:storyOn?formationForecast().label:'',
+    verb:storyOn?(gardener.intent&&gardener.intent.tactic||''):'',greenhouse,wave:waveNo};
+  preDraw();
+  rect(0,0,W,H,'#0b100d');drawSkyAndLandmarks();drawLaneGround();drawStageLandmarks();drawGreenhouse();drawForecast();drawSlotMarkers();drawBarrows();
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++)if(slots[l][c])drawPlant(slots[l][c]);
+  drawShots();
+  for(const z of enemies)drawEnemy(z);
+  drawGardener();drawRings();drawParts();
+  for(const t of texts){
+    ctx.globalAlpha=Math.min(1,t.t/15);ctx.font='bold 7px monospace';ctx.fillStyle=t.c;
+    ctx.fillText(t.s,clamp(80-t.s.length*2.1,3,157-t.s.length*4.2),t.y);
+  }
+  ctx.globalAlpha=1;drawForegarden();postDraw();drawHud();drawBottom();
+  if(act.phase==='warn'){
+    ctx.globalAlpha=.18+.08*Math.sin(showFrame*.22);rect(25,LANE_Y[act.targetLane]-23,135,46,RED);ctx.globalAlpha=1;
+  }
+  if(visualFlash>0){
+    const y=LANE_Y[visualFlashLane]-23,a=visualFlash/24;
+    ctx.globalAlpha=.16*a;rect(25,y,135,46,LIME);ctx.globalAlpha=.5*a;
+    ctx.strokeStyle=CREAM;for(let x=31;x<155;x+=12){ctx.beginPath();ctx.moveTo(x,y+4);ctx.lineTo(x+8,y+22);ctx.stroke();}
+    ctx.globalAlpha=1;
+  }
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.14;rect(0,52,W,240,GOLD);ctx.globalAlpha=1;}
+  if(state==='ending'){
+    ctx.globalAlpha=.88;rect(9,120,142,100,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle=outcome==='DAWN SAVED'?GOLD:RED;ctx.strokeRect(9.5,120.5,141,99);
+    ctx.font='bold 12px monospace';ctx.fillStyle=outcome==='DAWN SAVED'?GOLD:RED;
+    ctx.fillText(outcome,outcome==='DAWN SAVED'?34:28,154);
+    ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;ctx.fillText(stats.wavesHeld+' WAVES HELD',49,178);
+    ctx.fillStyle=MINT;ctx.fillText(stats.transplants+' DEFENSES REPLANTED',31,194);
+  }
+  drawSession();
+}
+
+// ---- evidence surfaces ---------------------------------------------------------
+function signature(){
+  return JSON.stringify({
+    state,runFrame,waveNo,waveClock,stage,sun:Math.round(sun*1e4),greenhouse,waveBreaches,
+    persona:persona.name,act:[act.phase,act.warnAt,act.landAt,act.endAt,act.targetLane,act.count],
+    wave:wavePlan.map(q=>[q.at,q.lane,q.type,q.id]),spawned:[...spawned].sort((a,b)=>a-b),
+    garden:slots.map(row=>row.map(p=>p&&[p.type,Math.round(p.hp*1e5),p.cool,p.age,p.produce,p.recoil])),
+    gardener:[Math.round(gardener.x*1e5),Math.round(gardener.y*1e5),gardener.face,Math.round(gardener.walk*1e5),
+      gardener.pose,gardener.task&&[gardener.task.action,gardener.task.phase,gardener.task.lane,gardener.task.col,
+        gardener.task.fromLane,gardener.task.fromCol,gardener.task.workT],
+      gardener.carrying&&[gardener.carrying.type,Math.round(gardener.carrying.hp*1e5)]],
+    enemies:enemies.map(z=>[z.id,z.type,z.lane,Math.round(z.x*1e5),Math.round(z.hp*1e5),z.hitT,z.biteT,z.moon]),
+    shots:shots.map(s=>[s.type,s.lane,Math.round(s.x*1e5),s.life]),
+    barrows:barrows.map(b=>[b.lane,Math.round(b.x*1e5),b.active,b.ready,Math.round(b.spin*1e5)]),
+    stats:[stats.waves,stats.wavesHeld,stats.kills,stats.breaches,stats.plants,stats.transplants,
+      stats.harvests,stats.shots,stats.saves,stats.lapses,stats.chapters,stats.events,stats.progress]
+  });
+}
+globalThis.__graveGardenProbe=()=>({
+  state,runFrame,showFrame,waveNo,waveClock,stage,sun,greenhouse,persona:persona.name,outcome,
+  finite:allFinite(),forecast:formationForecast(),act:{phase:act.phase,targetLane:act.targetLane,
+    warnAt:act.warnAt,landAt:act.landAt,endAt:act.endAt,notes:actNotes.slice()},
+  gardener:{x:gardener.x,y:gardener.y,pose:gardener.pose,tactic:gardener.intent&&gardener.intent.tactic,
+    carrying:gardener.carrying&&gardener.carrying.type,task:gardener.task&&Object.assign({},gardener.task)},
+  enemies:enemies.length,plants:slots.flat().filter(Boolean).length,stats:Object.assign({},stats),
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),
+  maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  show:SHOW.probe(),playing:playing()
+});
+globalThis.__graveGardenSignature=signature;
+globalThis.__soakProbe=()=>({
+  sig:[Math.round(gardener.x*10),Math.round(gardener.y*10),gardener.pose,
+    enemies.reduce((n,z)=>n+Math.round(z.x*10),0),shots.reduce((n,s)=>n+Math.round(s.x),0),
+    barrows.reduce((n,b)=>n+(b.active?Math.round(b.x*10):0),0)].join('|'),
+  events:eventSerial,progress:progressSerial,finite:allFinite()
+});
+globalThis.__graveGardenMotion=()=>[
+  Math.round(gardener.x*1e4),Math.round(gardener.y*1e4),gardener.pose,
+  gardener.intent&&gardener.intent.tactic,gardener.task&&gardener.task.lane,gardener.task&&gardener.task.col,
+  slots.map(r=>r.map(p=>p&&p.type).join(',')).join('/')
+].join('|');
+globalThis.__graveGardenActState=()=>({runFrame,phase:act.phase,targetLane:act.targetLane,
+  tactic:gardener.intent&&gardener.intent.tactic});
+globalThis.__graveGardenSetAct=()=>{
+  resetGarden(true);act.warnAt=60;act.landAt=300;act.endAt=1200;
+  wavePlan=[
+    {at:WARN,lane:0,type:'bucket',id:101},{at:WARN+80,lane:0,type:'shambler',id:102},
+    {at:WARN+160,lane:1,type:'shambler',id:103}
+  ];slots[3][2]=null;slots[0][2]=makePlant('thorn',0,2);sun=250;cachedPlan=null;planAt=-1e9;
+  return globalThis.__graveGardenActState();
+};
+globalThis.__graveGardenPlannerFixture=()=>{
+  const before=signature(),a=smartPlan(),mid=signature(),b=smartPlan(),after=signature();
+  return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),plan:a,
+    projection:projectFormation(a),finite:allFinite()};
+};
+globalThis.__graveGardenAdmireFixture=()=>{
+  const old=pres,oldEnemies=enemies;enemies=[];
+  pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};
+  delete globalThis.__NO_ADMIRE;const a=rawBotDecision();
+  globalThis.__NO_ADMIRE=1;const b=rawBotDecision();delete globalThis.__NO_ADMIRE;
+  pres=old;enemies=oldEnemies;return{admired:a.tactic,gated:b.tactic};
+};
+globalThis.__graveGardenManual=()=>({playing:playing(),lane:manualLane,col:manualCol,
+  intent:Object.assign({},gardener.intent),task:gardener.task&&Object.assign({},gardener.task)});
+globalThis.__graveGardenViewerProbe=()=>({enabled:typeof globalThis.__NO_VIEWER_STORY==='undefined',
+  hud:'KEEP THE GREENHOUSE ALIVE',forecast:formationForecast().label,
+  greenhouse,wave:waveNo,drawn:Object.assign({},viewerDraw)});
+globalThis.__graveGardenNextRandom=()=>E.random();
+globalThis.__graveGardenSetVisualBeat=name=>{
+  resetGarden(true);
+  if(name==='opening')return true;
+  if(name==='formation'){
+    waveNo=8;stage=0;sun=210;slots[0][2]=makePlant('thorn',0,2);
+    slots[1][1]=makePlant('lantern',1,1);slots[2][2]=makePlant('thorn',2,2);return true;
+  }
+  if(name==='warning'){
+    waveNo=18;stage=1;act.phase='warn';act.targetLane=1;act.warnAt=runFrame;act.landAt=runFrame+240;
+    wavePlan=[{at:WARN,lane:1,type:'bucket',id:1},{at:WARN+70,lane:1,type:'hound',id:2},
+      {at:WARN+140,lane:1,type:'brute',id:3}];return true;
+  }
+  if(name==='danger'||name==='save-anticipation'||name==='save-payoff'){
+    waveNo=27;stage=2;waveClock=620;wavePlan=[];enemies=[];shots=[];slots[2][2]=makePlant('thorn',2,2);
+    slots[2][2].hp=4;
+    enemies.push({id:901,type:'brute',lane:2,x:name==='danger'?47:34,hp:name==='save-payoff'?.2:1.2,
+      maxHp:22,speed:.058,bite:.035,hitT:0,biteT:0,walk:8,moon:0,dead:false});
+    gardener.x=68;gardener.y=LANE_Y[2]+8;gardener.pose='carry';
+    const carry=makePlant('pea',0,1);gardener.carrying=carry;
+    gardener.task={action:'move',phase:'target',lane:2,col:1,fromLane:0,fromCol:1,type:'pea',workT:0};
+    if(name==='save-payoff'){shots.push({x:31,y:LANE_Y[2]-3,lane:2,vx:1.55,damage:1,type:'pea',life:30});
+      offer('last-save',2,34,LANE_Y[2],'fixture');visualFlash=24;visualFlashLane=2;}
+    return true;
+  }
+  if(name==='later'){
+    waveNo=38;stage=3;sun=240;wavePlan=[];
+    for(let l=0;l<LANES;l++){slots[l][1]=makePlant(l%2?'lantern':'pea',l,1);slots[l][2]=makePlant('thorn',l,2);}
+    enemies.push({id:801,type:'bucket',lane:0,x:127,hp:9,maxHp:11,speed:.082,bite:.024,hitT:0,biteT:0,walk:5,moon:0,dead:false},
+      {id:802,type:'hound',lane:3,x:116,hp:4,maxHp:4,speed:.18,bite:.021,hitT:0,biteT:0,walk:7,moon:0,dead:false});
+    return true;
+  }
+  if(name==='apex'){
+    waveNo=49;stage=4;greenhouse=7;
+    for(let l=0;l<LANES;l++){slots[l][1]=makePlant('lantern',l,1);slots[l][2]=makePlant('thorn',l,2);}
+    offer('garden-apex',3,80,150,'fixture');say('THE GARDEN STILL STANDS',GOLD,118,100);
+    for(let l=0;l<LANES;l++)fxBurst(90,LANE_Y[l],18,l%2?GOLD:MINT,2.4,.02);
+    return true;
+  }
+  return false;
+};
+globalThis.__graveGardenVisualProbe=()=>({
+  frame:showFrame,stage,wave:waveNo,act:act.phase,danger:enemies.some(z=>z.x<48),
+  gardenerBox:{x:gardener.x-9,y:gardener.y-19,width:18,height:29},
+  plantBox:{x:SLOT_X[1]-12,y:LANE_Y[2]-20,width:24,height:32},
+  zombieBox:enemies.length?{x:enemies[0].x-12,y:LANE_Y[enemies[0].lane]-24,width:24,height:34}:null,
+  save:visualFlash>0,finite:allFinite()
+});
+
+initSession('grave-garden',[
+  ['ARROWS','CHOOSE GARDEN BED'],['SPACE','PLANT PEA WARD'],['X','PLANT THORN WALL'],
+  ['Z / SHIFT','PLANT SUNBLOOM'],['ESC','RETURN TO AUTOPILOT']
+],{viewer:true});
+resetGarden(true);
+start(()=>step(),()=>render());
+</script>
+</html>

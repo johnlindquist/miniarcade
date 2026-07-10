@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SWARM KEEPER</title>
+<style>
+  html,body{margin:0;height:100%;background:#081411}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#173c31}
+  canvas:focus-visible{outline:2px solid #ffd166;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Swarm Keeper. A tiny captain shepherds a growing crew through bridges, rescues, cargo runs, and beetle fights on the road to the Star Garden."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,R,RI,hash,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,
+  keys,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng,progressWatchdog}=AI;
+
+// SWARM KEEPER — Lemmings crossed with Pikmin for spectators. One authored
+// leader conducts a crowd of named little bodies through a persistent road.
+// Every job is physical: planks cross water, cargo moves between hands, beetles
+// take hits, rescue ropes tighten, and losses leave a scarf on the trail.
+// Human and bot controllers own the same intent and enter one apply/physics path.
+const TAU=Math.PI*2,HUD_H=43,ANCHOR_Y=266,ROAD_END=4450,MAX_MEMBERS=28;
+const INK='#07120f',CREAM='#fff1c7',GOLD='#ffd166',MINT='#70e0ad',CORAL='#ff796b',
+  SKY='#8ad8d1',BLUE='#5eb6d8',PLUM='#9c7bd4',WOOD='#9a6238',WOOD_HI='#d19555',
+  THORN='#5d2943',SHADOW='#10251f';
+const ROLES=[
+  {id:'builder',label:'BUILD',c:'#f2bd55',mark:'B'},
+  {id:'carrier',label:'CARRY',c:'#72c7ee',mark:'C'},
+  {id:'fighter',label:'FIGHT',c:'#ff796b',mark:'F'},
+  {id:'rescuer',label:'RESCUE',c:'#8ee6a8',mark:'R'}
+];
+const NAMES=['PIP','MOSS','DOT','BEE','TAVI','NIB','LUMA','FERN','KIP','RUE','BO','UMA',
+  'FIG','MICA','SOL','DEW','PEBB','WREN','CLOV','BUD','NORI','TUFT','MINA','GUS','ELI','POPP','TIL','ZIG'];
+const PERSONAS=[
+  {name:'TENDER',skill:.84,precision:.82,risk:.34,workers:0,color:MINT},
+  {name:'SCOUT',skill:.79,precision:.76,risk:.58,workers:0,color:SKY},
+  {name:'MAKER',skill:.82,precision:.8,risk:.42,workers:1,color:GOLD}
+];
+const ZONES=[
+  {name:'DEW MEADOW',ground:'#214d3b',ground2:'#285b44',path:'#657a4a',pathHi:'#81925b',
+    dark:'#17372d',plant:'#3f8254',accent:'#9ee36f'},
+  {name:'EMBER CANYON',ground:'#59352f',ground2:'#684038',path:'#9b6745',pathHi:'#b47b52',
+    dark:'#3e2526',plant:'#8d6940',accent:'#f2b65d'},
+  {name:'MOON MARSH',ground:'#183d46',ground2:'#204b52',path:'#486b60',pathHi:'#60857a',
+    dark:'#102b36',plant:'#3b7a6c',accent:'#70d9cf'},
+  {name:'STAR GARDEN',ground:'#38325b',ground2:'#443b68',path:'#766d8f',pathHi:'#9689ad',
+    dark:'#282441',plant:'#675696',accent:'#e2c4ff'}
+];
+const JOB_NEED={bridge:520,carry:460,fight:390,rescue:330};
+const JOB_COUNTS={bridge:4,carry:3,fight:5,rescue:2};
+const JOB_VERB={bridge:'BUILD THE CROSSING',carry:'CARRY THE SUNSEED',fight:'DRIVE BACK THE BEETLES',
+  rescue:'BRING THEM HOME',travel:'KEEP THE SWARM TOGETHER',downed:'SAVE A FRIEND',huddle:'HUDDLE UNDER COVER',
+  shelter:'CLIMB TO HIGH GROUND',admire:'REMEMBER THIS MOMENT'};
+
+let showFrame=0,runFrame=0,journeyNo=0,state='journey',endingT=0,outcome='';
+let leader=null,members=[],challenges=[],memorials=[],texts=[],routeSeed=1,memberSerial=0;
+let camY=0,current=null,persona=PERSONAS[0],personaIndex=0,crewSkill=null,lastLapsed=false;
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastDistanceMark=0;
+let rallyT=0,lastWorkValue=0,viewerDraw={};
+const actNotes=[];
+const stats={clears:0,bridges:0,carries:0,fights:0,lostlings:0,workBeats:0,enemies:0,
+  downs:0,rescues:0,losses:0,growth:0,trailBeats:0,landmarks:0,lapses:0,rallies:0,
+  surgeWarnings:0,surgeLands:0,owlWarnings:0,owlLands:0,events:0,progress:0,
+  maxEventLull:0,maxProgressLull:0,appliedIntents:0,admireIntents:0,endings:0};
+
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},
+  2:{frames:44,minGap:72},
+  3:{frames:82,minGap:660,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+// Two deterministic environmental acts. FLOOD SURGE asks the keeper to lead
+// the group to latched high ground; NIGHT HAWK asks for a canopy huddle. The
+// warning itself changes body positions before the hazard lands.
+const surge={phase:'calm',warnAt:4200,landAt:4440,endAt:5160,count:0,safeX:28,hit:false};
+const owl={phase:'calm',warnAt:7800,landAt:8010,endAt:8730,count:0,safeX:128,hit:false};
+
+const finiteObject=o=>Object.values(o).filter(v=>typeof v==='number').every(Number.isFinite);
+const allFinite=()=>finiteObject(leader)&&members.every(finiteObject)&&challenges.every(c=>
+  finiteObject(c)&&(!c.enemies||c.enemies.every(finiteObject)));
+const aliveMembers=()=>members.filter(m=>m.state!=='lost');
+const ableMembers=()=>members.filter(m=>m.state!=='lost'&&m.state!=='down');
+const downedMembers=()=>members.filter(m=>m.state==='down');
+const swarmCount=()=>aliveMembers().length;
+const zoneIndexAt=y=>clamp(Math.floor(y/1120),0,ZONES.length-1);
+const zoneAt=y=>ZONES[zoneIndexAt(y)];
+const pathXAt=y=>80+Math.sin((y+routeSeed*19)/225)*19+Math.sin((y-routeSeed*7)/71)*7;
+const sy=wy=>ANCHOR_Y-(wy-camY);
+// The road advances toward larger world Y while the camera projects it upward
+// (`ANCHOR_Y + camY - worldY`). Engine particles normally use `worldY-camY`,
+// so store negated world Y and pass the matching negated camera transform.
+const worldFxBurst=(x,y,n,c,sp,grav)=>fxBurst(x,-y,n,c,sp,grav);
+const worldFxDust=(x,y,n,c)=>fxDust(x,-y,n,c);
+const roleById=id=>ROLES.find(r=>r.id===id)||ROLES[0];
+const challengeJob=c=>c?c.kind:'travel';
+const shownTier=n=>SHOW.probe().shownByTier[n]||0;
+
+function markEvent(score){
+  eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
+  lastEventFrame=showFrame;if(score&&playing())addScore(score);
+}
+function markProgress(score){
+  progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+  lastProgressFrame=showFrame;if(score&&playing())addScore(score);
+}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function noteAct(e){actNotes.push({kind:e.kind,id:e.id,at:e.at,tag:e.tag,landsAt:e.landsAt});SHOW.note(e);}
+function say(s,c,x,y,t){texts.push({s,c:c||CREAM,x:x===undefined?leader.x:x,y:y===undefined?leader.y+18:y,t:t||72});}
+function joyAll(mark){for(const m of ableMembers()){m.emote=mark||'♥';m.emoteT=42;m.reactT=28;}}
+function roleBonus(m,job){return m.role===jobToRole(job)?1.32:.78;}
+function jobToRole(job){return job==='bridge'?'builder':job==='carry'?'carrier':job==='fight'?'fighter':'rescuer';}
+
+function makeMember(x,y,role,source){
+  const id=memberSerial++,r=role||ROLES[id%ROLES.length].id;
+  return{id,name:NAMES[id%NAMES.length],role:r,source:source||'trail',x,y,vx:0,vy:0,face:1,gait:id*.9,
+    state:'follow',job:'follow',jobId:-1,slot:0,downT:0,rescue:0,doomed:false,emote:'',emoteT:0,reactT:0,
+    workFlash:0,carryLift:0,trailX:0,trailY:0};
+}
+function addMember(x,y,role,source){
+  if(swarmCount()>=MAX_MEMBERS)return null;
+  const m=makeMember(x,y,role,source);members.push(m);stats.growth++;markEvent(12);
+  m.emote='!';m.emoteT=50;return m;
+}
+
+function buildRoute(){
+  challenges=[];let y=270;
+  const offset=RI(0,3);
+  for(let i=0;i<20;i++){
+    const kind=['bridge','carry','fight','rescue'][(i+offset)%4],x=clamp(pathXAt(y)+RI(-13,13),35,125),side=RI(0,1)?1:-1;
+    const c={id:i,index:i,kind,x,y,side,need:JOB_NEED[kind],progress:0,active:false,done:false,
+      beat:0,accidentDone:false,startedAt:-1,completedAt:-1,workFrame:-1,enemyHit:0};
+    if(kind==='fight'){
+      c.enemies=[];const n=3+(i%3===2?1:0),hp=c.need/n;
+      for(let j=0;j<n;j++)c.enemies.push({id:i*10+j,x:x+(j-(n-1)/2)*15,y:y+8+(j%2)*8,hp,maxHp:hp,
+        vx:0,vy:0,face:j%2?1:-1,hitT:0,stun:0,gait:j*.8});
+    }
+    if(kind==='rescue')c.captives=[
+      {x:clamp(x+side*42,12,148),y:y+4,face:-side,name:NAMES[(i+12)%NAMES.length]},
+      {x:clamp(x+side*36,12,148),y:y+14,face:side,name:NAMES[(i+17)%NAMES.length]}
+    ];
+    if(kind==='carry')c.cargo={sx:clamp(x+side*38,16,144),sy:y-6,tx:clamp(x-side*29,18,142),ty:y+18};
+    challenges.push(c);y+=RI(208,232);
+  }
+}
+
+function resetActs(){
+  Object.assign(surge,{phase:'calm',warnAt:4200,landAt:4440,endAt:5160,count:0,safeX:28,hit:false});
+  Object.assign(owl,{phase:'calm',warnAt:7800,landAt:8010,endAt:8730,count:0,safeX:128,hit:false});
+}
+function resetWorld(full){
+  journeyNo++;runFrame=0;state='journey';endingT=0;outcome='';memberSerial=0;
+  // Outcome counters belong to one journey. The soak's event/progress serials
+  // intentionally stay cumulative, but a visitor who takes over (or watches a
+  // second attract loop) must see STAR 0/20 and a clean loss ledger.
+  for(const k in stats)stats[k]=0;
+  lastEventFrame=lastProgressFrame=showFrame;
+  personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];routeSeed=RI(1,1000000);
+  const skillSeed=RI(1,0x7fffffff);
+  crewSkill=skillProfile({rng:createRng(skillSeed),skill:persona.skill,precision:persona.precision,
+    risk:persona.risk,reactionFrames:[4,8],lapseChance:.00062,lapseFrames:[20,42]});
+  leader={x:80,y:0,vx:0,vy:0,face:1,gait:0,pointT:0,whistleT:0,intent:null,stage:0};
+  members=[];memorials=[];texts=[];actNotes.length=0;
+  for(let i=0;i<12;i++)members.push(makeMember(80+(i%4-1.5)*6,-8-Math.floor(i/4)*7,ROLES[i%4].id,'founder'));
+  buildRoute();current=challenges[0];camY=leader.y;lastDistanceMark=0;rallyT=0;lastWorkValue=0;lastLapsed=false;
+  resetActs();progressGuard.reset(0,showFrame);
+  if(full)SHOW.reset(showFrame);
+}
+
+function activate(c){
+  if(!c||c.active||c.done)return;
+  c.active=true;c.startedAt=runFrame;c.workFrame=runFrame;leader.whistleT=34;
+  markEvent(4);say(JOB_VERB[c.kind],roleById(jobToRole(c.kind)).c,c.x,c.y-20,90);
+}
+function nextChallenge(){return challenges.find(c=>!c.done)||null;}
+function workValue(){return Math.round(leader.y*10)+challenges.reduce((n,c)=>n+Math.round(c.progress),0)+stats.rescues*10000+stats.clears*100000;}
+
+function downMember(m,reason,doomed){
+  if(!m||m.state==='down'||m.state==='lost')return false;
+  m.state='down';m.job='down';m.downT=doomed?54:510;m.rescue=0;m.doomed=!!doomed;m.vx=0;m.vy=0;
+  m.emote='!';m.emoteT=80;stats.downs++;markEvent();offer('down-'+m.id,1,m.x,m.y,reason);
+  say(m.name+'!',CORAL,m.x,m.y-12,100);shake(2);
+  for(const o of ableMembers())if(Math.hypot(o.x-m.x,o.y-m.y)<35){o.emote='!';o.emoteT=42;o.reactT=24;}
+  return true;
+}
+function loseMember(m){
+  if(m.state!=='down')return;
+  m.state='lost';m.job='lost';m.vx=0;m.vy=0;stats.losses++;markEvent();markProgress();
+  memorials.push({id:m.id,name:m.name,x:m.x,y:m.y,role:m.role,at:runFrame});
+  say('WE LOST '+m.name,CORAL,m.x,m.y-12,150);offer('farewell-'+m.id,2,m.x,m.y,m.name);shake(3);
+  for(const o of ableMembers()){o.emote='·';o.emoteT=90;o.reactT=42;}
+}
+function saveMember(m){
+  if(m.state!=='down')return;
+  m.state='follow';m.job='follow';m.downT=0;m.rescue=0;m.doomed=false;m.emote='♥';m.emoteT=100;
+  stats.rescues++;markEvent(28);markProgress(1);offer('rescue-'+m.id,2,m.x,m.y,m.name);
+  say(m.name+' IS SAFE',MINT,m.x,m.y-13,110);worldFxBurst(m.x,m.y,15,MINT,1.8,.01);joyAll('♥');
+}
+
+function resetAssignments(){
+  for(const m of ableMembers()){m.job='follow';m.jobId=-1;m.slot=0;}
+}
+function selectCrew(pool,role,count,smart){
+  const p=pool.slice();
+  // Stable IDs are intentional hysteresis: re-ranking by live distance every
+  // frame made two equally qualified workers trade the assignment forever.
+  p.sort((a,b)=>smart?((a.role===role?0:1)-(b.role===role?0:1)||a.id-b.id):a.id-b.id);
+  return p.slice(0,Math.max(0,count));
+}
+function applyIntent(intent){
+  leader.intent=intent;stats.appliedIntents++;leader.pointT=intent.job&&intent.job!=='travel'?10:Math.max(0,leader.pointT-1);
+  resetAssignments();
+  const smart=typeof globalThis.__NO_CREW_PLAN==='undefined',pool=ableMembers();
+  let remaining=pool;
+  if(intent.rescueId!==undefined&&intent.rescueId!==null&&intent.rescueWorkers>0){
+    const target=members.find(m=>m.id===intent.rescueId&&m.state==='down');
+    if(target){
+      const chosen=selectCrew(remaining,'rescuer',intent.rescueWorkers,smart);
+      chosen.forEach((m,i)=>{m.job='downed';m.jobId=target.id;m.slot=i;});
+      const ids=new Set(chosen.map(m=>m.id));remaining=remaining.filter(m=>!ids.has(m.id));
+    }
+  }
+  if(current&&current.active&&!current.done&&intent.job===current.kind&&intent.workers>0){
+    const chosen=selectCrew(remaining,jobToRole(current.kind),intent.workers,smart);
+    chosen.forEach((m,i)=>{m.job=current.kind;m.jobId=current.id;m.slot=i;});
+  }
+  return intent;
+}
+
+function bestDowned(){
+  const ds=downedMembers();if(!ds.length)return null;
+  ds.sort((a,b)=>a.downT-b.downT||Math.hypot(a.x-leader.x,a.y-leader.y)-Math.hypot(b.x-leader.x,b.y-leader.y));
+  return ds[0];
+}
+function baseIntent(smart){
+  const d=bestDowned(),c=current&&current.active&&!current.done?current:null;
+  let targetX=pathXAt(leader.y+55),advance=!c,job=c?c.kind:'travel',workers=c?(smart?JOB_COUNTS[c.kind]+persona.workers:1):0;
+  let tactic=c?JOB_VERB[c.kind]:JOB_VERB.travel;
+  let rescueWorkers=0,rescueId=null;
+  if(d&&(smart||d.downT<170)){
+    rescueId=d.id;rescueWorkers=smart?Math.min(2,Math.max(1,ableMembers().length-workers)):1;
+    tactic=JOB_VERB.downed;
+  }
+  if(c){targetX=c.kind==='rescue'?clamp(c.x+c.side*12,24,136):c.x;advance=leader.y<c.y-31;}
+  if(surge.phase==='warn'){
+    targetX=surge.safeX;advance=false;tactic=JOB_VERB.shelter;
+    workers=0;job='travel';rescueWorkers=0;rescueId=null;
+  }else if(owl.phase==='warn'){
+    targetX=owl.safeX;advance=false;tactic=JOB_VERB.huddle;
+    workers=0;job='travel';rescueWorkers=0;rescueId=null;
+  }
+  return{moveX:clamp(targetX,15,145),advance,job,workers,rescueId,rescueWorkers,tactic};
+}
+function botController(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){
+    stats.admireIntents++;
+    return{moveX:leader.x,advance:false,job:'travel',workers:0,rescueId:null,rescueWorkers:0,tactic:JOB_VERB.admire};
+  }
+  const smart=typeof globalThis.__NO_CREW_PLAN==='undefined';
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return baseIntent(smart);
+  const before=crewSkill.isLapsed(runFrame);
+  const intent=crewSkill.decide(runFrame,{smart},()=>baseIntent(smart),()=>({moveX:clamp(leader.x+(hash(runFrame>>5,routeSeed)-.5)*30,15,145),
+    advance:false,job:'travel',workers:0,rescueId:null,rescueWorkers:0,tactic:'LOST COUNT'}));
+  const after=crewSkill.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();say('WAIT — COUNT AGAIN',persona.color,leader.x,leader.y+20,72);}
+  lastLapsed=after;
+  return intent||baseIntent(smart);
+}
+function humanIntent(){
+  const c=current&&current.active&&!current.done?current:null,d=bestDowned();
+  const dx=(keys.right?1:0)-(keys.left?1:0),moveX=clamp(leader.x+dx*20,12,148);
+  const forceRescue=!!(keys.b||keys.c)&&d;
+  return{moveX,advance:!!keys.up||(!keys.down&&!c),job:c?c.kind:'travel',workers:c?JOB_COUNTS[c.kind]:0,
+    rescueId:forceRescue?d.id:null,rescueWorkers:forceRescue?2:0,tactic:'MANUAL'};
+}
+const controller=controllerMux({human:humanIntent,ai:botController,manual:()=>playing()||manual()});
+
+function workerTarget(m){
+  if(m.job==='downed'){
+    const d=members.find(o=>o.id===m.jobId&&o.state==='down');
+    return d?{x:d.x+(m.slot?4:-4),y:d.y-2}:null;
+  }
+  const c=challenges[m.jobId];if(!c||c.done)return null;
+  if(m.job==='bridge')return{x:c.x+(m.slot-1.5)*7,y:c.y-5+(m.slot%2)*3};
+  if(m.job==='carry'){
+    const q=clamp(c.progress/c.need,0,1),cx=c.cargo.sx+(c.cargo.tx-c.cargo.sx)*q,cy=c.cargo.sy+(c.cargo.ty-c.cargo.sy)*q;
+    return{x:cx+(m.slot-1)*6,y:cy+4+(m.slot%2)*2};
+  }
+  if(m.job==='fight'){
+    const live=c.enemies.filter(e=>e.hp>0),e=live[m.slot%Math.max(1,live.length)];
+    return e?{x:e.x+(m.slot%2?5:-5),y:e.y+4}:null;
+  }
+  if(m.job==='rescue'){
+    const cap=c.captives[m.slot%c.captives.length];return{x:cap.x+(m.slot?4:-4),y:cap.y+3};
+  }
+  return null;
+}
+function followTarget(m,index){
+  const col=(index%6)-2.5,row=Math.floor(index/6),wob=Math.sin(showFrame*.045+m.id)*1.5;
+  return{x:leader.x+col*9+wob,y:leader.y-13-row*9-(Math.abs(col)%2)*2};
+}
+function moveActor(m,t,speed){
+  if(!t)return 0;const dx=t.x-m.x,dy=t.y-m.y,d=Math.hypot(dx,dy)||1;
+  const boost=rallyT>0?1.32:1,acc=.065*boost,max=speed*boost;
+  m.vx+=(dx/d*max-m.vx)*acc;m.vy+=(dy/d*max-m.vy)*acc;
+  const v=Math.hypot(m.vx,m.vy);if(v>max){m.vx=m.vx/v*max;m.vy=m.vy/v*max;}
+  m.x+=m.vx;m.y+=m.vy;m.face=Math.abs(m.vx)>.03?(m.vx>0?1:-1):m.face;m.gait+=v;
+  m.x=clamp(m.x,7,153);return d;
+}
+
+function stepMembers(){
+  const able=ableMembers();
+  for(let i=0;i<members.length;i++){
+    const m=members[i];if(m.emoteT>0)m.emoteT--;if(m.reactT>0)m.reactT--;if(m.workFlash>0)m.workFlash--;
+    if(m.state==='lost')continue;
+    if(m.state==='down'){
+      m.downT--;m.gait+=.03;if(m.downT<=0)loseMember(m);continue;
+    }
+    const target=m.job==='follow'?followTarget(m,able.indexOf(m)):workerTarget(m);
+    const d=moveActor(m,target,m.job==='follow'?.52:.47);
+    if(m.job==='downed'&&d<7){
+      const hurt=members.find(o=>o.id===m.jobId&&o.state==='down');
+      if(hurt){hurt.rescue+=roleBonus(m,'rescue');m.workFlash=2;if(hurt.rescue>=120)saveMember(hurt);}
+    }
+  }
+  // Soft local separation keeps the mass readable without changing targets.
+  for(let i=0;i<able.length;i++)for(let j=i+1;j<able.length;j++){
+    const a=able[i],b=able[j],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;
+    if(d2>0&&d2<36){const d=Math.sqrt(d2),push=(6-d)*.04;a.x+=dx/d*push;b.x-=dx/d*push;}
+  }
+}
+
+function bridgeWork(c,workers){
+  let force=0;for(const m of workers){const t=workerTarget(m);if(t&&Math.hypot(m.x-t.x,m.y-t.y)<8){force+=roleBonus(m,'bridge');m.workFlash=3;}}
+  c.progress=Math.min(c.need,c.progress+force);return force;
+}
+function carryWork(c,workers){
+  let force=0;for(const m of workers){const t=workerTarget(m);if(t&&Math.hypot(m.x-t.x,m.y-t.y)<9){force+=roleBonus(m,'carry');m.workFlash=3;m.carryLift=4;}}
+  c.progress=Math.min(c.need,c.progress+force*.9);return force;
+}
+function fightWork(c,workers){
+  let force=0;
+  for(const m of workers){
+    const live=c.enemies.filter(e=>e.hp>0);if(!live.length)break;
+    const e=live[m.slot%live.length],d=Math.hypot(m.x-e.x,m.y-e.y);
+    if(d<10){const hit=.72*roleBonus(m,'fight');e.hp=Math.max(0,e.hp-hit);e.hitT=4;m.workFlash=3;force+=hit;
+      if(e.hp===0&&!e.deadMarked){e.deadMarked=true;stats.enemies++;markEvent(7);offer('beetle-'+e.id,1,e.x,e.y,e.id);worldFxBurst(e.x,e.y,7,CORAL,1.25);}}
+  }
+  for(const e of c.enemies){
+    if(e.hitT>0)e.hitT--;if(e.hp<=0)continue;e.gait+=.12;
+    const nearest=ableMembers().reduce((best,m)=>!best||Math.hypot(m.x-e.x,m.y-e.y)<Math.hypot(best.x-e.x,best.y-e.y)?m:best,null);
+    if(nearest){const dx=nearest.x-e.x,dy=nearest.y-e.y,d=Math.hypot(dx,dy)||1;e.vx+=(dx/d*.17-e.vx)*.04;e.vy+=(dy/d*.17-e.vy)*.04;e.x+=e.vx;e.y+=e.vy;e.face=e.vx>0?1:-1;}
+  }
+  c.progress=c.enemies.reduce((n,e)=>n+(e.maxHp-e.hp),0);return force;
+}
+function captiveWork(c,workers){
+  let force=0;for(const m of workers){const t=workerTarget(m);if(t&&Math.hypot(m.x-t.x,m.y-t.y)<8){force+=roleBonus(m,'rescue');m.workFlash=3;}}
+  c.progress=Math.min(c.need,c.progress+force);return force;
+}
+function maybeAccident(c){
+  if(c.accidentDone||c.kind==='rescue'||c.progress<c.need*.46)return;
+  c.accidentDone=true;
+  const workers=ableMembers().filter(m=>m.job===c.kind&&m.jobId===c.id);
+  const victim=workers.length?workers[(c.index+workers.length)%workers.length]:ableMembers().at(-1);
+  if(victim)downMember(victim,c.kind,c.index%6===4);
+}
+function workBeat(c){
+  while(c.beat<4&&c.progress>=c.need*(c.beat+1)/4){
+    c.beat++;stats.workBeats++;markEvent(2);markProgress();offer(c.kind+'-beat',1,c.x,c.y,c.id+'-'+c.beat);
+    const col=roleById(jobToRole(c.kind)).c;worldFxDust(c.x,c.y,5,col);
+    if(c.kind==='bridge')say('PLANK '+c.beat+'/4',col,c.x,c.y-10,46);
+    else if(c.kind==='carry')say(c.beat<4?'HEAVE!':'SEED DELIVERED',col,c.x,c.y-10,46);
+    else if(c.kind==='fight'&&c.beat<4)say('HOLD THE LINE',col,c.x,c.y-12,46);
+    else if(c.kind==='rescue'&&c.beat<4)say('ROPE IS TIGHT',col,c.x,c.y-12,46);
+  }
+}
+function completeChallenge(c){
+  if(c.done)return;c.done=true;c.active=false;c.completedAt=runFrame;c.progress=c.need;stats.clears++;
+  stats[c.kind==='bridge'?'bridges':c.kind==='carry'?'carries':c.kind==='fight'?'fights':'lostlings']++;
+  markEvent(35);markProgress(2);offer('job-clear-'+c.id,2,c.x,c.y,c.kind);worldFxBurst(c.x,c.y,18,roleById(jobToRole(c.kind)).c,2.1,.01);
+  if(c.kind==='rescue')for(const cap of c.captives)addMember(cap.x,cap.y,ROLES[(memberSerial+c.index)%4].id,'lostling');
+  if(c.kind==='carry')addMember(c.cargo.tx,c.cargo.ty,'carrier','sunseed');
+  say(c.kind==='bridge'?'BRIDGE HOLDS':c.kind==='carry'?'SUNSEED HOME':c.kind==='fight'?'PATH IS SAFE':'NO ONE LEFT BEHIND',
+    c.kind==='fight'?CORAL:MINT,c.x,c.y-18,105);joyAll('♥');
+  const finalRoad=!challenges.some(o=>!o.done);
+  if((c.index+1)%4===0){
+    stats.landmarks++;markEvent(80);markProgress(3);
+    if(!finalRoad)offer('all-across-'+c.index,3,c.x,c.y,c.index);
+    worldFxBurst(c.x,c.y-8,36,GOLD,3,.015);say('ALL ACROSS · '+zoneAt(c.y).name,GOLD,c.x,c.y-28,150);shake(7);
+    addMember(c.x,c.y-4,'rescuer','waystone');
+  }
+  resetAssignments();current=nextChallenge();
+  if(!current||c.y>=ROAD_END)finishJourney();
+}
+function stepChallenge(){
+  current=nextChallenge();if(!current)return;
+  if(!current.active&&leader.y>=current.y-58)activate(current);
+  if(!current.active||current.done)return;
+  const workers=ableMembers().filter(m=>m.job===current.kind&&m.jobId===current.id);
+  const before=current.progress;
+  if(current.kind==='bridge')bridgeWork(current,workers);
+  else if(current.kind==='carry')carryWork(current,workers);
+  else if(current.kind==='fight')fightWork(current,workers);
+  else captiveWork(current,workers);
+  if(current.progress>before)current.workFrame=runFrame;
+  workBeat(current);maybeAccident(current);
+  if(current.progress>=current.need)completeChallenge(current);
+}
+
+function trailBeat(){
+  const mark=Math.floor(leader.y/36);
+  if(mark>lastDistanceMark){lastDistanceMark=mark;stats.trailBeats++;markEvent(1);markProgress();
+    offer('trail',1,leader.x,leader.y,mark);if(mark%3===0){worldFxDust(leader.x,leader.y,5,zoneAt(leader.y).accent);}}
+}
+function finishJourney(){
+  if(state==='ending')return;state='ending';endingT=1800;outcome='STAR GARDEN REACHED';stats.endings++;
+  markEvent(300);markProgress(5);offer('star-garden',3,leader.x,leader.y,'ending');worldFxBurst(leader.x,leader.y,54,GOLD,3.4,.01);
+  say(outcome,GOLD,leader.x,leader.y+24,260);shake(9);joyAll('★');
+}
+
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){surge.phase='calm';owl.phase='calm';return;}
+  if(surge.phase==='calm'&&runFrame===surge.warnAt){
+    surge.phase='warn';surge.safeX=leader.x<80?130:30;surge.hit=false;stats.surgeWarnings++;
+    noteAct({kind:'act-warning',id:'surge',at:showFrame,tag:runFrame,landsAt:showFrame+240});
+    say('FLOOD SURGE · HIGH GROUND',BLUE,leader.x,leader.y+35,120);leader.whistleT=48;
+  }else if(surge.phase==='warn'&&runFrame>=surge.landAt){
+    surge.phase='live';stats.surgeLands++;noteAct({kind:'act-land',id:'surge',at:showFrame,tag:runFrame});
+    say('WATER BREAKS THE BANK',SKY,leader.x,leader.y+35,100);shake(3);
+  }else if(surge.phase==='live'){
+    if(!surge.hit&&runFrame>=surge.landAt+54){
+      surge.hit=true;const exposed=ableMembers().filter(m=>Math.abs(m.x-surge.safeX)>43);
+      if(exposed.length)downMember(exposed[0],'surge',false);
+    }
+    if(runFrame>=surge.endAt){surge.count++;surge.phase='calm';surge.warnAt+=9600;surge.landAt=surge.warnAt+240;surge.endAt=surge.landAt+720;
+      markEvent(12);offer('surge-clear',2,leader.x,leader.y,surge.count);say('EVERYONE ACCOUNTED FOR',MINT,leader.x,leader.y+30,80);}
+  }
+  if(owl.phase==='calm'&&runFrame===owl.warnAt){
+    owl.phase='warn';owl.safeX=leader.x<80?34:126;owl.hit=false;stats.owlWarnings++;
+    noteAct({kind:'act-warning',id:'owl',at:showFrame,tag:runFrame,landsAt:showFrame+210});
+    say('NIGHT HAWK · FIND COVER',PLUM,leader.x,leader.y+38,120);leader.whistleT=48;
+  }else if(owl.phase==='warn'&&runFrame>=owl.landAt){
+    owl.phase='live';stats.owlLands++;noteAct({kind:'act-land',id:'owl',at:showFrame,tag:runFrame});
+    say('SHADOW OVERHEAD',CREAM,leader.x,leader.y+38,90);
+  }else if(owl.phase==='live'){
+    if(!owl.hit&&runFrame>=owl.landAt+66){
+      owl.hit=true;const exposed=ableMembers().filter(m=>Math.hypot(m.x-owl.safeX,m.y-leader.y)>38);
+      if(exposed.length)downMember(exposed.at(-1),'hawk',false);
+    }
+    if(runFrame>=owl.endAt){owl.count++;owl.phase='calm';owl.warnAt+=10800;owl.landAt=owl.warnAt+210;owl.endAt=owl.landAt+720;
+      markEvent(12);offer('owl-clear',2,leader.x,leader.y,owl.count);say('THE HAWK PASSES',MINT,leader.x,leader.y+30,80);}
+  }
+}
+
+function stepLeader(intent){
+  const dx=intent.moveX-leader.x,targetV=clamp(dx*.025,-.28,.28);leader.vx+=(targetV-leader.vx)*.12;
+  leader.x+=leader.vx;leader.face=Math.abs(leader.vx)>.015?(leader.vx>0?1:-1):leader.face;
+  let speed=intent.advance?.088:0;
+  if(rallyT>0)speed*=1.12;
+  if(current&&current.active&&!current.done&&leader.y>=current.y-31)speed=0;
+  leader.vy+=(speed-leader.vy)*.1;leader.y+=leader.vy;leader.gait+=Math.hypot(leader.vx,leader.vy);
+  leader.x=clamp(leader.x,10,150);leader.stage=zoneIndexAt(leader.y);
+  if(leader.whistleT>0)leader.whistleT--;
+}
+function stepWorld(){
+  runFrame++;stepActs();
+  if(state==='ending'){
+    endingT--;if(endingT<=0){if(playing())gameOver(stats.clears+' ROADS');else resetWorld(true);}return;
+  }
+  const intent=applyIntent(controller());stepLeader(intent);stepMembers();stepChallenge();trailBeat();
+  if(rallyT>0)rallyT--;
+  const value=workValue(),watch=progressGuard.observe(value,showFrame);
+  if(watch.event){rallyT=300;stats.rallies++;markEvent();leader.whistleT=60;say('RALLY · FOLLOW MY STAFF',GOLD,leader.x,leader.y+22,90);progressGuard.reset(value,showFrame);}
+  lastWorkValue=value;
+}
+const progressGuard=progressWatchdog({progressed:(next,previous)=>next>previous,escalations:[{after:900,action:'rally'}]});
+
+function step(){
+  showFrame++;sessionStep({reset:()=>resetWorld(true)});pres=SHOW.step(showFrame);
+  if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  stepParts();
+  for(const t of texts){t.t--;t.y+=.025;}texts=texts.filter(t=>t.t>0);
+  camY+=((leader.y)-camY)*.075;
+}
+
+// ---- rendering ---------------------------------------------------------------
+function groundWorldAt(screenY){return camY+ANCHOR_Y-screenY;}
+function drawTerrain(){
+  for(let py=HUD_H;py<H;py+=6){
+    const wy=groundWorldAt(py),z=zoneAt(wy),stripe=(Math.floor(wy/18)&1)?z.ground:z.ground2;
+    rect(0,py,W,7,stripe);
+    const px=pathXAt(wy),w=40+Math.sin(wy*.03)*3;
+    rect(px-w/2-2,py,2,7,z.dark);rect(px+w/2,py,2,7,z.dark);rect(px-w/2,py,w,7,z.path);
+    if(Math.floor(wy/12)%3===0)rect(px-w/2+2,py,w-4,1,z.pathHi);
+    if(Math.floor(wy/6)%5===0){
+      const stoneX=px+(hash(Math.floor(wy/6),routeSeed+91)-.5)*(w-10);
+      rect(stoneX-2,py+2,5,2,z.pathHi);rect(stoneX-1,py+1,3,1,'#b5a97a');
+    }
+    for(let i=0;i<3;i++){
+      const h=hash(Math.floor(wy/6)+i*17,routeSeed+i),x=h*W;
+      if(Math.abs(x-px)>w/2+4)rect(x,py+((h*11)|0)%5,h>.7?2:1,1,h>.5?z.plant:z.dark);
+    }
+  }
+  // Deep parallax silhouettes hug the road edges and establish place without
+  // competing with the small bodies in the middle.
+  const z=zoneAt(leader.y),par=(camY*.16)%74;
+  ctx.globalAlpha=.28;
+  for(let i=-1;i<7;i++){
+    const y=HUD_H+i*74-par,x=hash(i+routeSeed,7)<.5?5:143,r=10+hash(i,routeSeed)*10;
+    rect(x-r/2,y-r*.8,r,r*.9,z.dark);rect(x-1,y,3,18,z.dark);
+  }
+  ctx.globalAlpha=1;
+}
+function drawProp(wy,index){
+  const py=sy(wy);if(py<HUD_H-18||py>H+18)return;
+  const z=zoneAt(wy),side=hash(index,routeSeed)>0.5?1:-1,px=pathXAt(wy)+side*(34+hash(index+4,routeSeed)*30);
+  const kind=Math.floor(hash(index*5+3,routeSeed)*3);
+  if(zoneIndexAt(wy)===0){
+    if(kind===0){
+      rect(px-1,py-7,2,8,'#416532');rect(px-6,py-10,12,5,z.plant);rect(px-3,py-13,7,4,z.accent);
+      rect(px+5,py-8,4,3,'#69a657');
+    }else if(kind===1){
+      rect(px-1,py-4,2,5,'#d8c49a');rect(px-7,py-9,14,6,'#cf6559');rect(px-4,py-10,8,2,'#ff8b72');
+      rect(px-4,py-7,2,1,CREAM);rect(px+3,py-6,2,1,CREAM);
+    }else{
+      rect(px-7,py-4,14,5,'#385d45');rect(px-5,py-7,10,4,'#52785b');rect(px-2,py-8,5,2,'#78956b');
+      for(const d of[-8,7])rect(px+d,py-3,3,4,z.accent);
+    }
+  }else if(zoneIndexAt(wy)===1){
+    rect(px-4,py-4,8,5,z.dark);rect(px-3,py-7,6,4,z.plant);rect(px-1,py-8,3,1,z.accent);
+  }else if(zoneIndexAt(wy)===2){
+    rect(px-1,py-9,2,10,'#48603d');for(const d of[-3,2])rect(px+d,py-11+(d>0?2:0),4,5,z.plant);
+    rect(px-5,py+1,10,1,'#8ad8d1');
+  }else{
+    rect(px-1,py-7,2,8,'#5e4c82');rect(px-5,py-9,10,3,z.plant);rect(px-3,py-12,6,4,z.accent);
+    rect(px+side*5,py-13,1,1,'#fff7db');
+  }
+}
+function drawBridge(c,py){
+  const z=zoneAt(c.y);rect(0,py-7,W,16,z.dark);rect(0,py-5,W,12,'#285a75');
+  for(let x=0;x<W;x+=11)rect(x+((showFrame>>3)%5),py-3+((x/11)&1)*5,7,1,'#72b8cf');
+  rect(0,py-8,W,2,z.pathHi);rect(0,py+7,W,2,z.pathHi);
+  const n=c.done?4:Math.floor(c.progress/c.need*4+.001);
+  for(let i=0;i<n;i++){const x=c.x-19+i*10;rect(x,py-7,9,15,WOOD);rect(x+1,py-5,7,2,WOOD_HI);rect(x+7,py-7,2,15,'#69412b');}
+  if(!c.done){ctx.globalAlpha=.35;ctx.strokeStyle=GOLD;ctx.strokeRect(c.x-20.5,py-7.5,39,15);ctx.globalAlpha=1;}
+}
+function cargoPos(c){const q=clamp(c.progress/c.need,0,1);return{x:c.cargo.sx+(c.cargo.tx-c.cargo.sx)*q,y:c.cargo.sy+(c.cargo.ty-c.cargo.sy)*q};}
+function drawCarry(c,py){
+  const shrineX=c.cargo.tx,shrineY=sy(c.cargo.ty);rect(shrineX-8,shrineY+3,16,3,'#4c435d');rect(shrineX-5,shrineY-1,10,4,'#756789');
+  for(const d of[-5,5])rect(shrineX+d,shrineY-6,2,9,'#ad9fc4');
+  const p=cargoPos(c),y=sy(p.y),pulse=1+((showFrame>>4)&1);
+  ctx.globalAlpha=.18;rect(p.x-7-pulse,y-8-pulse,14+pulse*2,14+pulse*2,GOLD);ctx.globalAlpha=1;
+  rect(p.x-5,y-6,10,10,'#b86d45');rect(p.x-3,y-8,6,3,GOLD);rect(p.x-2,y-5,4,5,'#ffe59a');
+  if(c.done){rect(shrineX-1,shrineY-13,2,8,MINT);rect(shrineX-5,shrineY-15,5,3,'#8fe08b');rect(shrineX+1,shrineY-17,5,4,'#b6ef91');}
+}
+function drawBeetle(e){
+  if(e.hp<=0)return;const y=sy(e.y),leg=((showFrame>>3)+e.id)&1,body=e.hitT?'#fff1df':'#602d48';
+  for(const s of[-1,1])for(let i=0;i<3;i++)rect(e.x+s*(5+((i===1)&&leg)),y-3+i*3,3,1,THORN);
+  rect(e.x-5,y-5,10,8,body);rect(e.x-3,y-7,6,4,'#8a3f55');rect(e.x+e.face*3,y-6,2,1,GOLD);
+  rect(e.x-5,y-10,10,1,'#261927');rect(e.x-5,y-10,10*e.hp/e.maxHp,1,CORAL);
+}
+function drawRescueSite(c){
+  for(let i=0;i<7;i++){
+    const x=c.x+c.side*(20+i*4),y=sy(c.y)+((i%3)-1)*5;
+    ctx.fillStyle=THORN;ctx.beginPath();ctx.moveTo(x-3,y+4);ctx.lineTo(x,y-5);ctx.lineTo(x+3,y+4);ctx.fill();
+  }
+  if(!c.done)for(const cap of c.captives){const y=sy(cap.y);rect(cap.x-2,y-3,5,5,'#e8d9a9');rect(cap.x-1,y-6,3,3,'#a4d66f');
+    rect(cap.x+cap.face,y-5,1,1,INK);ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText('HELP',cap.x-7,y-10);}
+}
+function drawChallenge(c){
+  const py=sy(c.y);if(py<HUD_H-35||py>H+35)return;
+  if(c.kind==='bridge')drawBridge(c,py);
+  else if(c.kind==='carry')drawCarry(c,py);
+  else if(c.kind==='fight'){
+    for(const e of c.enemies)drawBeetle(e);
+    if(c.done)for(let i=0;i<c.enemies.length;i++){const e=c.enemies[i],ey=sy(e.y);rect(e.x-3,ey-1,7,3,'#402338');rect(e.x-1,ey-3,4,2,'#71364d');}
+  }
+  else drawRescueSite(c);
+  if(c.done&&(c.index+1)%4===0){
+    const z=zoneAt(c.y),x=c.x;rect(x-18,py-17,4,25,z.dark);rect(x+14,py-17,4,25,z.dark);
+    rect(x-18,py-20,36,5,z.pathHi);rect(x-11,py-23,22,4,z.accent);
+    for(let i=0;i<4;i++)rect(x-8+i*5,py-21,3,2,i<=zoneIndexAt(c.y)?GOLD:'#594d65');
+  }
+  if(c.active&&!c.done){
+    const q=clamp(c.progress/c.need,0,1),col=roleById(jobToRole(c.kind)).c;
+    rect(c.x-22,py-25,44,4,INK);rect(c.x-21,py-24,42*q,2,col);
+  }
+}
+function drawMemorial(m){
+  const y=sy(m.y);if(y<HUD_H||y>H)return;const c=roleById(m.role).c;
+  rect(m.x-1,y-2,2,5,'#72503b');rect(m.x-4,y-4,7,3,c);rect(m.x+2,y-5,3,1,c);
+  if(Math.abs(m.y-leader.y)<80){ctx.fillStyle='#d8caa5';ctx.font='bold 5px monospace';ctx.fillText(m.name,m.x-m.name.length*1.5,y-8);}
+}
+function drawLeader(){
+  const x=leader.x,y=sy(leader.y),step=Math.floor(leader.gait/3)%2;
+  ctx.globalAlpha=.22;rect(x-5,y+6,10,3,'#000');ctx.globalAlpha=1;
+  rect(x-4+(step?1:0),y+3,3,5,'#483427');rect(x+1-(step?1:0),y+3,3,5,'#35271f');
+  rect(x-5,y-4,10,8,'#c34f45');rect(x-4,y-2,8,5,'#e2644e');rect(x-leader.face*5,y-2,3,6,'#8e3439');
+  rect(x-3,y-9,7,6,'#e5b887');rect(x+leader.face*2,y-7,1,1,INK);
+  rect(x-5,y-12,10,4,'#2c6b5a');rect(x-2,y-14,5,3,'#70b47a');rect(x+1,y-16,2,3,MINT);
+  // Shepherd staff and pointing arm make the intended line readable.
+  const point=leader.pointT>0?leader.face:0;rect(x+leader.face*5,y-6,1,15,WOOD_HI);
+  if(point){rect(x+point*4,y-3,5*point,2,CREAM);rect(x+point*9-(point<0?1:0),y-4,1,4,GOLD);}
+  if(leader.whistleT>0){ctx.fillStyle=GOLD;ctx.font='bold 8px monospace';ctx.fillText('♪',x+leader.face*7,y-10);}
+}
+function drawMember(m){
+  const y=sy(m.y);if(y<HUD_H-14||y>H+14||m.state==='lost')return;const role=roleById(m.role),x=m.x;
+  if(m.state==='down'){
+    ctx.save();ctx.translate(Math.round(x),Math.round(y));ctx.rotate(m.face*.38);rect(-5,-2,9,4,'#dbc690');rect(-3,-4,5,3,role.c);ctx.restore();
+    rect(x-8,y-9,16,2,INK);rect(x-8,y-9,16*clamp(m.downT/(m.doomed?54:510),0,1),2,m.doomed?CORAL:GOLD);
+    ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText(m.name,x-m.name.length*1.5,y-12);return;
+  }
+  const step=Math.floor(m.gait/2.4)%2,work=m.workFlash>0,rx=m.reactT>0?(((showFrame>>1)&1)?1:-1):0;
+  ctx.globalAlpha=.18;rect(x-3,y+4,7,2,'#000');ctx.globalAlpha=1;
+  rect(x+rx-2+(step?1:0),y+2,2,3,'#4b3525');rect(x+rx+(step?0:1),y+2,2,3,'#38271e');
+  rect(x+rx-3,y-2,7,5,work?'#fff4d2':'#e7d39d');rect(x+rx-3,y,7,1,role.c);rect(x+rx-2,y-5,5,4,'#f2dfad');
+  rect(x+rx+m.face*1,y-4,1,1,INK);rect(x+rx-1,y-7,3,2,role.c);
+  if(m.role==='builder'){rect(x-3,y-6,7,2,role.c);if(m.job==='bridge')rect(x+m.face*4,y-1,4,1,WOOD_HI);}
+  else if(m.role==='carrier'){rect(x-m.face*4,y-2,3,5,role.c);rect(x-m.face*3,y-3,2,1,'#d8f3ff');}
+  else if(m.role==='fighter'){rect(x-m.face*3,y-6,6,1,role.c);rect(x+m.face*4,y-5,1,9,WOOD_HI);}
+  else{rect(x-m.face*4,y-1,4,2,role.c);rect(x-m.face*5,y,2,3,role.c);}
+  if(m.job!=='follow'){rect(x-3,y-10,7,1,role.c);rect(x,y-12,1,2,role.c);}
+  if(m.emoteT>0){ctx.fillStyle=m.emote==='!'?CORAL:m.emote==='·'?'#b7a8a0':MINT;ctx.font='bold 6px monospace';ctx.fillText(m.emote,x-2,y-13);}
+}
+function drawIntentLine(){
+  if(!current||!current.active||current.done)return;
+  const tx=current.kind==='rescue'?current.captives[0].x:current.kind==='carry'?cargoPos(current).x:current.x,
+    ty=current.kind==='rescue'?current.captives[0].y:current.kind==='carry'?cargoPos(current).y:current.y;
+  const x0=leader.x,y0=sy(leader.y)-7,x1=tx,y1=sy(ty),steps=9,col=roleById(jobToRole(current.kind)).c;
+  ctx.globalAlpha=.42;for(let i=1;i<steps;i+=2){const t=i/steps;rect(x0+(x1-x0)*t-1,y0+(y1-y0)*t-1,3,2,col);}
+  ctx.strokeStyle=col;ctx.strokeRect(x1-6.5,y1-7.5,13,13);ctx.globalAlpha=1;
+}
+function drawTethers(){
+  ctx.lineWidth=1;
+  for(const m of ableMembers())if(m.job==='downed'){
+    const d=members.find(o=>o.id===m.jobId&&o.state==='down');if(!d)continue;
+    ctx.strokeStyle=MINT;ctx.beginPath();ctx.moveTo(m.x,sy(m.y));ctx.lineTo(d.x,sy(d.y));ctx.stroke();
+  }
+  if(current&&current.active&&!current.done&&current.kind==='carry'){
+    const p=cargoPos(current);ctx.strokeStyle=GOLD;
+    for(const m of ableMembers().filter(m=>m.job==='carry')){ctx.beginPath();ctx.moveTo(m.x,sy(m.y));ctx.lineTo(p.x,sy(p.y));ctx.stroke();}
+  }
+  ctx.lineWidth=1;
+}
+function drawActWorld(){
+  if(surge.phase==='warn'){
+    ctx.globalAlpha=.22+.1*Math.sin(showFrame*.2);rect(surge.safeX-16,HUD_H,32,H-HUD_H,BLUE);ctx.globalAlpha=1;
+    rect(surge.safeX-17,HUD_H,2,H-HUD_H,SKY);rect(surge.safeX+15,HUD_H,2,H-HUD_H,SKY);
+    for(let y=62;y<H;y+=28){ctx.fillStyle=SKY;ctx.font='bold 8px monospace';ctx.fillText('▲',surge.safeX-3,y);}
+  }else if(surge.phase==='live'){
+    ctx.globalAlpha=.28;for(let i=0;i<12;i++){const y=HUD_H+((i*31+showFrame*3)%320);rect(0,y,W,3,i%2?BLUE:SKY);}ctx.globalAlpha=1;
+  }
+  if(owl.phase==='warn'||owl.phase==='live'){
+    const live=owl.phase==='live',x=live?80+Math.sin(showFrame*.05)*50:owl.safeX;
+    ctx.globalAlpha=live?.24:.16+.08*Math.sin(showFrame*.18);ctx.fillStyle='#120f23';ctx.beginPath();ctx.ellipse(x,82,live?42:25,live?11:7,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    rect(owl.safeX-12,HUD_H,24,H-HUD_H,'rgba(156,123,212,.08)');
+  }
+}
+function drawForeground(){
+  const z=zoneAt(leader.y),off=(camY*.42)%46;ctx.globalAlpha=.88;
+  for(let i=-1;i<9;i++){
+    const y=HUD_H+i*46-off;
+    for(const side of[0,1]){
+      const x=side?158:0,flip=side?-1:1;
+      rect(x+(side?-2:0),y-9,2,18,z.dark);rect(x+flip*1+(side?-11:0),y-11,11,5,z.plant);
+      rect(x+flip*2+(side?-8:0),y-15,8,4,z.accent);rect(x+flip*7+(side?-9:0),y-7,4,3,z.plant);
+    }
+  }
+  ctx.globalAlpha=1;
+}
+const viewerStoryOn=()=>typeof globalThis.__NO_VIEWER_STORY==='undefined';
+function storyVerb(){return leader.intent&&leader.intent.tactic||JOB_VERB.travel;}
+function drawHud(){
+  viewerDraw={frame:showFrame,enabled:viewerStoryOn(),title:'',verb:'',swarm:swarmCount(),goal:'',zone:zoneAt(leader.y).name};
+  ctx.globalAlpha=.94;rect(0,0,W,HUD_H,INK);ctx.globalAlpha=1;
+  if(viewerStoryOn()){
+    const count='SWARM '+swarmCount(),verb=storyVerb();viewerDraw.title='SWARM KEEPER';viewerDraw.verb=verb;viewerDraw.goal='STAR GARDEN '+stats.clears+'/20';
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('SWARM KEEPER',5,10);
+    ctx.font='bold 6px monospace';ctx.fillStyle=swarmCount()<10?CORAL:MINT;ctx.fillText(count,W-5-count.length*3.6,10);
+    ctx.fillStyle=persona.color;ctx.fillText(verb.slice(0,25),5,21);
+    ctx.fillStyle='#8ba39b';ctx.fillText(zoneAt(leader.y).name,5,31);
+    const goal='STAR '+stats.clears+'/20';ctx.fillStyle=GOLD;ctx.fillText(goal,W-5-goal.length*3.6,31);
+    rect(5,36,150,4,'#25352f');rect(5,36,150*clamp(stats.clears/20,0,1),4,GOLD);
+    for(let i=1;i<4;i++)rect(5+i*37.5,35,1,6,'#75654b');
+  }else{
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('SWARM '+swarmCount(),5,12);
+    ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(storyVerb().slice(0,24),5,25);
+  }
+  const d=bestDowned();if(d){
+    const s='SAVE '+d.name,blink=(showFrame>>3)&1;ctx.globalAlpha=.9;rect(31,47,98,15,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle=blink?CORAL:GOLD;ctx.strokeRect(31.5,47.5,97,14);ctx.fillStyle=blink?CORAL:CREAM;
+    ctx.font='bold 7px monospace';ctx.fillText(s,80-s.length*2.1,57);
+  }
+}
+function drawTexts(){
+  for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<HUD_H||y>H)continue;
+    ctx.globalAlpha=.74*a;const w=Math.min(150,t.s.length*4.1+8);rect(clamp(t.x-w/2,4,W-w-4),y-10,w,12,INK);ctx.globalAlpha=a;
+    ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.fillText(t.s,clamp(t.x-t.s.length*1.8,6,W-t.s.length*3.6-6),y-2);
+  }ctx.globalAlpha=1;
+}
+function drawEnding(){
+  if(state!=='ending')return;ctx.globalAlpha=.88;rect(10,126,140,94,INK);ctx.globalAlpha=1;
+  ctx.strokeStyle=GOLD;ctx.strokeRect(10.5,126.5,139,93);ctx.fillStyle=GOLD;ctx.font='bold 11px monospace';ctx.fillText('STAR GARDEN',30,151);
+  ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(swarmCount()+' ARRIVED · '+stats.losses+' REMEMBERED',30,169);
+  for(let i=0;i<swarmCount();i++){const x=29+(i%13)*8,y=188+Math.floor(i/13)*10;rect(x-2,y-3,5,5,roleById(aliveMembers()[i].role).c);}
+  ctx.fillStyle=MINT;ctx.fillText('NO ONE WALKS ALONE',35,211);
+}
+function render(){
+  preDraw();drawTerrain();for(let i=Math.floor((camY-120)/38);i<Math.ceil((camY+330)/38);i++)drawProp(i*38,i);
+  for(const c of challenges)drawChallenge(c);for(const m of memorials)drawMemorial(m);
+  drawActWorld();drawIntentLine();drawTethers();for(const m of members)drawMember(m);drawLeader();
+  drawParts(-camY-ANCHOR_Y);drawForeground();postDraw();
+  drawHud();drawTexts();
+  if(pres.cue&&pres.cue.tier>=3){
+    ctx.globalAlpha=.13;rect(0,HUD_H,W,H-HUD_H,GOLD);ctx.globalAlpha=1;
+    rect(0,HUD_H,W,2,GOLD);rect(0,H-2,W,2,GOLD);rect(0,HUD_H,2,H-HUD_H,GOLD);rect(W-2,HUD_H,2,H-HUD_H,GOLD);
+    for(let i=0;i<9;i++){const a=i/9*TAU,x=leader.x+Math.cos(a)*(14+pres.t*.3),y=sy(leader.y)-4+Math.sin(a)*(12+pres.t*.2);rect(x-1,y-1,3,3,i%2?GOLD:CREAM);}
+  }
+  drawEnding();drawSession(false);
+}
+
+// ---- deterministic probes ---------------------------------------------------
+globalThis.__swarmKeeperProbe=()=>({
+  state,runFrame,showFrame,journeyNo,outcome,persona:persona.name,zone:zoneAt(leader.y).name,finite:allFinite(),
+  leader:{x:leader.x,y:leader.y,vx:leader.vx,vy:leader.vy,tactic:leader.intent&&leader.intent.tactic},
+  swarm:swarmCount(),able:ableMembers().length,downed:downedMembers().length,memorials:memorials.length,
+  current:current?{id:current.id,kind:current.kind,progress:current.progress,need:current.need,active:current.active,done:current.done}:null,
+  stats:Object.assign({},stats),maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),
+  maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  acts:{surge:surge.phase,owl:owl.phase,notes:actNotes.slice()},show:SHOW.probe(),playing:playing()
+});
+globalThis.__swarmKeeperSignature=()=>JSON.stringify({
+  state,runFrame,journeyNo,outcome,persona:persona.name,routeSeed,
+  l:[leader.x,leader.y,leader.vx,leader.vy,leader.face,leader.gait,leader.stage].map(v=>typeof v==='number'?Math.round(v*1e5):v),
+  m:members.map(m=>[m.id,m.role,m.state,m.job,m.jobId,Math.round(m.x*1e4),Math.round(m.y*1e4),
+    Math.round(m.vx*1e4),Math.round(m.vy*1e4),m.downT,Math.round(m.rescue*100),m.doomed]),
+  c:challenges.map(c=>[c.id,c.kind,c.active,c.done,Math.round(c.progress*100),c.beat,c.accidentDone,
+    c.enemies?c.enemies.map(e=>[e.id,Math.round(e.x*100),Math.round(e.y*100),Math.round(e.hp*100)]):null]),
+  a:[surge.phase,surge.warnAt,surge.landAt,surge.endAt,surge.safeX,surge.hit,owl.phase,owl.warnAt,owl.landAt,owl.endAt,owl.safeX,owl.hit],
+  s:[stats.clears,stats.bridges,stats.carries,stats.fights,stats.lostlings,stats.downs,stats.rescues,
+    stats.losses,stats.growth,stats.workBeats,stats.enemies,stats.trailBeats,stats.landmarks,stats.lapses,stats.rallies,stats.endings]
+});
+globalThis.__soakProbe=()=>({sig:[Math.round(leader.x*10),Math.round(leader.y*10),swarmCount(),downedMembers().length,
+  members.reduce((n,m)=>n+Math.round(m.x+m.y),0)].join('|'),events:eventSerial,progress:progressSerial,finite:allFinite()});
+globalThis.__swarmKeeperMotion=()=>[Math.round(leader.x*1e4),Math.round(leader.y*1e4),Math.round(leader.vx*1e4),
+  Math.round(leader.vy*1e4),leader.intent&&leader.intent.advance,leader.intent&&leader.intent.moveX,
+  leader.intent&&leader.intent.tactic,members.slice(0,4).map(m=>[Math.round(m.x*100),Math.round(m.y*100)])].join('|');
+globalThis.__swarmKeeperViewerProbe=()=>({enabled:viewerStoryOn(),truth:{swarm:swarmCount(),clears:stats.clears,
+  verb:storyVerb(),zone:zoneAt(leader.y).name},drawn:Object.assign({},viewerDraw)});
+globalThis.__swarmKeeperManual=()=>({playing:playing(),leader:Object.assign({},leader),intent:leader.intent&&Object.assign({},leader.intent)});
+globalThis.__swarmKeeperNextRandom=()=>E.random();
+globalThis.__swarmKeeperSetAct=kind=>{
+  resetWorld(true);
+  Object.assign(surge,kind==='surge'?{phase:'calm',warnAt:60,landAt:300,endAt:1020,hit:false}
+    :{phase:'calm',warnAt:999999,landAt:1000239,endAt:1000959,hit:false});
+  Object.assign(owl,kind==='owl'?{phase:'calm',warnAt:60,landAt:270,endAt:990,hit:false}
+    :{phase:'calm',warnAt:999999,landAt:1000209,endAt:1000929,hit:false});
+  actNotes.length=0;return globalThis.__swarmKeeperProbe();
+};
+globalThis.__swarmKeeperAdmireFixture=()=>{const old=pres;
+  pres={cue:{id:'fixture',tier:3},t:1,holdWorld:false,physicsEvery:1,admire:true};
+  delete globalThis.__NO_ADMIRE;const a=botController();globalThis.__NO_ADMIRE=1;const b=botController();delete globalThis.__NO_ADMIRE;pres=old;
+  return{admired:a.tactic,gated:b.tactic};
+};
+globalThis.__swarmKeeperVisualFixture=kind=>{
+  resetWorld(true);
+  const seat=()=>{let i=0;for(const m of ableMembers()){
+    const col=(i%6)-2.5,row=Math.floor(i/6);m.x=leader.x+col*9;m.y=leader.y-13-row*9;m.vx=m.vy=0;m.state='follow';m.job='follow';m.jobId=-1;i++;}};
+  if(kind==='late'){
+    leader.y=camY=3400;leader.stage=3;
+    for(const c of challenges)if(c.index<15){c.done=true;c.active=false;c.progress=c.need;c.beat=4;
+      if(c.enemies)for(const e of c.enemies)e.hp=0;}
+    stats.clears=15;stats.landmarks=3;current=challenges.find(c=>!c.done)||challenges.at(-1);seat();
+  }
+  else if(kind==='bridge'){
+    current=challenges.find(c=>c.kind==='bridge');leader.y=current.y-30;camY=leader.y;seat();activate(current);current.progress=current.need*.62;
+    applyIntent({moveX:current.x,advance:false,job:'bridge',workers:4,rescueId:null,rescueWorkers:0,tactic:JOB_VERB.bridge});
+    for(const m of ableMembers().filter(m=>m.job==='bridge')){const t=workerTarget(m);m.x=t.x;m.y=t.y;}
+  }
+  else if(kind==='rescue'){
+    current=challenges.find(c=>c.kind==='fight');leader.y=current.y-28;camY=leader.y;seat();activate(current);downMember(members[3],'fixture',false);
+    applyIntent({moveX:current.x,advance:false,job:'fight',workers:5,rescueId:members[3].id,rescueWorkers:2,tactic:JOB_VERB.downed});
+    for(const m of ableMembers().filter(m=>m.job!=='follow')){const t=workerTarget(m);if(t){m.x=t.x;m.y=t.y;}}
+  }
+  else if(kind==='apex'){
+    current=challenges.find(c=>(c.index+1)%4===0);leader.y=current.y-30;camY=leader.y;seat();activate(current);
+    current.progress=current.need;completeChallenge(current);seat();
+  }
+  return globalThis.__swarmKeeperProbe();
+};
+
+initSession('swarm-keeper',[["LEFT / RIGHT","LEAD THE SWARM"],["UP","PRESS ON"],
+  ["X / SHIFT","SEND RESCUERS"],["ESC","RETURN TO AUTOPILOT"]],{viewer:true});
+resetWorld(true);start(()=>step(),()=>render());
+</script>
+</html>

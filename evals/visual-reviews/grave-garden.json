@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "game": "grave-garden",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "cfe1b750269d5f7e395469643202c06b740aef2d6170e3d61bee29831b759371",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 the straw-hatted gardener has a constructed face, apron, limbs, facing, walk, dig, carry, and crouch poses. Sunblooms, pea wards, thorn walls, moon caps, shamblers, hounds, buckets, and undertakers remain distinct in silhouette and match both references for authored character identity."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The glass-pane greenhouse, cultivated furrows, cobble separators, grave loam, headstones, iron fence, sky landmarks, rooted apron, workbench, and foreground tools form a layered place without depending on HUD text. Its material density meets the two reference worlds."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The native sheet shows structural chapter changes through the scarecrow garden, crooked crypt, harvest arch and pumpkins, frost crypt and frozen well, and blood-moon dead tree. These alter landmark mass and silhouette rather than merely recoloring the same board."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned crops prove gardener locomotion, plant recoil, and undead gait. Physical uproot-carry-replant staging, the threatened-lane anticipation, broad barrow-save flash, projectile contact, hit reactions, and chapter apex provide readable anticipation, impact, and follow-through."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Four tall lanes and three large beds preserve formation gaps at native size. Right-edge enemy silhouettes, countdowns, gold approach chevrons, damaged-plant bars, the carrying gardener, and danger-lane tint make the forecast and weak lane readable beside video."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Dark greenhouse teal, cultivated earth, grave gray, leaf green, moon plum, carved wood UI, cream pixels, and gold payoff grammar stay consistent across every chapter. The characters, architecture, seed packets, telegraphs, and celebrations read as one authored grave-garden world."
+    }
+  }
+}

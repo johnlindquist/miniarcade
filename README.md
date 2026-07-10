@@ -1,6 +1,6 @@
 # MINI/ARCADE
 
-The source for [miniarcade.dev](https://miniarcade.dev): eighteen self-playing,
+The source for [miniarcade.dev](https://miniarcade.dev): Sixteen self-playing,
 portrait arcade games built for the 4:9 side column beside 4:3 video.
 
 This repository is the canonical home for the games and the Vercel production
