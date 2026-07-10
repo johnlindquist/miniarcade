@@ -19,5 +19,6 @@
   {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'send water · light four districts',tone:'tl'},
   {id:'misregister',title:'PRESS RUN',label:'press run',tagline:'ride the belts · stamp three · print the page',tone:'mr'},
   {id:'crestcrash',title:'CRESTCRASH',label:'crestcrash',tagline:'dive · crest · topple',tone:'cc'},
-  {id:'motobowl',title:'MOTO BOWL',label:'moto bowl',tagline:'huddle · hurdle · touchdown',tone:'mb'}
+  {id:'motobowl',title:'MOTO BOWL',label:'moto bowl',tagline:'huddle · hurdle · touchdown',tone:'mb'},
+  {id:'ghost-shift',title:'GHOST SHIFT',label:'ghost shift',tagline:'loot · unlock · evade',tone:'gs'}
 ]));
