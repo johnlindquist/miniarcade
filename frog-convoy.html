@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FROG CONVOY</title>
+<style>
+  html,body{margin:0;height:100%;background:#071410}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#10241f}
+  canvas:focus-visible{outline:2px solid #d9f27c;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Frog Convoy. An autonomous lead frog gathers a growing family and guides every passenger across traffic, collapsing logs, and seasonal floods."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,R,RI,hash,clamp,rect,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// FROG CONVOY — Frogger x escort mission. The lead frog owns one discrete
+// hop integrator. Human input, the reactive baseline, the family lookahead,
+// and every delayed passenger route through the same function. The planner
+// copies numeric state and projects existing hazards with pure math; it never
+// consumes engine RNG or mutates the live convoy.
+const TAU=Math.PI*2,HOP_FRAMES=18,FOLLOW_DELAY=16,SHIFT_FRAMES=15*60*60;
+const ROW_Y=[43,69,97,124,151,178,205,232,255,278,301,326];
+const SAFE_ROWS=new Set([0,1,2,7,11]),ROAD_ROWS=new Set([8,9,10]),RIVER_ROWS=new Set([3,4,5,6]);
+const GRID=20,MIN_X=20,MAX_X=140,FAMILY_GOAL=5;
+const INK='#071410',CREAM='#f5f0cf',PALE='#d8e9d2',LIME='#bce866',LEAD='#70c95b',LEAD_DARK='#225c43',
+  GOLD='#ffd166',CORAL='#ff765f',CYAN='#7de3dd',BLUE='#4ca6c9',VIOLET='#9b83d5',MUD='#6c5138';
+const SEASONS=[
+  {name:'SPRING RUN',sky:'#82c9c2',sky2:'#dbe8b5',far:'#557f65',bank:'#628e4d',grass:'#83b85a',water:'#287f8b',water2:'#46a6a5',road:'#313940',accent:'#f6a9c2'},
+  {name:'MIDSUMMER',sky:'#e9ae69',sky2:'#f7dd94',far:'#756f45',bank:'#7b9143',grass:'#a8b84d',water:'#257a83',water2:'#5aa99a',road:'#39383b',accent:'#ffd166'},
+  {name:'AUTUMN MARCH',sky:'#c86f56',sky2:'#f0b270',far:'#704b43',bank:'#8b6039',grass:'#b77b3f',water:'#315f70',water2:'#628a8b',road:'#37343a',accent:'#ef8354'},
+  {name:'FLOOD SEASON',sky:'#53697c',sky2:'#8da2aa',far:'#384d5b',bank:'#55705b',grass:'#6f8d65',water:'#285d74',water2:'#4b8394',road:'#30373e',accent:'#9bd8ed'}
+];
+const FROG_STYLES=[
+  {name:'PIP',body:'#7fd27a',belly:'#d7ec8a',mark:'#2e7251',accessory:'bow'},
+  {name:'MOSS',body:'#80c977',belly:'#e2e99a',mark:'#37664a',accessory:'cap'},
+  {name:'DOT',body:'#9ad66e',belly:'#e8f0a4',mark:'#66528a',accessory:'spots'},
+  {name:'REED',body:'#5fc49a',belly:'#c9efd0',mark:'#236c62',accessory:'leaf'},
+  {name:'BUB',body:'#72bfc5',belly:'#cfe9d9',mark:'#315c78',accessory:'tail'}
+];
+
+let showFrame=0,runFrame=0,actFrame=0,journeyNo=0,state='run',stateT=0,outcome='';
+let leader=null,passengers=[],pickups=[],route=[],vehicles=[],logs=[],lostGhosts=[],ripples=[],texts=[];
+let nextId=1,collected=1,bestRow=11,seasonIndex=0,arrival=null,visualBeat='';
+let persona=null,personaHistory=[],profile=null,profileSeed=1,lastLapsed=false,planCache={at:-1e9,intent:null,score:0};
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let act=null,actNotes=[],banner={s:'',c:PALE,t:0},eventSerial=0,progressSerial=0;
+let lastEventFrame=0,lastProgressFrame=0,lastNearFrame=-1e9,lastIntent={tactic:'GATHER THE FAMILY'};
+const stats={hops:0,pickups:0,maxChain:1,passengerLosses:0,sacrifices:0,leadFalls:0,
+  arrivals:0,wholeArrivals:0,partialArrivals:0,delivered:0,roadClears:0,riverClears:0,
+  closeCalls:0,logsCollapsed:0,lapses:0,actsWarned:0,actsLanded:0,apexes:0,
+  events:0,progress:0,maxEventLull:0,maxProgressLull:0,plannerCalls:0,plannerSteps:0,
+  appliedIntents:0,admireIntents:0,expeditions:0,endings:0,wins:0};
+
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:14,minGap:10},
+  2:{frames:48,minGap:96},
+  3:{frames:96,minGap:780,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+const rowY=row=>ROW_Y[clamp(row,0,ROW_Y.length-1)];
+const snapX=x=>clamp(Math.round(x/GRID)*GRID,MIN_X,MAX_X);
+const wrap=(x,min,max)=>{const d=max-min;while(x<min)x+=d;while(x>=max)x-=d;return x;};
+const wrapDelta=(a,b,span=200)=>{let d=a-b;while(d>span/2)d-=span;while(d<-span/2)d+=span;return d;};
+const finiteBody=b=>b&&['x','y','groundY'].every(k=>Number.isFinite(b[k]));
+const allFinite=()=>finiteBody(leader)&&passengers.every(finiteBody)&&vehicles.every(v=>Number.isFinite(v.x)&&Number.isFinite(v.vx))&&logs.every(l=>Number.isFinite(l.x)&&Number.isFinite(l.sink));
+const wholeFamily=()=>collected===FAMILY_GOAL&&passengers.length===FAMILY_GOAL;
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
+function say(s,c,t,x,y){banner={s,c:c||PALE,t:t||65};texts.push({s,c:c||PALE,x:x===undefined?leader.x:x,y:y===undefined?leader.y-13:y,t:t||65});}
+function offer(id,tier,x,y,tag){SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+36});}
+function noteAct(e){actNotes.push({kind:e.kind,id:e.id,at:e.at,tag:e.tag,landsAt:e.landsAt,tactic:e.tactic});SHOW.note(e);}
+
+function makeFrog(x,row,style,index){
+  return{id:nextId++,x,y:rowY(row),groundY:rowY(row),row,fromX:x,fromY:rowY(row),toX:x,toY:rowY(row),toRow:row,
+    hopT:0,cooldown:0,faceX:0,faceY:-1,inv:0,waterT:0,onLog:0,panicT:0,lookT:0,routeIndex:route.length,
+    style:style||FROG_STYLES[index%FROG_STYLES.length],index:index||0,intent:{tactic:'WAIT'}};
+}
+
+// Exact frog integrator used by runtime, passengers, and copied planning.
+// It only mutates the body passed to it and returns hop edge telemetry.
+function advanceFrog(b,intent){
+  intent=intent||{hop:false,dx:0,dy:0};let started=false,landed=false;
+  if(b.inv>0)b.inv--;if(b.panicT>0)b.panicT--;if(b.lookT>0)b.lookT--;
+  if(b.hopT>0){
+    b.hopT--;const q=1-b.hopT/HOP_FRAMES,e=q*q*(3-2*q);
+    b.x=b.fromX+(b.toX-b.fromX)*e;b.groundY=b.fromY+(b.toY-b.fromY)*e;
+    b.y=b.groundY-Math.sin(q*Math.PI)*(5.5+Math.abs(b.toRow-b.row)*1.5);
+    if(b.hopT===0){b.row=b.toRow;b.x=b.toX;b.groundY=b.toY;b.y=b.toY;b.cooldown=3;landed=true;}
+  }else{
+    b.y=b.groundY=rowY(b.row);if(b.cooldown>0)b.cooldown--;
+    if(intent.hop&&b.cooldown<=0){
+      const hasTargetRow=Number.isFinite(intent.targetRow)&&intent.targetRow>=0,
+        hasTargetX=Number.isFinite(intent.targetX)&&intent.targetX>0,
+        targetRow=hasTargetRow?clamp(intent.targetRow,0,ROW_Y.length-1):clamp(b.row+(intent.dy||0),0,ROW_Y.length-1),
+        targetX=hasTargetX?clamp(intent.targetX,MIN_X,MAX_X):clamp(snapX(b.x)+(intent.dx||0)*GRID,MIN_X,MAX_X);
+      if(targetRow!==b.row||Math.abs(targetX-b.x)>.5){
+        b.fromX=b.x;b.fromY=rowY(b.row);b.toX=targetX;b.toY=rowY(targetRow);b.toRow=targetRow;b.hopT=HOP_FRAMES;
+        b.faceX=Math.sign(targetX-b.x);b.faceY=Math.sign(targetRow-b.row);started=true;
+      }
+    }
+  }
+  return{started,landed,row:b.row,x:b.x,targetRow:b.toRow,targetX:b.toX};
+}
+
+function vehicleFactor(){return act&&act.phase==='live'&&act.kind==='rush'?1.62:1;}
+function logFactor(){return act&&act.phase==='live'&&act.kind==='flood'?1.42:1;}
+function makeHazards(){
+  vehicles=[];logs=[];
+  const roadTypes=['car','truck','bus'];
+  for(let lane=0;lane<3;lane++){
+    const row=8+lane,dir=lane%2?1:-1,speed=(.48+lane*.07)*dir,type=roadTypes[lane],count=type==='bus'?2:3;
+    for(let i=0;i<count;i++)vehicles.push({id:nextId++,row,x:wrap(R(-15,15)+i*(200/count)+lane*31,-30,170),vx:speed,
+      len:type==='car'?19:type==='truck'?27:34,w:type==='bus'?12:11,type,color:['#e65f54','#e9b64d','#5a9bc7'][lane],flash:0});
+  }
+  for(let lane=0;lane<4;lane++){
+    const row=3+lane,dir=lane%2?-1:1,speed=(.24+lane*.035)*dir,count=3;
+    for(let i=0;i<count;i++)logs.push({id:nextId++,row,x:wrap(i*(200/count)+lane*21+R(-7,7),-38,178),vx:speed,
+      len:44+RI(0,8),kind:(i+lane)%3,fragile:(i+lane)%4===0,sink:0,downT:0,load:0,crack:0});
+  }
+}
+
+function makePickups(){
+  pickups=[];const used=[];
+  for(const row of[7,7,2,2]){
+    let col=RI(1,5);while(used.some(p=>p.row===row&&Math.abs(p.col-col)<2))col=1+(col+2)%5;
+    used.push({row,col});const style=FROG_STYLES[pickups.length+1];
+    pickups.push({id:nextId++,x:20+col*20,row,y:rowY(row),style,wave:(pickups.length*7)%19,collected:false});
+  }
+}
+
+function resetAct(){act={kind:'rush',phase:'calm',warnAt:2700,landAt:0,endAt:0,count:0,dir:1,refugeX:40,crocX:80,crocV:.52,responded:false,responseAt:0,responseTactic:''};actNotes=[];}
+function scheduleNextAct(){
+  act.count++;act.kind=act.count%2?'flood':'rush';act.phase='calm';act.warnAt=actFrame+2700;
+  act.landAt=0;act.endAt=0;act.responded=false;act.responseAt=0;act.responseTactic='';
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
+  const relevant=state==='run'&&(act.kind==='rush'?leader.row>=7:leader.row>=3);
+  if(act.phase==='calm'&&actFrame>=act.warnAt&&relevant){
+    act.phase='warn';act.dir=hash(journeyNo*31+act.count,17)>.5?1:-1;act.refugeX=act.dir>0?120:40;
+    act.crocX=act.dir>0?18:142;act.crocV=act.dir*.52;planCache.at=-1e9;stats.actsWarned++;
+    const warning=act.kind==='rush'?240:210;
+    act.landAt=actFrame+warning;act.endAt=act.landAt+840;act.responded=false;act.responseAt=0;act.responseTactic='';
+    noteAct({kind:'act-warning',id:act.kind,at:showFrame,tag:actFrame,landsAt:showFrame+warning});
+    say(act.kind==='rush'?'RUSH HOUR INBOUND':'FLASH FLOOD INBOUND',act.kind==='rush'?GOLD:CYAN,100,80,78);
+  }else if(act.phase==='warn'&&actFrame>=act.landAt){
+    act.phase='live';stats.actsLanded++;noteAct({kind:'act-land',id:act.kind,at:showFrame,tag:actFrame});markEvent();
+    say(act.kind==='rush'?'THE COMMUTE BREAKS LOOSE':'THE RIVER TAKES THE BANKS',CREAM,82,80,78);shake(4);
+  }else if(act.phase==='live'){
+    if(actFrame>=act.endAt){offer('act-clear-'+act.count,2,leader.x,leader.y,act.kind);say(act.kind==='rush'?'LAST BUS CLEARS':'THE CREST PASSES',LIME,65);markEvent();scheduleNextAct();}
+  }
+}
+
+function stepHazards(){
+  if(act&&act.phase==='live'&&act.kind==='flood')act.crocX=wrap(act.crocX+act.crocV,-24,184);
+  const vf=vehicleFactor();for(const v of vehicles){v.x=wrap(v.x+v.vx*vf,-35,175);if(v.flash>0)v.flash--;}
+  const lf=logFactor();for(const l of logs){
+    l.x=wrap(l.x+l.vx*lf,-42,182);l.load=0;
+    if(l.downT>0){l.downT--;l.sink=Math.min(1.25,l.sink+.04);if(l.downT===0)l.sink=.72;continue;}
+    const floodStrain=act&&act.phase==='live'&&act.kind==='flood'&&l.fragile;
+    if(floodStrain)l.sink+=.00165;else l.sink=Math.max(0,l.sink-.008);
+    if(l.sink>.98){collapseLog(l);continue;}
+  }
+}
+function collapseLog(l){
+  if(l.downT>0)return;l.downT=180;l.crack=1;stats.logsCollapsed++;markEvent();offer('log-collapse-'+l.id+'-'+runFrame,2,l.x,rowY(l.row),'LOG GIVES WAY');
+  say('THE LOG GIVES WAY!',CORAL,70,l.x,rowY(l.row)-10);shake(3);fxDust(l.x,rowY(l.row),12,'#b9dfdd');
+}
+function logAt(row,x,t){
+  const lf=logFactor();let best=null,bestGap=Infinity;
+  for(const l of logs){if(l.row!==row||l.downT>Math.max(0,-t)||l.sink>.88)continue;const px=wrap(l.x+l.vx*lf*t,-42,182),d=Math.abs(wrapDelta(x,px,224)),gap=d-l.len/2;
+    if(gap<bestGap){bestGap=gap;best=l;}}
+  return best&&bestGap<=-3?best:null;
+}
+function vehicleGap(row,x,t){
+  const vf=vehicleFactor();let gap=999,hit=null;
+  for(const v of vehicles){if(v.row!==row)continue;const px=wrap(v.x+v.vx*vf*t,-35,175),d=Math.abs(wrapDelta(x,px,210))-v.len/2-4;
+    if(d<gap){gap=d;hit=v;}}
+  return{gap,vehicle:hit};
+}
+function crocGap(row,x,t){
+  if(!act||act.kind!=='flood'||act.phase!=='live'||row!==5)return 999;
+  return Math.abs(wrapDelta(x,wrap(act.crocX+act.crocV*t,-24,184),208))-13;
+}
+
+function losePassenger(f,reason,sacrifice){
+  const index=passengers.indexOf(f);if(index<0)return;
+  passengers.splice(index,1);stats.passengerLosses++;if(sacrifice)stats.sacrifices++;markEvent();leader.lookT=55;
+  for(const mate of passengers)mate.panicT=Math.max(mate.panicT,32);
+  lostGhosts.push({x:f.x,y:f.y,fromX:f.x,fromY:f.y,toX:sacrifice?leader.x:f.x,toY:sacrifice?leader.y:f.y+10,t:42,t0:42,
+    style:f.style,sacrifice:!!sacrifice,reason});
+  offer(sacrifice?'sacrifice-'+f.id:'lost-'+f.id,2,f.x,f.y,reason);fxBurst(f.x,f.y,14,sacrifice?GOLD:CYAN,1.8,.03);ring(f.x,f.y,sacrifice?GOLD:CYAN,1.4,22);shake(3);
+  say(sacrifice?'ONE LEAPS FOR THE FAMILY':reason,sacrifice?GOLD:CORAL,86,f.x,f.y-12);
+}
+function leadHazard(reason){
+  if(leader.inv>0||state!=='run')return;
+  const guard=leader.intent&&leader.intent.guard;
+  if(guard&&passengers.length){const victim=passengers.at(-1);losePassenger(victim,reason,true);leader.inv=75;leader.panicT=38;return;}
+  state='wipe';stateT=132;stats.leadFalls++;markEvent();offer('convoy-scattered-'+journeyNo,2,leader.x,leader.y,reason);leader.panicT=90;
+  for(const f of[...passengers])losePassenger(f,'CONVOY SCATTERED',false);
+  say(reason+' · REGROUP!',CORAL,120);shake(6);fxBurst(leader.x,leader.y,22,CORAL,2.4,.04);
+}
+
+function checkBodyHazard(f,isLeader){
+  if(f.hopT>0||f.inv>0)return false;
+  if(ROAD_ROWS.has(f.row)){
+    const g=vehicleGap(f.row,f.x,0);
+    if(g.gap<0){if(g.vehicle)g.vehicle.flash=6;if(isLeader)leadHazard('TRAFFIC HIT');else losePassenger(f,'PASSENGER HIT',false);return true;}
+    if(g.gap<6&&showFrame-lastNearFrame>70){lastNearFrame=showFrame;stats.closeCalls++;markEvent();offer('near-'+showFrame,1,f.x,f.y,'CLOSE CALL');say('BUMPER-WIDTH!',GOLD,34,f.x,f.y-11);}
+  }
+  if(RIVER_ROWS.has(f.row)){
+    const l=logAt(f.row,f.x,0);f.onLog=l?l.id:0;
+    if(l){f.waterT=0;l.load++;if(l.downT<=0){
+      f.x+=l.vx*logFactor();f.fromX=f.toX=f.x;
+      const strain=(l.fragile?1.45:1)*(l.load+(act.phase==='live'&&act.kind==='flood'?1.2:0));l.sink+=strain*.0018;
+      if(l.sink>.98)collapseLog(l);
+    }}else{
+      f.waterT++;if(f.waterT>8){if(isLeader)leadHazard('SWEPT AWAY');else losePassenger(f,'LOST TO THE CURRENT',false);return true;}
+    }
+    if(crocGap(f.row,f.x,0)<0){if(isLeader)leadHazard('CROC AMBUSH');else losePassenger(f,'CROC TAKES THE TAIL',false);return true;}
+  }else{f.onLog=0;f.waterT=0;}
+  if(f.x<5||f.x>155){if(isLeader)leadHazard('OFF THE BANK');else losePassenger(f,'SWEPT OFFSCREEN',false);return true;}
+  return false;
+}
+
+function collectPickups(){
+  if(leader.hopT>0)return;
+  for(const p of pickups){if(p.collected||p.row!==leader.row||Math.abs(p.x-leader.x)>9)continue;
+    p.collected=true;collected++;stats.pickups++;const f=makeFrog(leader.x,leader.row,p.style,passengers.length+1);f.routeIndex=route.length;f.inv=50;passengers.push(f);
+    stats.maxChain=Math.max(stats.maxChain,passengers.length);markEvent(12);markProgress();offer('pickup-'+p.id,1,p.x,p.y,p.style.name);fxBurst(p.x,p.y,10,LIME,1.6,.02);ring(p.x,p.y,LIME,1.1,18);
+    say(p.style.name+' JOINS THE CONVOY',LIME,70,p.x,p.y-12);
+  }
+}
+function familyTogether(){return passengers.every(f=>f.hopT===0&&f.row===leader.row&&Math.abs(f.x-leader.x)<=GRID*1.2);}
+function pickupsOnRow(row){return pickups.filter(p=>!p.collected&&p.row===row);}
+function followerIntent(f,index){
+  const node=route[f.routeIndex];if(!node||runFrame<node.at+(index+1)*FOLLOW_DELAY)return{hop:false,dx:0,dy:0,guard:false,tactic:'FOLLOW THE LEAD'};
+  return{hop:true,dx:0,dy:0,targetX:node.x,targetRow:node.row,guard:false,tactic:'FOLLOW THE LEAD'};
+}
+
+function riskAt(row,x,time,fullCount){
+  let risk=0;
+  const count=Math.max(1,fullCount||1);
+  for(let i=0;i<count;i++){
+    const at=time+i*FOLLOW_DELAY;
+    if(ROAD_ROWS.has(row))for(const extra of[0,Math.min(12,FOLLOW_DELAY-2)]){
+      const gap=vehicleGap(row,x,at+extra).gap;if(gap<0)risk+=12+Math.abs(gap);else if(gap<7)risk+=(7-gap)*.5;
+    }
+    if(RIVER_ROWS.has(row)){
+      const supported=logAt(row,x,at)&&logAt(row,x,at+Math.min(12,FOLLOW_DELAY-2));if(!supported)risk+=13;
+      const cg=crocGap(row,x,at);if(cg<5)risk+=(5-cg)*1.4;
+    }
+  }
+  return risk;
+}
+function simulateFamilyHop(intent,full){
+  const b={...leader},before={x:b.x,row:b.row,hopT:b.hopT},steps=HOP_FRAMES+1;let edge=null;
+  for(let i=0;i<steps;i++){const e=advanceFrog(b,i===0?intent:{hop:false,dx:0,dy:0});if(e.started)edge=e;}
+  const count=full?passengers.length+1:1,risk=riskAt(b.row,b.x,HOP_FRAMES,count),nextRisk=b.row>0?riskAt(b.row-1,b.x,HOP_FRAMES+8,count):0;
+  return{body:b,edge,risk,nextRisk,steps,moved:before.x!==b.x||before.row!==b.row,finite:finiteBody(b)};
+}
+function intentFor(dx,dy,tactic,guard){return{hop:!!(dx||dy),dx,dy,guard:!!guard,tactic,targetX:0,targetRow:-1};}
+function reactiveIntent(){
+  const up=leader.row>0?simulateFamilyHop(intentFor(0,-1,'LEAD THE WAY',passengers.length>0),false):null;
+  if(up&&up.risk<7)return intentFor(0,-1,'TAKE THE OPENING',passengers.length>0);
+  let best=null;for(const dx of[-1,1]){if(leader.x<=MIN_X&&dx<0||leader.x>=MAX_X&&dx>0)continue;
+    const intent=intentFor(dx,0,'FIND A GAP',passengers.length>0),sim=simulateFamilyHop(intent,false),score=-sim.risk-sim.nextRisk*.38-Math.abs(sim.body.x-80)*.012;
+    if(!best||score>best.score)best={intent,score};}
+  if(best&&best.score>-8)return best.intent;
+  return intentFor(0,0,'WAIT FOR ONE CAR',passengers.length>0);
+}
+function familyPlan(){
+  stats.plannerCalls++;const candidates=[];
+  if(leader.row>0)candidates.push(intentFor(0,-1,'THREAD THE FAMILY GAP',passengers.length>0));
+  if(leader.x>MIN_X)candidates.push(intentFor(-1,0,'SHIFT THE CONVOY',passengers.length>0));
+  if(leader.x<MAX_X)candidates.push(intentFor(1,0,'SHIFT THE CONVOY',passengers.length>0));
+  candidates.push(intentFor(0,0,'COUNT THE TAIL',passengers.length>0));
+  let best=null;
+  for(const intent of candidates){
+    const sim=intent.hop?simulateFamilyHop(intent,true):{body:{...leader},risk:riskAt(leader.row,leader.x,4,passengers.length+1),nextRisk:leader.row?riskAt(leader.row-1,leader.x,18,passengers.length+1):0,steps:1,finite:true};
+    stats.plannerSteps+=sim.steps;let score=-sim.risk*7-sim.nextRisk*(intent.dy?0:.95);
+    if(intent.dy<0)score+=72+leader.row*1.5;if(intent.dx)score+=8-Math.abs(sim.body.x-80)*.018;if(!intent.hop)score-=4;
+    if(ROAD_ROWS.has(leader.row)||RIVER_ROWS.has(leader.row)){if(intent.dy<0)score+=24;if(!intent.hop)score-=18;}
+    if(persona)score+=intent.dy<0?persona.bold*4:-persona.bold;
+    if(!best||score>best.score)best={intent,score,sim};
+  }
+  planCache={at:runFrame,intent:best.intent,score:best.score};return best.intent;
+}
+
+function warningIntent(){
+  if(!act||act.phase!=='warn')return null;
+  const respond=intent=>{if(!act.responded){act.responded=true;act.responseAt=actFrame;act.responseTactic=intent.tactic;noteAct({kind:'act-response',id:act.kind,at:showFrame,tag:actFrame,tactic:intent.tactic});}return intent;};
+  if(act.kind==='rush'){
+    if(leader.row<7)return respond(intentFor(0,0,'HOLD ABOVE RUSH HOUR',passengers.length>0));
+    const dx=Math.abs(leader.x-act.refugeX)<8?0:Math.sign(act.refugeX-leader.x);
+    return respond(intentFor(dx,0,dx?'RALLY AT THE BUS SHELTER':'HOLD FOR RUSH HOUR',passengers.length>0));
+  }
+  if(leader.row<=6&&leader.row>=3)return respond(intentFor(0,-1,'RACE THE FLOOD CREST',passengers.length>0));
+  if(leader.row===7||leader.row>=8){const dx=Math.abs(leader.x-act.refugeX)<8?0:Math.sign(act.refugeX-leader.x);
+    return respond(intentFor(dx,0,dx?'RALLY ON HIGH GROUND':'HOLD ABOVE THE FLOOD',passengers.length>0));}
+  return respond(intentFor(0,0,'HOLD ABOVE THE FLOOD',passengers.length>0));
+}
+function rawBotIntent(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){stats.admireIntents++;return intentFor(0,0,'ADMIRE THE WHOLE FAMILY',false);}
+  if(state!=='run')return intentFor(0,0,'REGROUP',passengers.length>0);
+  if(leader.hopT>0||leader.cooldown>0)return intentFor(0,0,lastIntent&&lastIntent.tactic||'FOLLOW THROUGH',lastIntent&&lastIntent.guard);
+  const warned=warningIntent();if(warned)return warned;
+  const rowPicks=pickupsOnRow(leader.row);
+  if(rowPicks.length){const target=rowPicks.reduce((a,b)=>Math.abs(a.x-leader.x)<Math.abs(b.x-leader.x)?a:b);
+    if(Math.abs(target.x-leader.x)>8)return intentFor(Math.sign(target.x-leader.x),0,'GATHER '+target.style.name,passengers.length>0);
+  }
+  if((leader.row===7||leader.row===2)&&!familyTogether())return intentFor(0,0,'RALLY THE FAMILY',passengers.length>0);
+  if(leader.row===0)return intentFor(0,0,'PULL THEM ALL HOME',false);
+  return typeof globalThis.__NO_FAMILY_LOOKAHEAD==='undefined'?familyPlan():reactiveIntent();
+}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return rawBotIntent();
+  const was=profile.isLapsed(runFrame),intent=profile.decide(runFrame,null,()=>rawBotIntent(),()=>intentFor(0,0,'CHECK ON THE LITTLE ONES',passengers.length>0)),now=profile.isLapsed(runFrame);
+  if(now&&!was&&!lastLapsed){stats.lapses++;markEvent();leader.lookT=35;say('WAIT—COUNT THE FAMILY',persona.tint,42);}
+  lastLapsed=now;return intent||rawBotIntent();
+}
+function humanIntent(){return{hop:!!(keys.left||keys.right||keys.up||keys.down),dx:(keys.right?1:0)-(keys.left?1:0),dy:(keys.down?1:0)-(keys.up?1:0),
+  guard:!!keys.a,tactic:'MANUAL CONVOY',targetX:0,targetRow:-1};}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+function applyIntent(intent){leader.intent={...intent};lastIntent={...intent};stats.appliedIntents++;return intent;}
+
+function updateFollowers(){
+  for(let i=0;i<passengers.length;i++){
+    const f=passengers[i],intent=followerIntent(f,i),e=advanceFrog(f,intent);f.intent=intent;
+    if(e.started)f.routeIndex++;
+  }
+}
+function checkCrossingProgress(previousRow){
+  if(leader.row<bestRow){bestRow=leader.row;markProgress();}
+  if(previousRow>=8&&leader.row===7){stats.roadClears++;markEvent(20);offer('road-clear-'+journeyNo,2,leader.x,leader.y,'ROAD CLEAR');say('EVERYONE OFF THE ROAD',LIME,58);}
+  if(previousRow>=3&&previousRow<=6&&leader.row===2){stats.riverClears++;markEvent(25);offer('river-clear-'+journeyNo,2,leader.x,leader.y,'RIVER CLEAR');say('THE TAIL CLEARS THE RIVER',CYAN,64);}
+}
+function finishArrival(){
+  if(state!=='run')return;const whole=wholeFamily(),count=passengers.length;
+  state='arrival';stateT=180;stats.arrivals++;stats.delivered+=count;if(whole){stats.wholeArrivals++;stats.apexes++;}else stats.partialArrivals++;
+  markEvent(whole?180:45);markProgress(whole?4:2);
+  arrival={whole,count,startedAt:showFrame,progress:0,season:seasonIndex,leader:{x:leader.x,y:leader.y},frogs:passengers.map((f,i)=>({x:f.x,y:f.y,style:f.style,index:i}))};
+  if(whole){offer('whole-family-'+journeyNo,3,80,43,'WHOLE FAMILY');fxBurst(80,48,42,GOLD,3,.025);fxDust(80,48,20,LIME);ring(80,48,GOLD,2.5,34);banner={s:'WHOLE FAMILY HOME!',c:GOLD,t:150};shake(8);}
+  else{offer('family-home-'+journeyNo,2,80,43,count+' HOME');fxBurst(80,48,20,LIME,2,.02);ring(80,48,LIME,1.7,26);say(count+' PASSENGERS HOME',LIME,100,80,72);shake(3);}
+}
+function finishShift(){
+  if(state==='ending')return;state='ending';stateT=360;stats.endings++;const won=stats.wholeArrivals>=4;
+  outcome=won?'GREAT MIGRATION':'THE MARSH REMEMBERS';if(won){stats.wins++;offer('great-migration',3,80,60,'GREAT MIGRATION');fxBurst(80,70,54,GOLD,3.3,.02);markEvent(500);markProgress(5);}else offer('migration-end',2,80,60,'SEASON END');
+  say(outcome,won?GOLD:CORAL,240,80,118);shake(won?9:4);
+}
+function startJourney(){
+  journeyNo++;stats.expeditions++;state='run';stateT=0;outcome='';arrival=null;route=[];passengers=[];pickups=[];lostGhosts=[];ripples=[];texts=[];nextId=1;collected=1;bestRow=11;visualBeat='';
+  seasonIndex=Math.floor(stats.arrivals/3)%SEASONS.length;makeHazards();makePickups();leader=makeFrog(80,11,{name:'LEAD',body:LEAD,belly:LIME,mark:LEAD_DARK,accessory:'scarf'},0);
+  const first=makeFrog(80,11,FROG_STYLES[0],1);first.y=first.groundY=333;first.routeIndex=0;passengers.push(first);
+  stats.maxChain=Math.max(stats.maxChain,1);
+  persona=[{name:'GUARDIAN',bold:.25,tint:CYAN},{name:'PATHFINDER',bold:.5,tint:LIME},{name:'DART',bold:.82,tint:GOLD}][RI(0,2)];
+  if(!personaHistory.includes(persona.name))personaHistory.push(persona.name);
+  profileSeed=RI(1,0x7fffffff);profile=skillProfile({skill:.84,precision:.88,risk:.58+persona.bold*.16,reactionFrames:[3,6],lapseChance:.00042,lapseFrames:[20,38],rng:createRng(profileSeed)});
+  lastLapsed=false;planCache={at:-1e9,intent:null,score:0};lastIntent={tactic:'GATHER THE FAMILY'};lastEventFrame=lastProgressFrame=showFrame;
+}
+function resetGame(){
+  runFrame=0;actFrame=0;journeyNo=0;state='run';stateT=0;outcome='';eventSerial=progressSerial=0;lastNearFrame=-1e9;actNotes=[];personaHistory=[];banner={s:'',c:PALE,t:0};
+  for(const k of Object.keys(stats))stats[k]=0;resetAct();SHOW.reset(showFrame);startJourney();
+}
+
+function stepWorld(){
+  runFrame++;if(runFrame>=SHIFT_FRAMES){finishShift();return;}
+  stepHazards();const previousRow=leader.row,intent=applyIntent(controller()),edge=advanceFrog(leader,intent);
+  if(edge.started){route.push({x:edge.targetX,row:edge.targetRow,at:runFrame});stats.hops++;markEvent();offer('hop-'+(stats.hops%5),1,edge.targetX,rowY(edge.targetRow),'HOP');}
+  updateFollowers();collectPickups();
+  if(edge.landed)checkCrossingProgress(previousRow);
+  checkBodyHazard(leader,true);for(const f of[...passengers])checkBodyHazard(f,false);
+  if(state==='run'&&leader.row===0&&leader.hopT===0&&passengers.every(f=>f.row===0&&f.hopT===0))finishArrival();
+  stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+}
+function stepPresentation(){
+  for(const g of lostGhosts)g.t--;lostGhosts=lostGhosts.filter(g=>g.t>0);
+  for(const r of ripples)r.t--;ripples=ripples.filter(r=>r.t>0);
+  for(const t of texts){t.t--;t.y-=.06;}texts=texts.filter(t=>t.t>0);if(banner.t>0)banner.t--;
+}
+function step(){
+  showFrame++;actFrame++;sessionStep({reset:resetGame});pres=SHOW.step(showFrame);stepActs();
+  if(state==='run'){if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();}
+  else if(state==='arrival'){
+    const botAdmire=pres.admire&&!playing()&&typeof globalThis.__NO_ADMIRE==='undefined';
+    if(botAdmire){const intent=rawBotIntent();leader.intent=intent;lastIntent=intent;}
+    const worldTick=!pres.holdWorld&&showFrame%pres.physicsEvery===0;
+    if(worldTick){stateT--;if(!botAdmire)arrival.progress++;}
+    if(stateT<=0)startJourney();
+  }else if(state==='wipe'){
+    stateT--;if(stateT<=0)startJourney();
+  }else if(state==='ending'){
+    const botAdmire=pres.admire&&!playing()&&typeof globalThis.__NO_ADMIRE==='undefined';
+    if(botAdmire){const intent=rawBotIntent();leader.intent=intent;lastIntent=intent;}
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stateT--;
+    if(stateT<=0){if(playing())gameOver(outcome+' · '+stats.wholeArrivals);resetGame();}
+  }
+  stepPresentation();stepParts();stepRings();
+}
+
+// ---- authored rendering -----------------------------------------------------
+function mix(a,b,t){t=clamp(t,0,1);const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),c=s=>Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t).toString(16).padStart(2,'0');return'#'+c(16)+c(8)+c(0);}
+function drawSky(){
+  const s=SEASONS[seasonIndex];for(let i=0;i<7;i++)rect(0,i*48,W,49,mix(s.sky,s.sky2,i/6));
+  const sunX=seasonIndex===3?128:28+seasonIndex*28,sunY=50+seasonIndex*5;ctx.globalAlpha=seasonIndex===3?.25:.55;ctx.fillStyle=seasonIndex===3?PALE:GOLD;ctx.beginPath();ctx.arc(sunX,sunY,seasonIndex===1?18:13,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  for(let i=0;i<(seasonIndex===3?7:4);i++){
+    const drift=seasonIndex===3?.05:.018,x=wrap(hash(i,211+seasonIndex)*190-15+showFrame*drift*(i%2?1:-1),-28,188),y=34+hash(i,223+seasonIndex)*42,w=14+hash(i,227)*20;
+    ctx.globalAlpha=seasonIndex===3?.18:.13;ctx.fillStyle=seasonIndex===2?'#f3c58c':CREAM;ctx.beginPath();ctx.ellipse(x,y,w,3+hash(i,229)*4,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  }
+  // Far hills and a season-specific landmark change the skyline itself.
+  ctx.fillStyle=s.far;ctx.beginPath();ctx.moveTo(0,102);for(let x=0;x<=W;x+=16)ctx.lineTo(x,76+hash(x,seasonIndex+7)*22);ctx.lineTo(W,132);ctx.lineTo(0,132);ctx.fill();
+  if(seasonIndex===0){
+    rect(112,60,31,28,'#7d664e');ctx.fillStyle='#6d493a';ctx.beginPath();ctx.moveTo(108,62);ctx.lineTo(128,46);ctx.lineTo(147,62);ctx.fill();rect(123,72,8,16,'#3f5c55');rect(128,76,3,5,CYAN);
+    rect(22,52,4,39,'#5e493e');for(let i=0;i<9;i++){ctx.globalAlpha=.7;ctx.fillStyle=i%2?'#f3a9c1':'#f8d4d7';ctx.beginPath();ctx.arc(14+hash(i,2)*29,48+hash(i,4)*28,4+hash(i,6)*4,0,TAU);ctx.fill();}ctx.globalAlpha=1;
+  }else if(seasonIndex===1){
+    rect(114,55,5,38,'#65513d');ctx.strokeStyle='#493d34';ctx.lineWidth=3;ctx.beginPath();ctx.arc(116,68,17,0,TAU);ctx.stroke();ctx.lineWidth=1;
+    for(let i=0;i<8;i++){const a=i*TAU/8+showFrame*.004;ctx.strokeStyle='#d0b56c';ctx.beginPath();ctx.moveTo(116,68);ctx.lineTo(116+Math.cos(a)*15,68+Math.sin(a)*15);ctx.stroke();}
+    rect(22,60,28,22,'#6d563e');ctx.fillStyle='#a97b48';ctx.beginPath();ctx.moveTo(18,61);ctx.lineTo(36,48);ctx.lineTo(54,61);ctx.fill();
+  }else if(seasonIndex===2){
+    rect(15,60,52,8,'#5f4037');rect(20,68,42,17,'#7d4e39');ctx.fillStyle='#4e3540';ctx.beginPath();ctx.moveTo(10,60);ctx.lineTo(41,43);ctx.lineTo(72,60);ctx.fill();
+    for(let i=0;i<13;i++){const x=wrap(hash(i,17)*W+showFrame*(.018+i%3*.006),-5,165),y=42+wrap(hash(i,22)*62+showFrame*.03*(1+i%2),0,62);ctx.globalAlpha=.55;rect(x,y,3,2,i%3===0?GOLD:i%3===1?CORAL:'#a15d3b');}ctx.globalAlpha=1;
+  }else{
+    rect(109,61,38,5,'#3c4b52');rect(116,48,24,16,'#46565d');ctx.fillStyle='#34434b';ctx.beginPath();ctx.moveTo(108,49);ctx.lineTo(128,38);ctx.lineTo(148,49);ctx.fill();
+    rect(18,70,46,4,'#495b62');rect(26,58,29,13,'#566970');rect(39,45,3,15,'#394a53');rect(35,44,11,3,CORAL);
+    ctx.globalAlpha=.28;for(let i=0;i<24;i++){const x=wrap(hash(i,33)*W+showFrame*.45,-4,164),y=30+hash(i,34)*180;rect(x,y,1,6,'#cde6e5');}ctx.globalAlpha=1;
+  }
+}
+function drawWorld(){
+  const s=SEASONS[seasonIndex];
+  // Sanctuary and upper floodplain.
+  rect(0,28,W,83,mix(s.bank,'#314c3f',.28));rect(0,82,W,29,s.bank);
+  ctx.globalAlpha=.55;ctx.fillStyle=mix(s.water,'#102f36',.25);ctx.beginPath();ctx.ellipse(80,58,34,14,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  for(const q of[{x:61,y:62,r:11},{x:80,y:55,r:14},{x:100,y:63,r:11}]){ctx.fillStyle=mix(s.grass,LIME,.28);ctx.beginPath();ctx.ellipse(q.x,q.y,q.r,q.r*.48,0,0,TAU);ctx.fill();ctx.fillStyle=mix(s.grass,'#244c3d',.35);ctx.beginPath();ctx.moveTo(q.x,q.y);ctx.lineTo(q.x+q.r,q.y-2);ctx.lineTo(q.x+3,q.y+1);ctx.fill();}
+  rect(77,43,5,12,'#51734e');ctx.fillStyle=s.accent;for(let i=0;i<5;i++){const a=i*TAU/5;ctx.beginPath();ctx.ellipse(80+Math.cos(a)*5,43+Math.sin(a)*3,4,2,a,0,TAU);ctx.fill();}ctx.fillStyle=GOLD;ctx.beginPath();ctx.arc(80,43,2.5,0,TAU);ctx.fill();
+  for(let x=0;x<W;x+=10){const h=hash(x,seasonIndex*9+2);rect(x,89+h*9,7,15-h*6,h>.55?s.grass:mix(s.grass,s.bank,.4));}
+  // River: layered current, foam lanes, stone bridge piers, and bank shadows.
+  rect(0,111,W,109,mix(s.water,'#133b52',.18));for(let lane=0;lane<4;lane++){
+    const y=113+lane*27;rect(0,y,W,27,lane%2?s.water:s.water2);ctx.globalAlpha=.22;
+    for(let i=0;i<12;i++){const x=wrap(i*19+showFrame*(lane%2?-.18:.15)+hash(i,lane)*9,-12,172);rect(x,y+5+hash(i,8)*15,8+hash(i,9)*10,1,CREAM);}ctx.globalAlpha=1;
+  }
+  rect(0,217,W,28,mix(s.bank,MUD,.28));rect(0,218,W,4,mix(s.grass,CREAM,.22));
+  for(const x of[7,153]){rect(x-4,113,9,104,'#4b5a59');rect(x-2,113,5,104,'#718071');for(let y=120;y<214;y+=18)rect(x-3,y,7,2,'#344a48');}
+  // Road district: curb, three authored lanes, paint wear, drain, crossing.
+  rect(0,244,W,70,s.road);rect(0,244,W,4,'#a7aa92');rect(0,310,W,5,'#777c72');
+  for(let y of[266,289])for(let x=-10;x<W;x+=22){ctx.globalAlpha=.65;rect(x+(y===289?8:0),y,12,2,'#d8c878');ctx.globalAlpha=1;}
+  for(let x=58;x<=102;x+=11){ctx.globalAlpha=.42;rect(x,247,6,62,'#e9e6ce');ctx.globalAlpha=1;}
+  rect(7,269,10,7,'#22292d');for(let x=8;x<16;x+=3)rect(x,270,1,5,'#5f6767');
+  // Nursery foreground bank.
+  rect(0,314,W,22,mix(s.bank,'#243e35',.15));for(let x=0;x<W;x+=12)rect(x,316+hash(x,91)*8,9,14,s.grass);
+  if(seasonIndex===3){
+    // Flood season changes the level silhouette: the median and upper road
+    // lane vanish under water, leaving raised refuge islets and two strips of
+    // asphalt. Row-eight traffic becomes skiffs in drawVehicle.
+    rect(0,211,W,59,mix(s.water2,'#244e62',.12));ctx.globalAlpha=.23;for(let i=0;i<18;i++){
+      const x=wrap(i*17+showFrame*.11,-16,176),y=216+(i%5)*10;rect(x,y,10+(i%3)*4,1,CREAM);
+    }ctx.globalAlpha=1;
+    for(const q of[{x:30,w:38},{x:82,w:32},{x:132,w:35}]){ctx.fillStyle='#4f6854';ctx.beginPath();ctx.ellipse(q.x,232,q.w/2,7,0,0,TAU);ctx.fill();rect(q.x-q.w/2+4,227,q.w-8,3,'#83976a');for(let i=0;i<3;i++)rect(q.x-8+i*7,222+(i&1)*2,4,7,'#8f7d5b');}
+    ctx.globalAlpha=.28;for(let x=0;x<W;x+=22)rect(x,251,12,2,'#d8c878');ctx.globalAlpha=1;
+    rect(0,270,W,44,s.road);rect(0,268,W,4,'#788c84');for(let x=-8;x<W;x+=22)rect(x,289,12,2,'#d8c878');
+    ctx.save();ctx.translate(18,255);ctx.rotate(-.22);rect(-2,-17,4,20,'#465a54');rect(-10,-18,21,5,'#789198');ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText('ROAD',-8,-14);ctx.restore();
+    ctx.save();ctx.translate(143,244);ctx.rotate(.32);rect(-2,-18,4,23,'#4e5e55');rect(-9,-20,18,5,'#8fa58c');ctx.restore();
+  }
+  // Material texture stays deterministic and does not touch sim RNG.
+  ctx.globalAlpha=.18;for(let i=0;i<65;i++){const x=hash(i,seasonIndex+101)*W,y=88+hash(i,seasonIndex+151)*226,c=y>244&&y<314?'#cbd0c4':y>111&&y<220?CREAM:'#173d32';rect(x,y,1+(i%9===0),1,c);}ctx.globalAlpha=1;
+}
+function drawRearProps(){
+  const s=SEASONS[seasonIndex];
+  // Bus shelter and high-ground warning beacon are physical act refuges.
+  rect(28,316,25,3,'#394b4b');rect(31,298,3,19,'#536c69');rect(48,298,3,19,'#536c69');rect(31,298,20,3,'#b8cfbd');rect(34,302,13,10,'#446775');rect(38,304,6,4,CYAN);
+  rect(116,217,3,19,'#4a5c51');rect(111,217,13,3,'#6c816b');ctx.globalAlpha=.55+.35*Math.sin(showFrame*.13);rect(115,212,5,5,act&&act.phase==='warn'?CORAL:GOLD);ctx.globalAlpha=1;
+  // Reeds and willow trunks establish scale behind actors.
+  for(let i=0;i<13;i++){const x=4+i*13+(i%2)*3,h=8+hash(i,77)*13,lean=Math.sin(showFrame*.025+i)*1.5;ctx.strokeStyle=mix(s.grass,'#28483d',.35);ctx.beginPath();ctx.moveTo(x,220);ctx.quadraticCurveTo(x+lean,220-h*.55,x+lean,220-h);ctx.stroke();rect(x+lean-1,220-h-2,3,5,i%3===0?'#7b5b3d':s.grass);}
+  rect(142,84,6,31,'#584a3d');ctx.strokeStyle='#425b42';ctx.lineWidth=3;for(let i=0;i<5;i++){ctx.beginPath();ctx.moveTo(145,91);ctx.quadraticCurveTo(132+i*6,78,126+i*7,102);ctx.stroke();}ctx.lineWidth=1;
+  if(seasonIndex===0){
+    for(let x=8;x<112;x+=18){rect(x,91,3,20,'#6d6c4d');rect(x-4,96,12,3,'#9d9866');}
+    rect(64,84,4,15,'#6c6550');ctx.fillStyle='#90bfc0';ctx.beginPath();ctx.ellipse(66,84,10,4,0,0,TAU);ctx.fill();
+    for(let i=0;i<8;i++){ctx.fillStyle=i%2?'#f1a9c1':'#f7df9d';ctx.beginPath();ctx.arc(18+i*12,103+(i%3),2,0,TAU);ctx.fill();}
+  }else if(seasonIndex===1){
+    // The mill race is a broad built landmark: dock, wheel, braces, sluice.
+    rect(112,108,48,8,'#75593c');rect(118,116,5,101,'#543f31');rect(150,116,5,101,'#543f31');
+    rect(108,143,52,6,'#94724a');for(let x=111;x<160;x+=10)rect(x,144,2,5,'#4c392d');
+    ctx.strokeStyle='#c29a5d';ctx.lineWidth=4;ctx.beginPath();ctx.arc(136,174,21,0,TAU);ctx.stroke();ctx.lineWidth=1;
+    for(let i=0;i<8;i++){const a=i*TAU/8+showFrame*.004;ctx.strokeStyle='#76583a';ctx.beginPath();ctx.moveTo(136,174);ctx.lineTo(136+Math.cos(a)*20,174+Math.sin(a)*20);ctx.stroke();rect(133+Math.cos(a)*20,171+Math.sin(a)*20,6,6,'#a9824f');}
+    rect(104,207,56,7,'#5f4935');for(let x=108;x<160;x+=12)rect(x,211,4,9,'#3e352d');
+  }else if(seasonIndex===2){
+    // Autumn's covered bridge changes the first river lane silhouette.
+    rect(7,111,146,18,'#76453b');for(let x=14;x<150;x+=17){rect(x,115,10,8,'#291f24');rect(x+2,116,6,5,'#cf8652');}
+    ctx.fillStyle='#51323a';ctx.beginPath();ctx.moveTo(2,112);ctx.lineTo(24,99);ctx.lineTo(139,99);ctx.lineTo(158,112);ctx.fill();
+    rect(10,129,8,17,'#513b34');rect(142,129,8,17,'#513b34');for(let x=8;x<154;x+=12)rect(x,107,7,2,'#a45d43');
+  }else{
+    // Flood season carries a drowned-town silhouette into the river itself.
+    ctx.globalAlpha=.72;rect(8,146,39,18,'#42535b');ctx.fillStyle='#34434b';ctx.beginPath();ctx.moveTo(3,147);ctx.lineTo(27,132);ctx.lineTo(52,147);ctx.fill();rect(20,150,9,9,'#84a9ad');
+    rect(116,185,42,18,'#46565d');ctx.fillStyle='#35454d';ctx.beginPath();ctx.moveTo(111,186);ctx.lineTo(137,168);ctx.lineTo(162,186);ctx.fill();rect(130,190,10,8,'#8aaeb1');ctx.globalAlpha=1;
+    for(let x=15;x<150;x+=22){rect(x,209,13,3,'#5c5548');rect(x+2,202,3,10,'#514a40');}
+  }
+}
+function drawVehicle(v,offset){
+  const x=v.x+(offset||0),y=rowY(v.row),flash=v.flash>0;ctx.save();ctx.translate(Math.round(x),Math.round(y));if(v.vx<0)ctx.rotate(Math.PI);
+  if(seasonIndex===3&&v.row===8){
+    ctx.globalAlpha=.35;ctx.strokeStyle=CREAM;ctx.beginPath();ctx.moveTo(-17,-7);ctx.quadraticCurveTo(-6,-11,7,-8);ctx.moveTo(-17,7);ctx.quadraticCurveTo(-6,11,7,8);ctx.stroke();ctx.globalAlpha=1;
+    ctx.fillStyle='#315c67';ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(-8,-7);ctx.lineTo(10,-6);ctx.lineTo(15,0);ctx.lineTo(10,6);ctx.lineTo(-8,7);ctx.fill();rect(-8,-4,18,8,v.color);rect(-2,-5,8,10,'#d9d4a3');rect(0,-3,5,6,'#315063');rect(10,-3,3,2,flash?CREAM:GOLD);rect(10,1,3,2,flash?CREAM:GOLD);
+    ctx.fillStyle=LIME;ctx.beginPath();ctx.arc(-6,-1,3,0,TAU);ctx.fill();rect(-7,-3,2,1,CREAM);rect(-5,-3,1,1,INK);ctx.restore();return;
+  }
+  const l=v.len,w=v.w;ctx.globalAlpha=.28;ctx.fillStyle='#061012';ctx.beginPath();ctx.ellipse(0,4,l*.55,w*.5,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  if(v.type==='car'){
+    rect(-l/2,-w/2,l,w,v.color);rect(-l/2+3,-w/2-1,l-6,w+2,mix(v.color,CREAM,.18));rect(-5,-4,9,8,'#294b58');rect(-4,-3,7,3,'#79aeba');
+    rect(-7,-7,4,2,'#171b20');rect(4,-7,4,2,'#171b20');rect(-7,5,4,2,'#171b20');rect(4,5,4,2,'#171b20');rect(l/2-3,-4,2,3,flash?CREAM:GOLD);rect(l/2-3,2,2,3,flash?CREAM:GOLD);
+  }else if(v.type==='truck'){
+    rect(-l/2,-w/2,l-9,w,'#9b8b69');rect(l/2-10,-w/2-1,10,w+2,v.color);rect(l/2-8,-4,5,8,'#294b58');rect(-l/2+3,-4,7,8,'#756344');
+    for(const wx of[-8,7]){rect(wx,-7,5,2,'#151b1d');rect(wx,5,5,2,'#151b1d');}rect(l/2-2,-4,2,3,flash?CREAM:GOLD);rect(l/2-2,2,2,3,flash?CREAM:GOLD);
+  }else{
+    rect(-l/2,-w/2,l,w,v.color);rect(-l/2+3,-w/2-1,l-6,w+2,mix(v.color,CREAM,.12));for(let i=0;i<5;i++)rect(-12+i*6,-4,4,4,'#b8d8d8');rect(11,-4,4,8,'#253e4a');
+    for(const wx of[-11,9]){rect(wx,-7,6,2,'#151b1d');rect(wx,5,6,2,'#151b1d');}rect(l/2-2,-4,2,3,flash?CREAM:GOLD);rect(l/2-2,2,2,3,flash?CREAM:GOLD);
+  }
+  ctx.restore();
+}
+function drawLog(l,offset){
+  const x=l.x+(offset||0),y=rowY(l.row)+l.sink*7,len=l.len,alpha=l.downT?clamp(l.downT/90,0,.72):1;ctx.save();ctx.globalAlpha=alpha;ctx.translate(Math.round(x),Math.round(y));
+  if(seasonIndex===3)ctx.rotate((hash(l.id,71)-.5)*.22);
+  ctx.fillStyle='#173c45';ctx.beginPath();ctx.ellipse(0,4,len*.52,6,0,0,TAU);ctx.fill();rect(-len/2,-5,len,10,l.kind===0?'#6e4e35':l.kind===1?'#725a3c':'#5d5438');
+  rect(-len/2+3,-3,len-6,3,l.kind===2?'#7f9660':'#9a744c');rect(-len/2+5,3,len-10,2,'#3c3328');
+  ctx.strokeStyle='#382b24';for(let i=0;i<4;i++){const xx=-len/2+8+i*(len-14)/4;ctx.beginPath();ctx.moveTo(xx,-5);ctx.lineTo(xx+2,5);ctx.stroke();}
+  ctx.fillStyle='#b58a55';ctx.beginPath();ctx.ellipse(len/2,0,3.5,5,0,0,TAU);ctx.fill();ctx.strokeStyle='#63462f';ctx.beginPath();ctx.arc(len/2,0,2,0,TAU);ctx.stroke();
+  if(l.kind===1){rect(-5,-8,3,5,'#4d6f43');ctx.fillStyle='#d7d06b';ctx.beginPath();ctx.arc(-4,-9,3,Math.PI,TAU);ctx.fill();}
+  if(l.fragile||l.crack){ctx.strokeStyle=l.sink>.75?CORAL:'#d0b174';ctx.beginPath();ctx.moveTo(-2,-5);ctx.lineTo(2,-1);ctx.lineTo(-1,4);ctx.moveTo(1,-1);ctx.lineTo(6,-4);ctx.stroke();}
+  ctx.globalAlpha=1;ctx.restore();
+}
+function drawCroc(){
+  if(!act||act.kind!=='flood'||act.phase!=='live')return;const x=act.crocX,y=rowY(5);ctx.save();ctx.translate(Math.round(x),Math.round(y));if(act.crocV<0)ctx.rotate(Math.PI);
+  ctx.globalAlpha=.35;ctx.strokeStyle=CREAM;ctx.beginPath();ctx.moveTo(-22,-7);ctx.quadraticCurveTo(-10,-11,1,-8);ctx.moveTo(-22,7);ctx.quadraticCurveTo(-10,11,1,8);ctx.stroke();ctx.globalAlpha=1;
+  ctx.fillStyle='#254f3e';ctx.beginPath();ctx.moveTo(-17,0);ctx.lineTo(-8,-6);ctx.lineTo(8,-5);ctx.lineTo(17,-2);ctx.lineTo(17,2);ctx.lineTo(8,5);ctx.lineTo(-8,6);ctx.fill();
+  rect(-8,-4,15,8,'#3f6e4a');for(let i=0;i<4;i++)rect(-7+i*4,-6,2,3,'#71945a');rect(9,-3,10,6,'#587d4e');rect(14,-4,3,2,LIME);rect(14,2,3,2,LIME);rect(17,-2,2,1,'#101b18');rect(17,1,2,1,'#101b18');
+  ctx.restore();
+}
+function drawHazards(){
+  for(const l of logs)for(const o of[-224,0,224])if(l.x+o>-55&&l.x+o<215)drawLog(l,o);drawCroc();
+  for(const v of vehicles)for(const o of[-210,0,210])if(v.x+o>-50&&v.x+o<210)drawVehicle(v,o);
+}
+function drawPickup(p){
+  if(p.collected)return;const bob=Math.sin(showFrame*.08+p.wave)*1.2;ctx.globalAlpha=.28;ctx.fillStyle='#0a2825';ctx.beginPath();ctx.ellipse(p.x,p.y+5,7,3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.save();ctx.translate(p.x,p.y+bob);ctx.fillStyle=p.style.body;ctx.beginPath();ctx.arc(0,0,5,0,TAU);ctx.fill();ctx.beginPath();ctx.arc(-3,-4,2.8,0,TAU);ctx.arc(3,-4,2.8,0,TAU);ctx.fill();
+  rect(-3,-6,2,2,CREAM);rect(2,-6,2,2,CREAM);rect(-2,-6,1,1,INK);rect(3,-6,1,1,INK);ctx.strokeStyle=p.style.mark;ctx.beginPath();ctx.moveTo(4,1);ctx.lineTo(8,-3-Math.sin(showFrame*.15+p.wave)*2);ctx.stroke();ctx.restore();
+  ctx.globalAlpha=.35+.2*Math.sin(showFrame*.12+p.wave);ctx.strokeStyle=LIME;ctx.beginPath();ctx.arc(p.x,p.y,8+Math.sin(showFrame*.09+p.wave)*2,0,TAU);ctx.stroke();ctx.globalAlpha=1;
+}
+function frogPose(f){const q=f.hopT>0?1-f.hopT/HOP_FRAMES:0;return{q,air:f.hopT>0,stretch:f.hopT>0?Math.sin(q*Math.PI):0,crouch:f.hopT>HOP_FRAMES-4||f.cooldown>0};}
+function drawFrog(f,lead,scale){
+  scale=scale||1;const p=frogPose(f),x=f.x,y=f.y,gy=f.groundY,style=f.style,angle=Math.atan2(f.faceY||-1,f.faceX||0)+Math.PI/2;
+  ctx.globalAlpha=.2;ctx.fillStyle='#061b19';ctx.beginPath();ctx.ellipse(x,gy+5,7*scale*(1-p.stretch*.22),3*scale*(1-p.stretch*.35),0,0,TAU);ctx.fill();ctx.globalAlpha=f.inv>0&&f.inv%8<4?.52:1;
+  ctx.save();ctx.translate(Math.round(x),Math.round(y));ctx.rotate(angle);ctx.scale(scale*(1-p.stretch*.12),scale*(1+p.stretch*.2));
+  const leg=3+p.stretch*4,kick=p.air?Math.sin(p.q*Math.PI*2)*1.5:Math.sin((showFrame+f.id*5)*.16)*.8;
+  ctx.strokeStyle=style.mark;ctx.lineWidth=3;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(-4,3);ctx.lineTo(-7-leg*.35,5+leg+kick);ctx.lineTo(-10-leg*.2,5+leg-kick);ctx.moveTo(4,3);ctx.lineTo(7+leg*.35,5+leg-kick);ctx.lineTo(10+leg*.2,5+leg+kick);ctx.stroke();
+  ctx.strokeStyle=style.body;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-4,-2);ctx.lineTo(-8,-5-p.stretch*2);ctx.moveTo(4,-2);ctx.lineTo(8,-5+p.stretch*2);ctx.stroke();ctx.lineWidth=1;
+  ctx.fillStyle=style.mark;ctx.beginPath();ctx.ellipse(0,2,6,7,0,0,TAU);ctx.fill();ctx.fillStyle=style.body;ctx.beginPath();ctx.ellipse(0,0,6,7,0,0,TAU);ctx.fill();
+  ctx.fillStyle=style.belly;ctx.beginPath();ctx.ellipse(0,1,3.6,4.5,0,0,TAU);ctx.fill();
+  ctx.fillStyle=style.body;ctx.beginPath();ctx.ellipse(0,-5.2,7,5.5,0,0,TAU);ctx.fill();ctx.beginPath();ctx.arc(-4.5,-8,3.1,0,TAU);ctx.arc(4.5,-8,3.1,0,TAU);ctx.fill();
+  const alarm=f.panicT>0||f.lookT>0;ctx.fillStyle=CREAM;ctx.beginPath();ctx.arc(-4.5,-8.3,alarm?2.3:1.8,0,TAU);ctx.arc(4.5,-8.3,alarm?2.3:1.8,0,TAU);ctx.fill();
+  const look=f.lookT>0?-1:0;rect(-4.7+look,-9,1.5,2,INK);rect(4.2+look,-9,1.5,2,INK);ctx.strokeStyle=style.mark;ctx.beginPath();if(alarm)ctx.arc(0,-4,1.6,0,TAU);else{ctx.moveTo(-2,-4);ctx.quadraticCurveTo(0,-2.5,2,-4);}ctx.stroke();
+  if(lead){
+    ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(-6,-2);ctx.lineTo(6,-2);ctx.lineTo(4,1);ctx.lineTo(-4,1);ctx.fill();
+    const sway=Math.sin(showFrame*.15+f.id)*1.2;ctx.strokeStyle=CORAL;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(5,-1);ctx.lineTo(9,2+sway);ctx.lineTo(12,4-sway);ctx.stroke();ctx.lineWidth=1;
+    ctx.fillStyle=LIME;ctx.beginPath();ctx.moveTo(-1,-11);ctx.lineTo(1,-15);ctx.lineTo(3,-11);ctx.fill();
+  }else if(style.accessory==='bow'){rect(-7,-7,3,3,VIOLET);rect(-5,-7,3,3,VIOLET);}else if(style.accessory==='cap'){rect(-5,-11,9,2,CORAL);rect(-2,-13,6,3,CORAL);}else if(style.accessory==='spots'){rect(-3,0,2,2,VIOLET);rect(2,2,2,2,VIOLET);}else if(style.accessory==='leaf'){ctx.fillStyle=LIME;ctx.beginPath();ctx.ellipse(0,-12,4,2,-.5,0,TAU);ctx.fill();}else if(style.accessory==='tail'){ctx.strokeStyle=BLUE;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,7);ctx.quadraticCurveTo(-7,10,-5,15);ctx.stroke();ctx.lineWidth=1;}
+  ctx.restore();ctx.globalAlpha=1;ctx.lineCap='butt';
+  if((f.panicT>0||f.lookT>0)&&Math.floor(showFrame/5)%2===0){ctx.fillStyle=CORAL;ctx.font='bold 7px monospace';ctx.fillText('!',x+7,y-10);}
+}
+function drawRouteCue(){
+  if(!leader||!leader.intent||!leader.intent.hop)return;const tx=leader.intent.targetX||clamp(snapX(leader.x)+(leader.intent.dx||0)*GRID,MIN_X,MAX_X),tr=leader.intent.targetRow>=0?leader.intent.targetRow:clamp(leader.row+(leader.intent.dy||0),0,11),ty=rowY(tr);
+  ctx.globalAlpha=.28+.15*Math.sin(showFrame*.18);ctx.strokeStyle=persona?persona.tint:LIME;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(leader.x,leader.groundY);ctx.quadraticCurveTo((leader.x+tx)/2,(leader.groundY+ty)/2-8,tx,ty);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(tx,ty,7+Math.sin(showFrame*.12),0,TAU);ctx.stroke();ctx.globalAlpha=1;
+}
+function drawConvoy(){
+  drawRouteCue();for(const p of pickups)drawPickup(p);
+  if(state==='arrival')return;
+  // Dark-underlaid family ribbon makes the delayed route readable over water.
+  if(passengers.length){ctx.strokeStyle='#102b27';ctx.lineWidth=4;ctx.globalAlpha=.68;ctx.beginPath();ctx.moveTo(leader.x,leader.groundY);for(const f of passengers)ctx.lineTo(f.x,f.groundY);ctx.stroke();ctx.strokeStyle=LIME;ctx.lineWidth=1;ctx.globalAlpha=.62;ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
+  for(let i=passengers.length-1;i>=0;i--)drawFrog(passengers[i],false,.78);drawFrog(leader,true,1.05);
+}
+function drawLostGhosts(){
+  for(const g of lostGhosts){const q=1-g.t/g.t0,e=q*q*(3-2*q),x=g.fromX+(g.toX-g.fromX)*e,y=g.fromY+(g.toY-g.fromY)*e-Math.sin(q*Math.PI)*(g.sacrifice?15:5);
+    if(g.sacrifice){
+      ctx.globalAlpha=.08*(1-q*.45);rect(0,244,W,70,GOLD);ctx.globalAlpha=.78*(1-q*.35);ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(g.fromX,g.fromY);ctx.quadraticCurveTo((g.fromX+g.toX)/2,g.fromY-20,g.toX,g.toY);ctx.stroke();ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(g.toX,g.toY,7+q*28,0,TAU);ctx.stroke();for(let i=0;i<8;i++){const a=i*TAU/8,r=6+q*24;ctx.beginPath();ctx.moveTo(g.toX+Math.cos(a)*5,g.toY+Math.sin(a)*5);ctx.lineTo(g.toX+Math.cos(a)*r,g.toY+Math.sin(a)*r);ctx.stroke();}ctx.globalAlpha=1;
+    }
+    ctx.globalAlpha=clamp(g.t/16,0,1);drawFrog({id:999,x,y,groundY:g.fromY+(g.toY-g.fromY)*e,row:0,hopT:8,cooldown:0,faceX:Math.sign(g.toX-g.fromX),faceY:-1,inv:0,panicT:20,lookT:0,style:g.style},false,.75);ctx.globalAlpha=1;}
+}
+function drawActs(){
+  if(!act||act.phase==='calm')return;
+  if(act.kind==='rush'){
+    const a=act.phase==='warn'?.12+.08*Math.sin(showFrame*.2):.14;ctx.globalAlpha=a;rect(0,244,W,70,GOLD);ctx.globalAlpha=.65;
+    for(let i=0;i<7;i++){const x=8+i*25,y=248+(i%3)*23;ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+8,y+4);ctx.lineTo(x,y+8);ctx.fill();}ctx.globalAlpha=1;
+  }else{
+    const top=act.phase==='warn'?84:83,alpha=act.phase==='warn'?.19+.07*Math.sin(showFrame*.18):.17;ctx.globalAlpha=alpha;rect(0,top,W,244-top,CYAN);ctx.globalAlpha=.66;
+    for(let i=0;i<16;i++){const x=wrap(hash(i,58)*W+showFrame*.24*act.dir,-4,164),y=86+hash(i,59)*140;ctx.strokeStyle=CREAM;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+act.dir*7,y+8);ctx.stroke();}ctx.globalAlpha=1;
+    if(act.phase==='warn'){
+      const crest=104+Math.sin(showFrame*.12)*3;ctx.globalAlpha=.82;ctx.strokeStyle=CYAN;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,crest);for(let x=0;x<=W;x+=8)ctx.lineTo(x,crest+Math.sin(x*.22+showFrame*.12)*3);ctx.stroke();ctx.lineWidth=1;
+      for(let x=8;x<W;x+=18){ctx.fillStyle=CREAM;ctx.beginPath();ctx.moveTo(x,crest-8);ctx.lineTo(x+5,crest-3);ctx.lineTo(x,crest+2);ctx.fill();}ctx.globalAlpha=1;
+    }
+  }
+}
+function drawForeground(){
+  const s=SEASONS[seasonIndex];
+  for(const side of[0,1])for(let i=0;i<8;i++){const x=side?147+i*2:2+i*2,y=210+(i%3)*4,h=15+hash(i,side+91)*18,lean=Math.sin(showFrame*.03+i)*2;ctx.strokeStyle=mix(s.grass,'#183c33',.25);ctx.beginPath();ctx.moveTo(x,y+18);ctx.quadraticCurveTo(x+lean,y+8,x+lean,y+18-h);ctx.stroke();}
+  rect(0,333,W,3,'#142d27');for(let x=0;x<W;x+=16){rect(x,331,11,2,'#3d6348');rect(x+4,334,5,2,'#0a1c18');}
+}
+function drawArrival(){
+  if(!arrival)return;const age=arrival.progress,q=clamp(age/100,0,1),whole=arrival.whole;
+  ctx.globalAlpha=(whole?.17:.09)*(1-q*.35);ctx.fillStyle=whole?GOLD:LIME;ctx.beginPath();ctx.arc(80,48,18+q*92,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  if(whole){
+    const sweep=74+q*242;ctx.globalAlpha=.08*(1-q*.3);rect(0,clamp(sweep-9,72,326),W,18,GOLD);ctx.globalAlpha=.55*(1-q*.3);ctx.strokeStyle=GOLD;
+    for(let lane=0;lane<7;lane++){const y=98+lane*31,reach=20+q*150;ctx.beginPath();ctx.moveTo(80-reach,y);ctx.quadraticCurveTo(80,y-5-Math.sin(showFrame*.1+lane)*3,80+reach,y);ctx.stroke();}
+    for(let i=0;i<26;i++){const x=hash(i,301)*W,y=76+hash(i,302)*250,tw=.35+.35*Math.sin(showFrame*.16+i);ctx.globalAlpha=tw*(.35+q*.35);rect(x,y,1+(i%7===0),1+(i%11===0),i%3===0?GOLD:i%3===1?LIME:CYAN);}ctx.globalAlpha=1;
+  }
+  for(let i=0;i<arrival.frogs.length;i++){const f=arrival.frogs[i],slot=i-(arrival.frogs.length-1)/2,tx=80+slot*14,ty=66+Math.abs(slot)*3,
+    delay=i*8,qq=clamp((age-delay)/48,0,1),e=qq*qq*(3-2*qq);drawFrog({id:i+50,x:f.x+(tx-f.x)*e,y:f.y+(ty-f.y)*e-Math.sin(qq*Math.PI)*7,groundY:f.y+(ty-f.y)*e,row:0,hopT:qq<1?8:0,cooldown:0,faceX:Math.sign(tx-f.x),faceY:-1,inv:0,panicT:0,lookT:0,style:f.style},false,.8);}
+  const leadQ=clamp(age/45,0,1),ly=leader.y+(54-leader.y)*leadQ-Math.sin(leadQ*Math.PI)*8;drawFrog({...leader,x:80,y:ly,groundY:54,hopT:age<45?8:0},true,1.05);
+  if(whole&&age>30){for(let i=0;i<18;i++){const a=i*TAU/18+showFrame*.006,r=24+((showFrame+i*11)%48);ctx.globalAlpha=.55*(1-r/80);rect(80+Math.cos(a)*r,48+Math.sin(a)*r*.62,2,2,i%3===0?GOLD:i%3===1?LIME:CYAN);}ctx.globalAlpha=1;}
+}
+function drawTexts(){for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);ctx.font='bold 6px monospace';const w=Math.min(154,t.s.length*3.6+7),x=clamp(t.x-w/2,3,W-w-3);rect(x,t.y-8,w,10,INK);ctx.fillStyle=t.c;ctx.fillText(t.s.slice(0,40),x+3,t.y);ctx.globalAlpha=1;}}
+let viewerDraw={frame:-1,hud:'',tactic:'',family:'',season:'',leaderBox:null,chainBoxes:[]};
+function drawHud(){
+  const tactic=lastIntent&&lastIntent.tactic||'GATHER THE FAMILY',family=`FAMILY ${passengers.length}/${FAMILY_GOAL}`,season=SEASONS[seasonIndex].name;
+  viewerDraw={frame:showFrame,hud:'FROG CONVOY',tactic,family,season,leaderBox:{x:leader.x-10,y:leader.y-14,width:20,height:24},chainBoxes:passengers.map(f=>({x:f.x-8,y:f.y-11,width:16,height:20}))};
+  ctx.globalAlpha=.94;rect(0,0,W,28,INK);rect(0,336,W,24,INK);ctx.globalAlpha=1;
+  ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('FROG CONVOY',4,10);ctx.font='bold 6px monospace';ctx.fillStyle=SEASONS[seasonIndex].accent;ctx.fillText(season,4,20);
+  const tm=Math.max(0,SHIFT_FRAMES-runFrame),time='T-'+Math.floor(tm/3600)+':'+String(Math.floor(tm/60)%60).padStart(2,'0');ctx.fillStyle=GOLD;ctx.fillText(time,128,10);
+  ctx.fillStyle=persona?persona.tint:LIME;ctx.fillText(tactic.slice(0,26),72,20);
+  ctx.fillStyle=PALE;ctx.fillText(family,4,346);for(let i=0;i<FAMILY_GOAL;i++){const x=52+i*10;ctx.fillStyle=i<passengers.length?FROG_STYLES[i].body:'#294039';ctx.beginPath();ctx.arc(x,343,3,0,TAU);ctx.fill();if(i<passengers.length){rect(x-2,340,1,1,CREAM);rect(x+1,340,1,1,CREAM);}}
+  ctx.fillStyle=GOLD;ctx.fillText('HOME '+stats.wholeArrivals,110,346);ctx.fillStyle=PALE;ctx.fillText('ARRIVALS '+stats.arrivals,4,357);ctx.fillStyle=CORAL;ctx.fillText('LOST '+stats.passengerLosses,82,357);ctx.fillStyle=CYAN;ctx.fillText('SEASON '+(seasonIndex+1),123,357);
+  if(banner.t>0){const a=Math.min(1,banner.t/14),w=Math.min(154,banner.s.length*4.15+12);ctx.globalAlpha=.88*a;rect(80-w/2,32,w,15,INK);ctx.globalAlpha=a;ctx.strokeStyle=banner.c;ctx.strokeRect(80-w/2+.5,32.5,w-1,14);ctx.fillStyle=banner.c;ctx.font='bold 7px monospace';ctx.fillText(banner.s.slice(0,38),80-Math.min(38,banner.s.length)*2.08,42);ctx.globalAlpha=1;}
+  drawSession(false);
+}
+function drawEnding(){if(state!=='ending'&&state!=='wipe')return;ctx.globalAlpha=.86;rect(10,128,140,82,INK);ctx.globalAlpha=1;ctx.strokeStyle=state==='wipe'?CORAL:GOLD;ctx.strokeRect(10.5,128.5,139,81);
+  ctx.fillStyle=state==='wipe'?CORAL:GOLD;ctx.font='bold 10px monospace';const s=state==='wipe'?'CONVOY SCATTERED':outcome;ctx.fillText(s,80-s.length*3,157);ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;const line=state==='wipe'?'THE FAMILY REGROUPS':stats.wholeArrivals+' WHOLE · '+stats.delivered+' HOME';ctx.fillText(line,80-line.length*2.1,180);ctx.fillStyle=PALE;ctx.fillText(state==='wipe'?'NO INVISIBLE RESCUE':'FIFTEEN-MINUTE MIGRATION',state==='wipe'?38:31,197);}
+function render(){
+  drawSky();drawWorld();drawRearProps();drawActs();preDraw();drawHazards();drawConvoy();drawLostGhosts();drawParts();drawRings();drawTexts();if(state==='arrival')drawArrival();postDraw();drawForeground();
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.11;rect(0,28,W,308,GOLD);ctx.globalAlpha=1;}drawEnding();drawHud();
+}
+
+// ---- probes / deterministic fixtures ---------------------------------------
+function probe(){return{showFrame,runFrame,actFrame,journeyNo,state,stateT,outcome,seasonIndex,season:SEASONS[seasonIndex].name,persona:persona&&persona.name,personas:personaHistory.slice(),profileSeed,collected,bestRow,
+  leader:{x:leader.x,y:leader.y,groundY:leader.groundY,row:leader.row,hopT:leader.hopT,cooldown:leader.cooldown,inv:leader.inv,waterT:leader.waterT,onLog:leader.onLog,intent:leader.intent&&{...leader.intent}},
+  passengers:passengers.map(f=>({id:f.id,x:f.x,y:f.y,groundY:f.groundY,row:f.row,hopT:f.hopT,routeIndex:f.routeIndex,style:f.style.name,onLog:f.onLog})),
+  pickups:pickups.filter(p=>!p.collected).map(p=>({id:p.id,x:p.x,row:p.row,name:p.style.name})),routeLength:route.length,stats:{...stats},events:eventSerial,progress:progressSerial,
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  act:{...act,notes:actNotes.slice()},show:SHOW.probe(),finite:allFinite(),playing:playing(),arrival:arrival&&{whole:arrival.whole,count:arrival.count,startedAt:arrival.startedAt,progress:arrival.progress}};}
+function signature(){return JSON.stringify({runFrame,actFrame,journeyNo,state,stateT,outcome,seasonIndex,collected,bestRow,profileSeed,persona:persona&&persona.name,personas:personaHistory.slice(),arrival:arrival&&[arrival.whole,arrival.count,arrival.progress],
+  leader:[leader.x,leader.y,leader.groundY,leader.row,leader.hopT,leader.cooldown,leader.inv,leader.waterT,leader.onLog,leader.faceX,leader.faceY].map(v=>typeof v==='number'?Math.round(v*1e5):v),
+  passengers:passengers.map(f=>[f.id,Math.round(f.x*1e5),Math.round(f.y*1e5),Math.round(f.groundY*1e5),f.row,f.hopT,f.cooldown,f.inv,f.waterT,f.onLog,f.routeIndex,f.style.name]),
+  pickups:pickups.map(p=>[p.id,p.x,p.row,p.style.name,p.collected]),route:route.map(n=>[Math.round(n.x*1e4),n.row,n.at]),
+  vehicles:vehicles.map(v=>[v.id,v.row,Math.round(v.x*1e5),Math.round(v.vx*1e5),v.type,v.flash]),
+  logs:logs.map(l=>[l.id,l.row,Math.round(l.x*1e5),Math.round(l.vx*1e5),Math.round(l.sink*1e5),l.downT,l.load,l.crack]),
+  act:[act.kind,act.phase,act.warnAt,act.landAt,act.endAt,act.count,act.dir,act.refugeX,Math.round(act.crocX*1e5)],stats:{...stats},events:eventSerial,progress:progressSerial});}
+function motionSignature(){return[leader.x,leader.y,leader.groundY,leader.row,leader.hopT,...passengers.flatMap(f=>[f.x,f.y,f.row,f.hopT]),leader.intent&&leader.intent.tactic,leader.intent&&leader.intent.dx,leader.intent&&leader.intent.dy].map(v=>typeof v==='number'?Math.round(v*1e4):v).join('|');}
+globalThis.__frogConvoyProbe=probe;globalThis.__frogConvoySignature=signature;globalThis.__frogConvoyMotion=motionSignature;
+globalThis.__frogConvoyViewerProbe=()=>({enabled:true,hud:'FROG CONVOY',tactic:lastIntent.tactic,family:`FAMILY ${passengers.length}/${FAMILY_GOAL}`,season:SEASONS[seasonIndex].name,drawn:{...viewerDraw}});
+globalThis.__soakProbe=()=>({sig:[Math.round(leader.x*10),Math.round(leader.y*10),leader.row,leader.hopT,passengers.length,
+  passengers.reduce((n,f)=>n+Math.round(f.x*10)+Math.round(f.y*10)+f.hopT,0)].join('|'),events:eventSerial,progress:progressSerial,finite:allFinite()});
+globalThis.__frogConvoyActState=()=>({runFrame,actFrame,kind:act.kind,phase:act.phase,tactic:leader.intent&&leader.intent.tactic,row:leader.row,passengers:passengers.length});
+globalThis.__frogConvoySetAct=kind=>{resetGame();act={kind,phase:'calm',warnAt:60,landAt:60+(kind==='rush'?240:210),endAt:60+(kind==='rush'?1080:1050),count:0,dir:1,refugeX:120,crocX:18,crocV:.52};actNotes=[];
+  leader.x=80;leader.fromX=leader.toX=80;leader.row=kind==='rush'?11:7;leader.y=leader.groundY=leader.fromY=leader.toY=rowY(leader.row);route=[];
+  passengers=[];for(let i=0;i<3;i++){const f=makeFrog(80-i*4,leader.row,FROG_STYLES[i],i+1);f.routeIndex=0;passengers.push(f);}collected=3;pickups=[];return globalThis.__frogConvoyActState();};
+globalThis.__frogConvoyAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired:a.tactic,gated:b.tactic};};
+globalThis.__frogConvoyPhysicsFixture=()=>{const savedId=nextId,b=makeFrog(80,10,FROG_STYLES[0],1);nextId=savedId;const before=signature(),intent=intentFor(1,-1,'FIXTURE',true);let started=0,landed=0;for(let i=0;i<40;i++){const e=advanceFrog(b,i===0?intent:intentFor(0,0,'WAIT',false));started+=e.started?1:0;landed+=e.landed?1:0;}const after=signature();return{body:b,pure:before===after,started,landed,finite:finiteBody(b)};};
+globalThis.__frogConvoyPlannerFixture=()=>{resetGame();leader.row=10;leader.x=80;leader.y=leader.groundY=rowY(10);const before=signature(),intent=intentFor(0,-1,'FIXTURE',true),a=simulateFamilyHop(intent,true),middle=signature(),b=simulateFamilyHop(intent,true),after=signature();return{pure:before===middle&&middle===after,repeat:JSON.stringify(a)===JSON.stringify(b),route:a,finite:allFinite()};};
+globalThis.__frogConvoyPlanOnce=()=>simulateFamilyHop(intentFor(0,-1,'PROBE',true),true);
+globalThis.__frogConvoyNearApex=()=>{resetGame();leader.row=0;leader.x=80;leader.y=leader.groundY=rowY(0);passengers=[];collected=FAMILY_GOAL;for(let i=0;i<FAMILY_GOAL;i++){const f=makeFrog(64+i*8,0,FROG_STYLES[i],i+1);f.routeIndex=0;passengers.push(f);}finishArrival();return probe();};
+globalThis.__frogConvoySetVisualBeat=name=>{
+  resetGame();visualBeat=name;route=[];pickups=[];passengers=[];lostGhosts=[];texts=[];arrival=null;state='run';seasonIndex=0;
+  const addFamily=(n,row,x)=>{passengers=[];for(let i=0;i<n;i++){const f=makeFrog(x-i*11,row,FROG_STYLES[i],i+1);f.y=f.groundY=rowY(row)+i*2;f.routeIndex=0;passengers.push(f);}collected=n;stats.maxChain=Math.max(stats.maxChain,n);};
+  if(name==='opening'){
+    seasonIndex=0;leader.x=80;leader.row=11;leader.y=leader.groundY=rowY(11);addFamily(1,11,72);makePickups();leader.intent=intentFor(0,-1,'GATHER THE FAMILY',true);lastIntent=leader.intent;
+  }else if(name==='normal'){
+    seasonIndex=0;leader.x=97;leader.row=9;leader.y=leader.groundY=rowY(9)-3;leader.hopT=9;leader.fromX=80;leader.toX=100;leader.fromY=rowY(10);leader.toY=rowY(9);leader.toRow=9;addFamily(3,10,78);leader.intent=intentFor(0,-1,'THREAD THE FAMILY GAP',true);lastIntent=leader.intent;
+    for(const v of vehicles)if(v.row===9){v.x=-28;v.vx=0;}else if(v.row===10){v.x=168;v.vx=0;}
+    route=[{x:80,row:9,at:-FOLLOW_DELAY}];for(const f of passengers)f.routeIndex=0;
+  }else if(name==='family'){
+    seasonIndex=1;leader.x=116;leader.row=7;leader.y=leader.groundY=rowY(7);addFamily(5,7,104);pickups=[];leader.intent=intentFor(0,0,'RALLY THE FAMILY',true);lastIntent=leader.intent;
+  }else if(name==='danger'){
+    seasonIndex=1;leader.x=82;leader.row=5;leader.y=leader.groundY=rowY(5);addFamily(5,6,72);act={kind:'flood',phase:'warn',warnAt:0,landAt:210,endAt:1050,count:0,dir:1,refugeX:120,crocX:18,crocV:.52};banner={s:'FLASH FLOOD INBOUND',c:CYAN,t:140};leader.intent=intentFor(0,-1,'RACE THE FLOOD CREST',true);lastIntent=leader.intent;
+    leader.waterT=-1000;for(const f of passengers)f.waterT=-1000;
+  }else if(name==='sacrifice'){
+    seasonIndex=2;leader.x=81;leader.row=9;leader.y=leader.groundY=rowY(9);addFamily(4,9,68);leader.intent=intentFor(0,0,'HOLD THE LINE',true);lastIntent=leader.intent;const victim=passengers.at(-1);losePassenger(victim,'TRAFFIC HIT',true);leader.panicT=40;leader.lookT=50;
+    let vi=0;for(const v of vehicles)if(v.row===9){v.x=122+vi++*18;v.vx=0;}
+  }else if(name==='later'){
+    seasonIndex=3;leader.x=104;leader.row=4;leader.y=leader.groundY=rowY(4)-4;leader.hopT=8;leader.fromX=100;leader.toX=120;leader.fromY=rowY(5);leader.toY=rowY(4);leader.toRow=4;addFamily(4,5,90);act={kind:'flood',phase:'live',warnAt:0,landAt:0,endAt:900,count:2,dir:-1,refugeX:40,crocX:132,crocV:-.52};leader.intent=intentFor(0,-1,'BEAT THE CREST',true);lastIntent=leader.intent;
+    leader.waterT=-1000;for(const f of passengers)f.waterT=-1000;
+  }else if(name==='apex'){
+    seasonIndex=3;leader.row=0;leader.x=80;leader.y=leader.groundY=rowY(0);addFamily(FAMILY_GOAL,0,70);collected=FAMILY_GOAL;finishArrival();banner={s:'WHOLE FAMILY HOME!',c:GOLD,t:180};lastIntent=intentFor(0,0,'ADMIRE THE WHOLE FAMILY',false);
+  }
+  lastEventFrame=lastProgressFrame=showFrame;return globalThis.__frogConvoyVisualProbe();
+};
+globalThis.__frogConvoyVisualProbe=()=>({beat:visualBeat,seasonIndex,season:SEASONS[seasonIndex].name,state,act:act&&act.phase,passengers:passengers.length,collected,
+  whole:arrival&&arrival.whole,sacrifice:lostGhosts.some(g=>g.sacrifice),leaderBox:{x:leader.x-11,y:leader.y-15,width:22,height:26},
+  chainBoxes:passengers.map(f=>({x:f.x-8,y:f.y-11,width:16,height:20})),tactic:lastIntent&&lastIntent.tactic,finite:allFinite()});
+
+initSession('frog-convoy',[['ARROWS','HOP'],['SPACE','GUARD THE FAMILY']],{viewer:true});
+resetGame();start(()=>step(),()=>render());
+</script>
+</html>

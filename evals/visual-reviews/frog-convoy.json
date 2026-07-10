@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "game": "frog-convoy",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "97ce01385a42ddccba052b79645bd03c25ec52c296f8940bf6a51132a20f4595",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review with independent visual gate audit",
+  "seed": "0xf09c0",
+  "checkpoints": [
+    "opening@12",
+    "normal@12",
+    "family@12",
+    "danger@12",
+    "sacrifice@12",
+    "later@12",
+    "apex@120"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native size the lead has a built head, body, haunches, separate forelegs and hind legs, facing eyes, mouth, leaf crown, and two-piece scarf. Crouch, stretched leap, splayed landing, alarm, and backward-glance poses remain legible; five smaller passengers retain individual palettes, markings, accessories, and delayed locomotion rather than reading as tokens."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The HUD-free world has banded sky, clouds, hills, a flower sanctuary, built banks, current lines, bridge piers, material-specific collapsing logs, mill race, covered bridge, crosswalk, drains, bus shelter, detailed cars and trucks, layered reeds, and foreground occlusion. Flood Season adds inundated terrain, refuge islets, skiffs, submerged signs, wakes, drowned buildings, and tilted timber at reference-level density."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Same-state season captures prove structural progression: Spring has a garden fence and full three-lane road; Midsummer builds a dock, sluice, and working wheel; Autumn replaces the first river silhouette with a roofed bridge; Flood Season removes the median and upper road lane under water, substitutes refuge islands and skiffs, and leaves only two asphalt lanes. The drowned middle is unmistakable even without color."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned real-pixel bursts show lead and passenger hop articulation, log and vehicle motion, a moving flood crest before land, bodily recoil across the remaining family, a forward-leaping sacrifice with guard arc and impact rays, then sequential homecoming. The apex adds exact hitstop and slow stepping, a real bot admire pause, broad gold current sweeps, halo, fireflies, and a persistent six-frog sanctuary tableau."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Bright cream, lime, cyan, and gold frogs retain contrast against outlined water, bark, and asphalt. The delayed family ribbon, intended hop arc, log cracks, vehicle lights, flood chevrons, refuge beacon, plain tactic verb, family pips, and loss/home totals survive at 160x360; the new skiffs and flood islands remain distinct from logs and frogs."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Rounded frog anatomy, bark rings and braces, top-down vehicle construction, marsh greens and water cyans, gold reward language, coral danger language, outlined pixel materials, seasonal landmarks, route telemetry, and payoff geometry share one authored storybook-marsh grammar. The flood rebuild and apex effects extend that language instead of reading as pasted-on overlays."
+    }
+  }
+}
