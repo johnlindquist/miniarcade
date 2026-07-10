@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "game": "raiders-cart",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "4184bf35c9a7b86810ebc9b5e0cee407884192955ca064b5ffa9b123271d927c",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "seed": "0x52414944",
+  "checkpoints": [
+    "opening@12",
+    "normal-plan@13",
+    "chain-ready@12",
+    "chain-payoff@12",
+    "warning@12",
+    "danger@9",
+    "later-room@13",
+    "apex@12"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native size the explorer reads through a fedora, face, jacket, belt, satchel, two-beat legs, facing, and distinct run, dig, push, glance, carry, stumble, and admire poses. The riveted wheeled cart, legged scarabs, faceted artifact, and rotating carved idol are constructed actors with personality rather than tokens, meeting both references."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The HUD-free world has masonry sidewalls, layered light planes, a chamber-spanning switchback rail, built sluice channels, material highlights, props, foreground framing, and strong landmarks. It carries at least the authored place density and depth separation visible in MACHINE HUNT and BLOCK MINE."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The sheet shows a vine-cut moss antechamber, geared rail workshop, flooded arched cistern, jagged crystal catacomb, and monumental idol vault. Their silhouettes, landmarks, floor conditions, light, and material grammar change materially rather than relying on palette swaps, meeting both reference progressions."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The numbered forecast establishes anticipation; aligned native crops show explorer gait and action changes, cart wheel/body movement, and idol rotation. The chain payoff moves rock, water, cart, seal, artifact, and debris across the chamber, while the no-FX apex retains a physical aftermath, meeting both references for contact and follow-through."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Tiny warm actors remain separated from the darker chamber, the singular idol has a long readable runway, and gold numbered routes plus distinct vertical rock, rail, and cyan water forecasts expose the bot's intent. Warnings, artifact target, danger, and payoff remain legible at 160x360 beside video."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Pulp archaeology, timber and metal rails, masonry, sluice hardware, fedora explorer, carved idols, gold forecast grammar, cyan water, and angular impact debris share one deliberate pixel language across all chambers. The result is as cohesive and authored as both reference games."
+    }
+  }
+}

@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BURROW BOSS</title>
+<style>
+  html,body{margin:0;height:100%;background:#100d16}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#181321}
+  canvas:focus-visible{outline:2px solid #f4c35d;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Burrow Boss. A tiny digger outlines cave-in traps, baits giant monsters, and drops the mountain on them."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,RI,hash,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,
+  keys,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,
+  fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng,findPath}=AI;
+
+// BURROW BOSS is staged like a tiny hunt: survey the ceiling, plant the brace,
+// cross the monster's sightline, then commit to a delayed physical collapse.
+// The viewer sees the selected rocks and the whole lure route before the digger
+// takes the risk. Planning copies state and never consumes the engine RNG.
+const TAU=Math.PI*2,TOP=48,CELL=8,COLS=20,ROWS=36,FINAL_FRAME=54000;
+const INK='#100d16',PIT='#181321',CREAM='#fff0cf',GOLD='#f4c35d',MINT='#63ddb5',
+  RED='#ee665e',CYAN='#75d7e8',BONE='#d7cfb2',PLUM='#8d6aa8';
+const BIOMES=[
+  {name:'ROOT WARREN',short:'ROOTS',sky:'#17131f',far:'#282034',soil:'#5a392d',soil2:'#744b34',edge:'#a66a42',deep:'#362520',accent:'#efb85a',glow:'#79d79c',lanes:[6,14,22,30],shafts:[3,10,16],landmark:'roots'},
+  {name:'FOSSIL CHOIR',short:'FOSSIL',sky:'#141923',far:'#29313c',soil:'#55515a',soil2:'#716b69',edge:'#aca38d',deep:'#34343b',accent:'#e8d394',glow:'#86cddd',lanes:[5,13,21,29],shafts:[5,12,17],landmark:'fossil'},
+  {name:'EMBER VAULT',short:'EMBER',sky:'#21131a',far:'#3c2025',soil:'#67362e',soil2:'#884838',edge:'#d16c43',deep:'#3d2426',accent:'#ffad55',glow:'#ff655b',lanes:[7,15,23,31],shafts:[2,9,15],landmark:'forge'},
+  {name:'PRISM CATHEDRAL',short:'PRISM',sky:'#111827',far:'#262546',soil:'#403958',soil2:'#5c4f78',edge:'#9c7aca',deep:'#27243d',accent:'#e4bbff',glow:'#67e8d1',lanes:[6,14,23,30],shafts:[4,11,17],landmark:'crystal'}
+];
+const MONSTERS=[
+  {name:'MUDHORN',body:'#8b6040',plate:'#c08a53',belly:'#4e382e',eye:'#ffdf63',speed:.47},
+  {name:'SKULLBACK',body:'#676a65',plate:'#c7bea3',belly:'#383d3b',eye:'#ff735d',speed:.49},
+  {name:'CINDERMAW',body:'#87413a',plate:'#da7045',belly:'#41252a',eye:'#ffd15f',speed:.52},
+  {name:'PRISM TUSK',body:'#5a507c',plate:'#a889d2',belly:'#302b4b',eye:'#7dffe0',speed:.50}
+];
+const PERSONAS=[
+  {name:'SURVEYOR',risk:.18,show:0,lead:2,c:GOLD},
+  {name:'HOOK',risk:.48,show:1,lead:-1,c:CYAN},
+  {name:'SHOWBOAT',risk:.72,show:2,lead:-3,c:RED}
+];
+const SHOW=createShow({queueLimit:3,recoveryGap:80,tiers:{
+  1:{frames:12,minGap:28},2:{frames:42,minGap:105},
+  3:{frames:90,minGap:520,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+let showFrame=0,runFrame=0,arenaFrame=0,worldSeed=1,arenaNo=0,state='hunt',transitionT=0;
+let grid=new Uint8Array(COLS*ROWS),lanes=[],shafts=[],traps=[],plan=null,planSerial=0;
+let digger=null,boss=null,persona=PERSONAS[0],skill=null,perfectSkill=null,texts=[],hazards=[];
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false},outcome='';
+let act={phase:'calm',type:'tremor',warnAt:3900,landAt:4140,endAt:4860,index:0,
+  warning:240,safe:null,hazardLane:0,notes:[]};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0;
+let visualFixture=false,visualBeat='',visualBossVariant=0;
+const stats={plans:0,trapsSet:0,lures:0,caveIns:0,hits:0,slips:0,bosses:0,downs:0,
+  tilesDug:0,acts:0,lapses:0,events:0,progress:0,apexes:0,nearMisses:0,chapters:1,
+  panicDrops:0,appliedIntents:0,invisibleResets:0,maxEventLull:0,maxProgressLull:0};
+
+const mod=(n,d)=>((n%d)+d)%d;
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),m=i=>Math.round(((pa>>i)&255)*(1-t)+((pb>>i)&255)*t);return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1);};
+const poly=(pts,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill();};
+const line=(pts,c,w)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.stroke();ctx.lineWidth=1;};
+const inside=(x,y)=>x>=1&&x<COLS-1&&y>=1&&y<ROWS-1,gi=(x,y)=>y*COLS+x;
+const cellX=x=>x*CELL+CELL/2,cellY=y=>TOP+y*CELL+CELL/2;
+const toCell=(x,y)=>({x:clamp(Math.round((x-CELL/2)/CELL),1,COLS-2),y:clamp(Math.round((y-TOP-CELL/2)/CELL),1,ROWS-2)});
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),round=(v,n)=>{const p=Math.pow(10,n||4);return Math.round(v*p)/p;};
+
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+28});}
+function say(s,c,x,y,t){texts.push({s,c:c||CREAM,x:x===undefined?digger.x:x,y:y===undefined?digger.y-16:y,t:t||72});if(texts.length>12)texts.shift();}
+function openTile(x,y){if(inside(x,y)&&grid[gi(x,y)]!==2)grid[gi(x,y)]=0;}
+function carveRect(x0,y0,x1,y1){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)openTile(x,y);}
+function carveEllipse(cx,cy,rx,ry){for(let y=Math.floor(cy-ry);y<=Math.ceil(cy+ry);y++)for(let x=Math.floor(cx-rx);x<=Math.ceil(cx+rx);x++)if(((x-cx)/rx)**2+((y-cy)/ry)**2<=1)openTile(x,y);}
+
+function buildArena(number){
+  const bi=mod(number,BIOMES.length),b=BIOMES[bi];lanes=b.lanes.slice();shafts=b.shafts.slice();grid.fill(1);
+  for(let x=0;x<COLS;x++){grid[gi(x,0)]=2;grid[gi(x,ROWS-1)]=2;}
+  for(let y=0;y<ROWS;y++){grid[gi(0,y)]=2;grid[gi(COLS-1,y)]=2;}
+  // Three-cell-high hunting lanes keep the 34px set piece in a large world.
+  for(const row of lanes)carveRect(1,row-1,COLS-2,row+1);
+  for(const x of shafts)carveRect(x-1,2,x+1,ROWS-2);
+  if(bi===0){carveEllipse(6,10,4,5);carveEllipse(14,26,4,5);}
+  else if(bi===1){carveEllipse(4,18,3,6);carveEllipse(15,9,3,4);carveRect(7,25,13,28);}
+  else if(bi===2){carveEllipse(13,19,5,4);carveRect(4,9,6,27);carveEllipse(5,31,3,2);}
+  else{carveEllipse(7,10,4,4);carveEllipse(14,19,4,6);carveEllipse(6,29,3,3);}
+  traps=[];for(let lane=0;lane<lanes.length;lane++)for(let site=0;site<2;site++){
+    const row=lanes[lane],cx=5+site*2+mod(lane+bi,2),id=traps.length; // 44..68px: >=58.9% approach.
+    traps.push({id,cx,row,anchor:{x:cx,y:row-3},bait:{x:cx+4,y:row},escape:{x:2,y:row},
+      armed:false,arming:0,used:false,fall:0,impact:false,hit:false,crack:0});
+  }
+  const spawnLane=mod(number+Math.floor(hash(worldSeed,number)*3),lanes.length),m=MONSTERS[bi];
+  digger={x:cellX(2),y:cellY(lanes[mod(number,lanes.length)]),vx:0,vy:0,face:1,walk:0,
+    pose:'survey',stun:0,digKey:-1,digT:0,intent:null,downFlash:0};
+  boss={x:154,y:cellY(lanes[spawnLane]),vx:-.2,vy:0,face:-1,walk:0,pose:'enter',type:bi,homeRow:lanes[spawnLane],
+    hp:3,maxHp:3,stun:0,aggro:0,taunted:false,path:[],pathAt:-1e9,rage:0,hitT:0,slipT:0,
+    retreat:0,speed:m.speed};
+  plan=null;hazards=[];arenaFrame=0;state='hunt';transitionT=0;outcome='';stats.chapters=Math.max(stats.chapters,number+1);
+}
+
+function resetGame(full){
+  worldSeed=RI(1,999999);arenaNo=0;runFrame=0;arenaFrame=0;state='hunt';transitionT=0;plan=null;planSerial=0;texts=[];hazards=[];outcome='';visualFixture=false;
+  for(const k in stats)stats[k]=k==='chapters'?1:0;
+  eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;
+  const pi=Math.floor(hash(worldSeed,77)*PERSONAS.length);persona=PERSONAS[pi];
+  const skillSeed=(worldSeed^0xb077b055)>>>0,skillOptions={skill:.82,precision:.86,risk:.55,recovery:.9,
+    reactionFrames:[2,4],lapseFrames:[12,26]};
+  skill=skillProfile(Object.assign({},skillOptions,{lapseChance:.00052,rng:createRng(skillSeed)}));
+  perfectSkill=skillProfile(Object.assign({},skillOptions,{lapseChance:0,rng:createRng(skillSeed)}));
+  Object.assign(act,{phase:'calm',type:'tremor',warnAt:showFrame+3900,landAt:showFrame+4140,
+    endAt:showFrame+4860,index:0,warning:240,safe:null,hazardLane:0,notes:[]});
+  buildArena(0);if(full)SHOW.reset(showFrame);
+}
+
+function neighbors(node){return[{x:node.x+1,y:node.y},{x:node.x-1,y:node.y},{x:node.x,y:node.y+1},{x:node.x,y:node.y-1}].filter(q=>inside(q.x,q.y));}
+function gridPath(from,to,allowDig){
+  from=toCell(from.x,from.y);to={x:clamp(Math.round(to.x),1,COLS-2),y:clamp(Math.round(to.y),1,ROWS-2)};
+  return findPath({start:from,goal:to,key:q=>gi(q.x,q.y),neighbors,
+    blocked:q=>grid[gi(q.x,q.y)]===2||(!allowDig&&grid[gi(q.x,q.y)]!==0),
+    cost:(a,q)=>grid[gi(q.x,q.y)]===0?1:4.5,
+    heuristic:q=>Math.abs(q.x-to.x)+Math.abs(q.y-to.y),maxIterations:1600})||[];
+}
+function pathCost(from,to,allowDig){const p=gridPath(from,to,allowDig);if(!p.length){const c=toCell(from.x,from.y);if(c.x!==to.x||c.y!==to.y)return 999;}let n=0;for(const q of p)n+=grid[gi(q.x,q.y)]===0?1:4.5;return n;}
+function targetIntent(target,tactic,extra){
+  const path=gridPath(digger,target,true),q=path[0]||target,tx=cellX(q.x),ty=cellY(q.y),dx=tx-digger.x,dy=ty-digger.y,d=Math.hypot(dx,dy)||1;
+  return Object.assign({dx:dx/d,dy:dy/d,dig:true,set:false,taunt:false,detonate:false,
+    trapId:plan?plan.trapId:-1,targetX:cellX(target.x),targetY:cellY(target.y),tactic},extra||{});
+}
+
+function projectedBossX(frames){
+  const dir=boss.face||-1,speed=boss.speed+(boss.rage>0?.10:0)+(act.phase==='live'&&act.type==='tremor'?.08:0);
+  return boss.x+dir*speed*frames;
+}
+function planCandidate(t){
+  const anchorCost=pathCost(digger,t.anchor,true),bossCell=toCell(boss.x,boss.y),sameLane=Math.abs(bossCell.y-t.row)<=1;
+  const lureCost=Math.abs(bossCell.x-t.bait.x)+Math.abs(bossCell.y-t.bait.y)*1.8;
+  const chaseRoute=gridPath(boss,t.escape,false),crosses=chaseRoute.some(q=>Math.abs(q.y-t.row)<=1&&Math.abs(q.x-t.cx)<=1);
+  const runway=(154-cellX(t.cx))/(154-8),unused=t.used?-1000:0;
+  const score=unused+(sameLane?115:0)+runway*28-anchorCost*1.35-lureCost*.45-persona.risk*Math.abs(t.cx-7)*2;
+  return{trapId:t.id,score,anchorCost,lureCost,runway,crosses,stage:'set',created:showFrame,
+    points:[t.anchor,t.bait,t.escape].map(q=>({x:q.x,y:q.y}))};
+}
+function chooseTrapPlan(){
+  const candidates=traps.filter(t=>!t.used).map(planCandidate);
+  if(!candidates.length)return null;
+  if(typeof globalThis.__NO_TRAP_PLAN!=='undefined')return candidates.sort((a,b)=>a.trapId-b.trapId)[0];
+  candidates.sort((a,b)=>b.score-a.score||a.trapId-b.trapId);return candidates[0];
+}
+function startPlan(){
+  const next=chooseTrapPlan();if(!next)return null;plan=next;plan.serial=++planSerial;stats.plans++;markEvent();
+  const t=traps[plan.trapId];say('CAVE-IN '+(plan.trapId+1)+' OUTLINED',GOLD,cellX(t.cx),cellY(t.row)-25,100);return plan;
+}
+function nearCell(e,q,r){return Math.hypot(e.x-cellX(q.x),e.y-cellY(q.y))<=(r||5);}
+
+function admireIntent(){return{dx:0,dy:0,dig:false,set:false,taunt:false,detonate:false,trapId:-1,
+  targetX:digger.x,targetY:digger.y,tactic:'ADMIRE THE CAVE-IN'};}
+function rawBotDecision(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined')return admireIntent();
+  if(state==='victory'){
+    const q=toCell(boss.x,boss.y);return targetIntent({x:clamp(q.x-3,1,COLS-2),y:q.y},'CIRCLE THE TROPHY',{trapId:-1});
+  }
+  if(state!=='hunt')return{dx:0,dy:0,dig:false,set:false,taunt:false,detonate:false,trapId:-1,targetX:digger.x,targetY:digger.y,tactic:'MARK THE TRAIL'};
+  if(act.phase==='warn'&&act.safe){
+    const tactic=act.type==='magma'?'CLIMB ABOVE THE MAGMA':'BRACE FOR THE TREMOR';
+    return targetIntent(act.safe,tactic,{trapId:plan?plan.trapId:-1});
+  }
+  if(plan&&traps[plan.trapId]&&traps[plan.trapId].used&&!traps[plan.trapId].impact)
+    return targetIntent(traps[plan.trapId].escape,'CLEAR THE FALL ZONE');
+  if(!plan||!traps[plan.trapId]||traps[plan.trapId].used){if(!startPlan())return targetIntent({x:2,y:lanes[0]},'SEARCH FOR WEAK STONE');}
+  const t=traps[plan.trapId];
+  if(t.armed&&!t.used&&showFrame-plan.created>1200){stats.panicDrops++;say('PANIC DROP — RE-SURVEY!',RED,cellX(t.cx),cellY(t.row)-24,72);return targetIntent(t.escape,'PANIC DROP · RESET',{detonate:true});}
+  if(plan.stage==='set'){
+    if(t.armed){plan.stage='bait';return targetIntent(t.bait,'STEP INTO ITS SIGHT');}
+    if(nearCell(digger,t.anchor,5))return targetIntent(t.anchor,'SET THE SHORING CHARGE',{set:true});
+    return targetIntent(t.anchor,'DIG TO THE WEAK SEAM');
+  }
+  if(plan.stage==='bait'){
+    if(nearCell(digger,t.bait,6)){
+      const ready=boss.retreat<=0&&boss.x>=cellX(t.cx)+38;
+      if(!ready)return targetIntent(t.bait,'WAIT FOR THE PROWL');
+      plan.stage='lure';stats.lures++;markEvent(6);say('HEY, BIG FELLA!',RED,digger.x,digger.y-17,66);return targetIntent(t.escape,'LURE RUN!',{taunt:true});
+    }
+    return targetIntent(t.bait,'CROSS ITS SIGHTLINE');
+  }
+  if(plan.stage==='lure'){
+    if(!boss.taunted&&boss.aggro<=0){plan.stage='bait';markEvent();return targetIntent(t.bait,'REACQUIRE THE BEAST');}
+    const dropDelay=25,smart=typeof globalThis.__NO_TRAP_PLAN==='undefined',predicted=boss.x+boss.vx*dropDelay,cx=cellX(t.cx);
+    const aligned=Math.abs(boss.y-cellY(t.row))<13,commit=smart?
+      aligned&&Math.abs(predicted-cx)<=10+persona.lead:
+      aligned&&boss.x<=cx-2&&boss.x>=cx-10;
+    const passed=boss.x<cx-15;
+    if(commit||passed)return targetIntent(t.escape,commit?'COMMIT THE CAVE-IN':'TOO LATE — DROP IT',{detonate:true});
+    return targetIntent(t.escape,boss.x-digger.x<32?'RUN THE LURE':'KEEP IT COMING');
+  }
+  return targetIntent(t.escape,'CLEAR THE FALL ZONE');
+}
+function botIntent(){
+  const profile=typeof globalThis.__NO_LAPSE==='undefined'?skill:perfectSkill,was=profile.isLapsed(showFrame),
+    intent=profile.decide(showFrame,null,rawBotDecision,(_,last)=>last||rawBotDecision()),now=profile.isLapsed(showFrame);
+  if(profile===skill&&!was&&now){stats.lapses++;markEvent();say('...TOO GREEDY',persona.c,digger.x,digger.y-15,40);}return intent;
+}
+function closestTrap(){let best=traps[0],bd=Infinity;for(const t of traps)if(!t.used){const d=Math.hypot(digger.x-cellX(t.anchor.x),digger.y-cellY(t.anchor.y));if(d<bd){bd=d;best=t;}}return best;}
+function humanIntent(){
+  const t=closestTrap()||traps[0],dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0);
+  return{dx,dy,dig:true,set:!!keys.a,taunt:!!keys.b,detonate:!!keys.c,trapId:t?t.id:-1,
+    targetX:digger.x+dx*CELL,targetY:digger.y+dy*CELL,tactic:'MANUAL HUNT'};
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function digAt(nx,ny){
+  const c=toCell(nx,ny),id=gi(c.x,c.y);if(grid[id]===0)return true;if(grid[id]===2)return false;
+  if(digger.digKey!==id){digger.digKey=id;digger.digT=0;}digger.digT++;
+  if(digger.digT>=7){grid[id]=0;digger.digKey=-1;digger.digT=0;stats.tilesDug++;markEvent(1);if(stats.tilesDug%5===0)markProgress();offer('dig',1,cellX(c.x),cellY(c.y),'tile');fxDust(cellX(c.x),cellY(c.y),4,BIOMES[mod(arenaNo,4)].edge);return true;}
+  return false;
+}
+function armTrap(t){
+  if(t.used||t.armed)return;t.arming++;
+  if(t.arming===1){say('SETTING TIMBER BRACE',MINT,cellX(t.cx),cellY(t.row)-22,56);markEvent();}
+  if(t.arming>=72){t.armed=true;stats.trapsSet++;markProgress(12);offer('trap-armed',2,cellX(t.cx),cellY(t.row)-12,t.id);say('CAVE-IN ARMED',MINT,cellX(t.cx),cellY(t.row)-23,78);}
+}
+function startCollapse(t){
+  if(!t||!t.armed||t.used||t.fall>0)return false;t.used=true;t.fall=1;t.crack=1;stats.caveIns++;markEvent(18);offer('collapse-commit',1,cellX(t.cx),cellY(t.row)-16,t.id);say('DROP THE MOUNTAIN!',GOLD,cellX(t.cx),cellY(t.row)-29,74);shake(3);return true;
+}
+function applyIntent(intent){
+  intent=intent||{dx:0,dy:0,dig:false,set:false,taunt:false,detonate:false,trapId:-1,targetX:digger.x,targetY:digger.y,tactic:'WAIT'};
+  digger.intent=intent;stats.appliedIntents++;
+  if(digger.stun>0){digger.stun--;digger.x=clamp(digger.x+digger.vx,10,150);digger.y=clamp(digger.y+digger.vy,TOP+8,H-18);digger.vx*=.90;digger.vy*=.90;digger.pose='tumble';return intent;}
+  let dx=Number(intent.dx)||0,dy=Number(intent.dy)||0,d=Math.hypot(dx,dy);if(d>1){dx/=d;dy/=d;}
+  const speed=.76-(act.phase==='live'&&act.type==='magma'&&toCell(digger.x,digger.y).y>=act.hazardLane?0.17:0),nx=digger.x+dx*speed,ny=digger.y+dy*speed;
+  if(!d||digAt(nx,ny)){digger.x=clamp(nx,8,152);digger.y=clamp(ny,TOP+8,H-18);digger.vx=dx*speed;digger.vy=dy*speed;digger.walk+=speed;digger.face=dx?Math.sign(dx):digger.face;}
+  else{digger.vx=digger.vy=0;}
+  const t=traps[intent.trapId];if(intent.set&&t&&nearCell(digger,t.anchor,7))armTrap(t);
+  if(intent.taunt){boss.taunted=true;boss.aggro=Math.max(boss.aggro,900);boss.pose='roar';markEvent();offer('taunt',1,digger.x,digger.y,'bait');}
+  if(intent.detonate&&t)startCollapse(t);
+  digger.pose=intent.set?'set':intent.taunt?'taunt':d>0?(grid[gi(toCell(nx,ny).x,toCell(nx,ny).y)]?'dig':'run'):'survey';
+  return intent;
+}
+
+function moveBossToward(tx,ty,speed){const dx=tx-boss.x,dy=ty-boss.y,d=Math.hypot(dx,dy)||1;boss.vx=dx/d*speed;boss.vy=dy/d*speed;boss.x+=boss.vx;boss.y+=boss.vy;boss.face=boss.vx?Math.sign(boss.vx):boss.face;boss.walk+=speed;}
+function stepBoss(){
+  if(boss.hitT>0)boss.hitT--;if(boss.slipT>0)boss.slipT--;if(boss.rage>0)boss.rage--;
+  if(boss.stun>0){boss.stun--;boss.x=clamp(boss.x+boss.vx,12,154);boss.vx*=.94;boss.pose='stagger';return;}
+  const speed=boss.speed+(boss.rage>0?.10:0)+(act.phase==='live'&&act.type==='tremor'?.08:0);
+  if(boss.retreat>0){boss.retreat--;const target={x:17,y:boss.homeRow},path=gridPath(boss,target,false),q=path[0];
+    if(q)moveBossToward(cellX(q.x),cellY(q.y),speed*.62);else moveBossToward(142,cellY(boss.homeRow),speed*.48);boss.pose='retreat';}
+  else if(!boss.taunted&&boss.aggro<=0){const home=138+Math.sin(arenaFrame*.012+boss.type)*9;moveBossToward(home,cellY(boss.homeRow),speed*.38);boss.pose=arenaFrame%210<28?'sniff':'prowl';}
+  else{
+    boss.aggro=Math.max(0,boss.aggro-1);if(arenaFrame-boss.pathAt>=12||!boss.path.length){boss.path=gridPath(boss,toCell(digger.x,digger.y),false);boss.pathAt=arenaFrame;}
+    const q=boss.path[0];if(q){const tx=cellX(q.x),ty=cellY(q.y);moveBossToward(tx,ty,speed);if(Math.hypot(boss.x-tx,boss.y-ty)<2.2)boss.path.shift();}
+    else moveBossToward(digger.x,digger.y,speed*.55);boss.pose=dist(boss,digger)<35?'charge':'pursue';
+  }
+  if(boss.retreat<=0&&(boss.taunted||boss.aggro>0)&&dist(boss,digger)<13&&digger.stun<=0){
+    stats.downs++;markEvent();offer('digger-down',1,digger.x,digger.y,'caught');say('CAUGHT — RE-BAIT!',RED,digger.x,digger.y-18,66);
+    digger.stun=44;digger.vx=(digger.x<boss.x?-1:1)*1.2;digger.vy=-.35;digger.downFlash=18;
+    boss.stun=65;boss.vx*=-.5;boss.taunted=false;boss.aggro=0;boss.retreat=120;boss.path=[];if(plan)plan.stage='bait';shake(4);
+  }
+}
+
+function defeatBoss(t){
+  boss.hp=0;boss.stun=999;boss.pose='buried';state='victory';transitionT=180;stats.bosses++;stats.apexes++;markProgress(120);markEvent(60);offer('boss-buried',3,boss.x,boss.y,boss.type);say(MONSTERS[boss.type].name+' BURIED!',GOLD,boss.x,boss.y-27,130);fxBurst(boss.x,boss.y,42,GOLD,3,.04);shake(9);outcome='CAVE-IN MASTERPIECE';
+}
+function resolveCollapse(t){
+  if(t.impact)return;t.impact=true;const cx=cellX(t.cx),cy=cellY(t.row),hit=Math.abs(boss.x-cx)<=12&&Math.abs(boss.y-cy)<=14&&boss.hp>0;
+  // The ceiling physically opens; rubble persists until the next authored room.
+  for(let y=t.row-3;y<=t.row-2;y++)for(let x=t.cx-1;x<=t.cx+1;x++)if(inside(x,y)&&grid[gi(x,y)]!==2)grid[gi(x,y)]=0;
+  if(hit){t.hit=true;boss.hp--;boss.hitT=36;boss.stun=145;boss.vx=(boss.x<cx?-1:1)*1.05;stats.hits++;markProgress(40);markEvent(20);fxBurst(cx,cy,28,BIOMES[mod(arenaNo,4)].accent,2.8,.05);shake(7);
+    if(boss.hp<=0)defeatBoss(t);else{offer('cave-in-hit',2,cx,cy,boss.hp);say('CAVE-IN LANDS!',MINT,cx,cy-24,82);}}
+  else{stats.slips++;boss.slipT=50;boss.rage=300;markEvent(8);markProgress(2);offer('monster-slip',2,cx,cy,t.id);say('IT SLIPS THE FALL!',RED,cx,cy-24,78);if(Math.abs(boss.x-cx)<18)stats.nearMisses++;}
+  if(boss.hp>0){boss.taunted=false;boss.aggro=0;boss.retreat=180;boss.path=[];}
+  if(Math.abs(digger.x-cx)<10&&Math.abs(digger.y-cy)<15&&digger.stun<=0){stats.downs++;digger.stun=48;digger.vx=-1.15;digger.vy=.4;shake(4);}
+  plan=null;
+}
+function stepTraps(){for(const t of traps)if(t.fall>0){t.fall++;t.crack=Math.min(1,t.fall/20);if(t.fall===26)resolveCollapse(t);}}
+
+function warnAct(){
+  act.phase='warn';act.type=act.index%2?'magma':'tremor';act.warning=act.type==='magma'?210:240;
+  act.landAt=showFrame+act.warning;act.endAt=act.landAt+(act.type==='magma'?780:660);
+  const current=toCell(digger.x,digger.y),top=lanes[0];act.hazardLane=lanes[lanes.length-1]-1;
+  act.safe=act.type==='magma'?{x:shafts[0],y:top}:{x:shafts.reduce((a,x)=>Math.abs(x-current.x)<Math.abs(a-current.x)?x:a,shafts[0]),y:current.y};
+  const n={kind:'act-warning',id:act.type,at:showFrame,tag:showFrame,landsAt:act.landAt};act.notes.push(n);SHOW.note(n);
+  say(act.type==='magma'?'MAGMA RISING — CLIMB!':'TREMOR — FIND A BRACE!',act.type==='magma'?RED:CYAN,digger.x,digger.y-30,110);
+}
+function landAct(){
+  act.phase='live';stats.acts++;const n={kind:'act-land',id:act.type,at:showFrame,tag:showFrame};act.notes.push(n);SHOW.note(n);offer(act.type,2,digger.x,digger.y,act.index);markEvent();shake(4);
+  if(act.type==='tremor'){
+    for(let i=0;i<7;i++)hazards.push({x:cellX(3+mod(i*3+act.index,14)),y:TOP+2+i%3*3,vy:.45+i*.025,t:180,kind:'rock'});
+    boss.rage=Math.max(boss.rage,420);
+  }
+}
+function stepAct(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
+  if(act.phase==='calm'&&showFrame>=act.warnAt)warnAct();
+  else if(act.phase==='warn'&&showFrame>=act.landAt)landAct();
+  else if(act.phase==='live'&&showFrame>=act.endAt){act.phase='calm';act.index++;act.warnAt=showFrame+5100;act.safe=null;}
+}
+function stepHazards(){
+  for(const h of hazards){h.y+=h.vy;h.vy+=.018;h.t--;if(h.kind==='rock'&&Math.hypot(h.x-digger.x,h.y-digger.y)<7&&digger.stun<=0){digger.stun=18;digger.vx=(digger.x<h.x?-1:1)*.5;stats.downs++;markEvent();h.t=0;}}
+  hazards=hazards.filter(h=>h.t>0&&h.y<H-8);
+}
+function advanceArena(){
+  arenaNo++;buildArena(arenaNo);markProgress(10);say(BIOMES[mod(arenaNo,4)].name,BIOMES[mod(arenaNo,4)].accent,80,77,150);
+}
+function finishRun(){if(state==='ending')return;state='ending';transitionT=360;outcome=stats.bosses>=8?'LEGEND OF THE DEEP':'THE HUNT CONTINUES';offer('hunt-finale',3,digger.x,digger.y,outcome);fxBurst(digger.x,digger.y,48,GOLD,3.2,.02);}
+function finite(){return[digger.x,digger.y,digger.vx,digger.vy,boss.x,boss.y,boss.vx,boss.vy,runFrame,arenaFrame].every(Number.isFinite)&&hazards.every(h=>[h.x,h.y,h.vy,h.t].every(Number.isFinite));}
+
+function stepVisual(){
+  pres=SHOW.step(showFrame);if(visualBeat==='collapse'||visualBeat==='apex')for(const t of traps)if(t.fall>0&&t.fall<70)t.fall++;
+  if(visualBeat==='pursuit'){digger.walk+=.72;boss.walk+=.52;}
+  stepParts();for(const q of texts)q.t--;texts=texts.filter(q=>q.t>0);
+}
+function step(){
+  showFrame++;if(visualFixture){stepVisual();return;}
+  sessionStep({reset:()=>resetGame(true)});stepAct();pres=SHOW.step(showFrame);
+  if(state==='hunt'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0){runFrame++;arenaFrame++;applyIntent(controller());stepBoss();stepTraps();stepHazards();if(traps.every(t=>t.used)&&boss.hp>0&&traps.every(t=>t.impact)){state='escape';transitionT=150;outcome='THE BEAST ESCAPES';say(outcome,RED,boss.x,boss.y-25,110);markEvent();}if(runFrame>=FINAL_FRAME)finishRun();}
+  }else if(state==='victory'||state==='escape'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0){runFrame++;if(state==='victory')applyIntent(controller());transitionT--;boss.walk+=.08;if(transitionT<=0)advanceArena();if(runFrame>=FINAL_FRAME)finishRun();}
+  }else if(state==='ending'){
+    transitionT--;if(transitionT<=0){if(playing())gameOver(outcome);resetGame(true);}
+  }
+  if(digger.downFlash>0)digger.downFlash--;stepParts();for(const q of texts)q.t--;texts=texts.filter(q=>q.t>0);
+}
+
+// ---- authored renderer ---------------------------------------------------------
+function skyAndStrata(b){
+  rect(0,0,W,H,b.sky);for(let i=0;i<8;i++)rect(0,TOP+i*38,W,39,mix(b.far,b.deep,i/10));
+  ctx.globalAlpha=.18;for(let i=0;i<20;i++){const y=TOP+mod(i*43+Math.floor(showFrame*.04),292),x=mod(i*67+Math.floor(showFrame*.025),174)-7;rect(x,y,2,1,i%3?b.accent:b.glow);}ctx.globalAlpha=1;
+}
+function drawLandmark(bi,b){
+  ctx.globalAlpha=.35;
+  if(b.landmark==='roots'){
+    for(let i=0;i<4;i++){ctx.strokeStyle=i%2?b.edge:b.soil2;ctx.lineWidth=5-i;ctx.beginPath();ctx.moveTo(i*52-20,TOP-4);ctx.bezierCurveTo(18+i*31,108,4+i*47,188,38+i*33,338);ctx.stroke();}ctx.lineWidth=1;
+  }else if(b.landmark==='fossil'){
+    line([[12,302],[49,232],[83,202],[132,213],[154,250]],BONE,4);for(let i=0;i<7;i++){const x=43+i*15,y=230-Math.sin(i/6*Math.PI)*24;ctx.strokeStyle=BONE;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y+34,10+i%2*4,Math.PI,TAU);ctx.stroke();}ctx.lineWidth=1;
+  }else if(b.landmark==='forge'){
+    rect(118,TOP,6,116,'#20171b');for(let i=0;i<9;i++){ctx.strokeStyle=i%2?'#9c6240':'#68412f';ctx.beginPath();ctx.arc(121,59+i*13,5,0,TAU);ctx.stroke();}ctx.globalAlpha=.22;ctx.fillStyle=RED;ctx.beginPath();ctx.arc(34,322,42,Math.PI,TAU);ctx.fill();
+  }else{
+    for(let i=0;i<9;i++){const x=8+i*19,y=334-(i%3)*28,h=26+(i%4)*14;poly([[x,y],[x+5,y-h],[x+11,y]],i%2?b.accent:b.glow);line([[x+5,y-h],[x+6,y-4]],CREAM);}
+  }ctx.globalAlpha=1;
+}
+function drawMineworks(b){
+  // Rails, sleepers, shaft ladders, and timber ribs make the negative-space
+  // tunnels read as worked hunting ground instead of empty canvas.
+  for(let li=0;li<lanes.length;li++){
+    const y=cellY(lanes[li]);ctx.globalAlpha=.48;rect(0,y-11,W,23,mix(b.sky,b.far,.42));ctx.globalAlpha=1;
+    line([[0,y+8],[W,y+8]],mix(b.edge,b.deep,.4));line([[0,y+11],[W,y+11]],mix(b.edge,b.deep,.7));
+    for(let x=4+(li%2)*7;x<W;x+=14)rect(x,y+7,8,5,mix(b.soil2,b.deep,.35));
+    for(let x=28+li*11;x<W-12;x+=58){rect(x,y-11,3,22,'#4a3329');rect(x+14,y-11,3,22,'#4a3329');rect(x,y-12,17,3,'#8d5d3c');line([[x+2,y+7],[x+14,y-9]],'#6f482f',2);}
+  }
+  for(const sx of shafts){const x=cellX(sx);ctx.globalAlpha=.32;rect(x-10,TOP,20,H-TOP,b.sky);ctx.globalAlpha=1;line([[x-5,TOP],[x-5,H-8]],'#77503a',2);line([[x+5,TOP],[x+5,H-8]],'#77503a',2);for(let y=TOP+8;y<H-8;y+=9)rect(x-5,y,10,2,'#a07047');}
+  // Room-specific survey furniture: pulley, ore cart, warning placards.
+  const py=cellY(lanes[1]);line([[132,TOP],[132,py-14]],'#8b765c');ctx.strokeStyle=b.accent;ctx.beginPath();ctx.arc(132,py-11,4,0,TAU);ctx.stroke();line([[132,py-7],[124,py+1]],'#8b765c');
+  rect(18,cellY(lanes[2])+3,16,7,'#463b38');rect(20,cellY(lanes[2])+1,12,3,b.soil2);ctx.fillStyle='#171518';ctx.beginPath();ctx.arc(22,cellY(lanes[2])+11,3,0,TAU);ctx.arc(31,cellY(lanes[2])+11,3,0,TAU);ctx.fill();
+  const sy=cellY(lanes[3]);poly([[138,sy-7],[150,sy-7],[147,sy+2],[141,sy+2]],b.accent);rect(143,sy+2,2,7,'#6f4c34');ctx.fillStyle=INK;ctx.font='bold 5px monospace';ctx.fillText('!',142,sy-2);
+}
+function tileColor(b,x,y){const h=hash(x+worldSeed,y+arenaNo*19);return h>.72?b.soil2:h<.18?b.deep:b.soil;}
+function drawTiles(b){
+  for(let y=1;y<ROWS-1;y++)for(let x=1;x<COLS-1;x++)if(grid[gi(x,y)]!==0){
+    const px=x*CELL,py=TOP+y*CELL,c=grid[gi(x,y)]===2?mix(b.deep,INK,.35):tileColor(b,x,y);rect(px,py,CELL,CELL,c);
+    const h=hash(x*13+worldSeed,y*17+arenaNo);if(h>.54)rect(px+1+(h*4|0),py+2,3,1,mix(c,b.edge,.36));if(h<.18)rect(px+5,py+5,2,2,b.deep);
+    if(grid[gi(x,y)]!==2){if(grid[gi(x,y-1)]===0)rect(px,py,CELL,2,b.edge);if(grid[gi(x-1,y)]===0)rect(px,py,2,CELL,mix(b.edge,b.deep,.45));}
+  }
+  // Uneven tunnel lips stop the carved world reading as a bare tile board.
+  ctx.globalAlpha=.55;for(let y=1;y<ROWS-1;y++)for(let x=1;x<COLS-1;x++)if(grid[gi(x,y)]===0&&grid[gi(x,y-1)]!==0){const px=x*CELL,py=TOP+y*CELL;poly([[px,py],[px+CELL,py],[px+CELL-1,py+2+(x+y)%2],[px+2,py+1]],mix(b.edge,b.deep,.25));}ctx.globalAlpha=1;
+}
+function drawTunnelProps(bi,b){
+  for(let i=0;i<18;i++){
+    const x=8+mod(i*37+arenaNo*11,145),row=lanes[mod(i+arenaNo,lanes.length)],y=cellY(row)+9,h=hash(i+worldSeed,bi*31);
+    if(h<.28){rect(x,y-6,1,6,mix(b.glow,b.deep,.2));ctx.fillStyle=b.glow;ctx.beginPath();ctx.ellipse(x,y-7,3,2,0,Math.PI,TAU);ctx.fill();}
+    else if(h<.52){poly([[x-3,y],[x,y-7],[x+3,y]],mix(b.edge,BONE,.25));rect(x,y-3,1,3,BONE);}
+    else if(h<.7){line([[x-4,y],[x-1,y-3],[x+3,y-1],[x+5,y-4]],mix(b.soil2,b.accent,.35));}
+  }
+  // Survey lamps mark the left refuge and shafts with built-world rhythm.
+  for(const x of shafts){const px=cellX(x),py=cellY(lanes[0])-8;rect(px-1,py-7,2,7,'#66513c');ctx.globalAlpha=.18;ctx.fillStyle=b.accent;ctx.beginPath();ctx.arc(px,py-8,10,0,TAU);ctx.fill();ctx.globalAlpha=1;rect(px-2,py-10,4,4,b.accent);}
+}
+function drawAct(b){
+  if(act.phase==='warn'){
+    const p=clamp(1-(act.landAt-showFrame)/act.warning,0,1);ctx.globalAlpha=.10+.15*p;rect(0,TOP,W,H-TOP,act.type==='magma'?RED:CYAN);ctx.globalAlpha=1;
+    ctx.fillStyle=act.type==='magma'?RED:CYAN;ctx.font='bold 6px monospace';ctx.fillText(act.type==='magma'?'^^ MAGMA RISE · CLIMB ^^':'TREMOR INBOUND · BRACE',act.type==='magma'?24:30,44);
+    if(act.safe){const x=cellX(act.safe.x),y=cellY(act.safe.y);ctx.strokeStyle=CREAM;ctx.strokeRect(x-5.5,y-5.5,11,11);}
+  }
+  if(act.phase==='live'&&act.type==='magma'){
+    const y=cellY(act.hazardLane)+7;ctx.globalAlpha=.82;rect(0,y,W,H-y,RED);for(let x=0;x<W;x+=9){const q=Math.sin(showFrame*.12+x)*2;rect(x,y-2+q,7,3,x%18?GOLD:'#ffead0');}ctx.globalAlpha=1;
+  }
+  for(const h of hazards){poly([[h.x-3,h.y-2],[h.x+2,h.y-3],[h.x+4,h.y+1],[h.x,h.y+4],[h.x-4,h.y+1]],b.edge);rect(h.x-1,h.y-1,2,1,b.accent);}
+}
+function dotPath(ax,ay,bx,by,c){const d=Math.hypot(bx-ax,by-ay),n=Math.floor(d/6);for(let i=1;i<n;i++){const t=i/n,x=ax+(bx-ax)*t,y=ay+(by-ay)*t;rect(x-1,y-1,2,2,c);}}
+function drawPlan(){
+  if(!plan||!traps[plan.trapId])return;const t=traps[plan.trapId],cx=cellX(t.cx),cy=cellY(t.row),pulse=.55+.35*Math.sin(showFrame*.14);
+  ctx.globalAlpha=.07+.04*Math.sin(showFrame*.11);rect(cx-11,cy-27,22,40,t.armed?MINT:GOLD);ctx.globalAlpha=1;
+  ctx.globalAlpha=pulse;ctx.strokeStyle=t.armed?MINT:GOLD;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx-11,cy-19);ctx.lineTo(cx-8,cy-25);ctx.lineTo(cx-2,cy-21);ctx.lineTo(cx+3,cy-27);ctx.lineTo(cx+10,cy-20);ctx.lineTo(cx+11,cy+12);ctx.lineTo(cx-11,cy+12);ctx.closePath();ctx.stroke();
+  line([[cx-8,cy-14],[cx-4,cy-10],[cx,cy-14],[cx+4,cy-9],[cx+8,cy-14]],t.armed?MINT:GOLD);
+  for(let i=0;i<3;i++){const x=cx-6+i*6,y=cy-5+mod(Math.floor(showFrame*.22)+i*5,13);poly([[x-2,y-2],[x+2,y-2],[x,y+1]],t.armed?MINT:GOLD);}
+  const points=[{x:digger.x,y:digger.y},...plan.points.map(q=>({x:cellX(q.x),y:cellY(q.y)}))];for(let i=1;i<points.length;i++)dotPath(points[i-1].x,points[i-1].y,points[i].x,points[i].y,i===1?GOLD:MINT);
+  ctx.globalAlpha=1;ctx.fillStyle=t.armed?MINT:GOLD;ctx.font='bold 5px monospace';ctx.fillText(t.armed?'ARMED · BAIT HERE':'PLANNED CAVE-IN',clamp(cx-28,3,103),cy-29);ctx.lineWidth=1;
+}
+function wantsActor(id){const selected=globalThis.__BB_VISUAL_ONLY_ACTOR;return selected===undefined||selected===null||selected===''||selected===id;}
+function drawTrapStructures(){
+  for(const t of traps)if((t.armed||t.arming>0)&&wantsActor('trap:'+t.id)){
+    const x=cellX(t.cx),y=cellY(t.row)-8;rect(x-8,y-4,16,3,'#493527');rect(x-7,y-5,2,14,'#96623b');rect(x+5,y-5,2,14,'#96623b');line([[x-6,y+4],[x+6,y-3]],'#d39a58',2);rect(x-2,y+3,4,5,t.armed?RED:'#766552');if(t.armed)rect(x-1,y+2,2,2,GOLD);
+  }
+}
+function drawCollapse(b){
+  for(const t of traps)if(t.fall>0){const cx=cellX(t.cx),cy=cellY(t.row),p=clamp(t.fall/26,0,1),settle=Math.max(0,t.fall-26);
+    for(let i=0;i<7;i++){const ox=(i-3)*4+(i%2),start=cy-26-(i%3)*3,y=start+(cy-start)*p+Math.min(7,settle*.12)*(i%2);ctx.save();ctx.translate(cx+ox,y);ctx.rotate((t.fall+i*9)*.045*(i%2?1:-1));poly([[-3,-3],[3,-2],[4,2],[0,4],[-4,2]],i%3?b.soil2:b.edge);rect(-1,-2,2,1,b.accent);ctx.restore();}
+    if(settle>0){ctx.globalAlpha=clamp(1-settle/80,.15,.75);for(let i=0;i<12;i++){const x=cx-15+mod(i*11,31),y=cy-8+mod(i*7+settle,19);rect(x,y,2,2,i%2?b.edge:b.accent);}ctx.globalAlpha=1;}
+  }
+}
+function drawDigger(){
+  if(!wantsActor('digger'))return;const x=Math.round(digger.x),y=Math.round(digger.y),f=digger.face||1,step=Math.floor(digger.walk/2)%2,pose=digger.pose,hit=digger.downFlash>0||digger.stun>0;
+  ctx.fillStyle='#09090b';ctx.beginPath();ctx.ellipse(x,y+7,7,2,0,0,TAU);ctx.fill();ctx.save();ctx.translate(x,y);ctx.scale(f,1);
+  // Backpack, articulated boots, torso, lamp helmet, face, and working pick.
+  rect(-6,-5,4,10,'#3c5562');rect(-7,-3,2,5,'#79a0a5');
+  const stride=pose==='run'||pose==='dig'?(step?1:-1):0;line([[-2,4],[-3+stride,8]],'#473326',2);line([[2,4],[3-stride,8]],'#473326',2);rect(-5+stride,7,4,2,'#2b2423');rect(1-stride,7,4,2,'#2b2423');
+  rect(-4,-5,8,10,hit?CREAM:'#d18348');rect(-3,0,6,4,'#875233');
+  const lean=pose==='run'?1:pose==='dig'?2:0;ctx.fillStyle=hit?'#fff5db':'#b46b45';ctx.beginPath();ctx.arc(2+lean,-7,4,0,TAU);ctx.fill();
+  poly([[-5,-8],[1,-12],[6,-8],[5,-5],[-5,-5]],persona.c);rect(-1,-12,5,2,mix(persona.c,'#ffffff',.35));rect(4,-9,3,3,GOLD);ctx.globalAlpha=.25;rect(6,-10,5,4,GOLD);ctx.globalAlpha=1;
+  rect(3+lean,-8,1,1,INK);if(pose==='taunt')line([[5,-5],[8,-8]],CREAM,2);
+  const swing=pose==='dig'?Math.sin(showFrame*.28)*.8:-.5;ctx.save();ctx.translate(1,-2);ctx.rotate(swing);line([[0,0],[7,4]],'#d8b476',2);poly([[5,2],[10,1],[8,5]],'#8fa3a1');ctx.restore();
+  if(pose==='set'){rect(5,1,4,5,RED);rect(6,0,2,2,GOLD);}ctx.restore();
+}
+function drawBossBody(type){
+  const m=MONSTERS[type],x=Math.round(boss.x),y=Math.round(boss.y),f=boss.face||-1,step=Math.floor(boss.walk/2)%2,hit=boss.hitT>0,stun=boss.stun>0,charge=boss.pose==='charge';
+  ctx.fillStyle='#09090c';ctx.beginPath();ctx.ellipse(x,y+10,15,3,0,0,TAU);ctx.fill();ctx.save();ctx.translate(x,y);ctx.scale(f,1);if(stun)ctx.rotate(Math.sin(showFrame*.35)*.04);
+  const tail=charge?3:Math.sin(showFrame*.12)*2;poly([[-12,-1],[-16,-6+tail],[-15,1],[-11,4]],m.belly);
+  // Four gait points, plated torso, separate neck/head, jaw, eye, and horns.
+  for(const q of[[-8,5,step?2:0],[-2,6,step?-1:1],[5,6,step?1:-1],[10,5,step?0:2]]){line([[q[0],q[1]],[q[0]+q[2],11]],m.belly,3);rect(q[0]+q[2]-2,10,5,2,m.plate);}
+  ctx.fillStyle=hit?CREAM:m.body;ctx.beginPath();ctx.ellipse(-1,0,13,8,0,0,TAU);ctx.fill();
+  for(let i=-8;i<=7;i+=5)poly([[i,-5],[i+3,-11-(i%3)],[i+6,-4]],hit?CREAM:m.plate);
+  ctx.fillStyle=hit?CREAM:m.body;ctx.beginPath();ctx.ellipse(9,0,7,7,0,0,TAU);ctx.fill();rect(9,2,8,5,m.belly);
+  if(type===0){poly([[10,-5],[16,-12],[15,-4]],m.plate);poly([[6,-5],[9,-10],[10,-4]],m.plate);}
+  else if(type===1){poly([[8,-5],[13,-13],[13,-4]],BONE);poly([[3,-5],[4,-11],[8,-4]],BONE);rect(-7,-7,12,3,BONE);}
+  else if(type===2){poly([[10,-5],[17,-8],[14,-3]],m.plate);poly([[-5,-6],[-1,-13],[2,-5]],RED);}
+  else{poly([[8,-5],[15,-12],[14,-3]],m.plate);poly([[1,-6],[4,-13],[7,-5]],m.plate);rect(-5,-9,5,3,m.plate);}
+  rect(12,-2,2,2,m.eye);rect(13,-2,1,1,INK);if(boss.pose==='roar')poly([[12,3],[17,4],[14,7]],INK);else rect(14,4,3,1,INK);
+  if(stun&&boss.hp>0){for(let i=0;i<3;i++){const a=showFrame*.08+i*TAU/3;rect(Math.cos(a)*13-1,-15+Math.sin(a)*3,2,2,GOLD);}}
+  ctx.restore();
+}
+function drawBoss(){if(wantsActor('boss'))drawBossBody(boss.type);}
+function drawPursuitTell(){if(!boss.taunted||boss.retreat>0||state!=='hunt')return;ctx.globalAlpha=.7;dotPath(boss.x,boss.y-4,digger.x,digger.y-4,RED);ctx.globalAlpha=1;const x=boss.x+(digger.x-boss.x)*.34,y=boss.y+(digger.y-boss.y)*.34-4;poly([[x-3,y-3],[x+3,y],[x-3,y+3]],RED);}
+function drawTexts(){for(const q of texts){ctx.globalAlpha=Math.min(1,q.t/14);ctx.font='bold 6px monospace';ctx.fillStyle=q.c;ctx.fillText(q.s,clamp(q.x-q.s.length*1.8,3,W-q.s.length*3.6-3),q.y);}ctx.globalAlpha=1;}
+function drawForeground(b){ctx.globalAlpha=.88;for(let x=0;x<W;x+=18){const h=4+(hash(x+arenaNo,worldSeed)*8|0);poly([[x,H],[x,H-h],[x+5,H-h-3],[x+11,H-h+1],[x+18,H]],x%36?b.deep:b.soil2);}ctx.globalAlpha=1;}
+function drawHUD(b){
+  ctx.globalAlpha=.94;rect(0,0,W,39,INK);ctx.globalAlpha=1;ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('BURROW BOSS',4,10);ctx.fillStyle=b.accent;ctx.fillText('C'+(arenaNo+1),143,10);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.c;ctx.fillText((digger.intent&&digger.intent.tactic||'OUTLINE THE FALL').slice(0,25),4,20);ctx.fillStyle='#a99cb0';ctx.fillText(MONSTERS[boss.type].name,4,30);
+  for(let i=0;i<boss.maxHp;i++){rect(63+i*12,25,9,4,'#342735');if(i<boss.hp)rect(63+i*12,25,9,4,boss.hitT?CREAM:RED);}ctx.fillStyle=MINT;ctx.fillText(stats.bosses+' BURIED',109,30);
+  if(state==='victory'||state==='escape'){ctx.globalAlpha=.84;rect(13,139,134,62,INK);ctx.globalAlpha=1;ctx.strokeStyle=state==='victory'?GOLD:RED;ctx.strokeRect(13.5,139.5,133,61);ctx.font='bold 10px monospace';ctx.fillStyle=state==='victory'?GOLD:RED;ctx.fillText(state==='victory'?'CAVE-IN LANDS':'MONSTER ESCAPES',state==='victory'?31:25,168);ctx.font='bold 6px monospace';ctx.fillStyle=CREAM;ctx.fillText(state==='victory'?'THE NEXT CHAMBER OPENS':'FOLLOW IT DEEPER',39,185);}
+  if(state==='ending'){ctx.globalAlpha=.88;rect(10,128,140,82,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(10.5,128.5,139,81);ctx.font='bold 10px monospace';ctx.fillStyle=GOLD;ctx.fillText(outcome,clamp(80-outcome.length*3,15,70),159);ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;ctx.fillText(stats.bosses+' BOSSES · '+stats.hits+' CAVE-INS',31,184);}
+  drawSession();
+}
+function render(){
+  const b=BIOMES[mod(arenaNo,4)];skyAndStrata(b);drawLandmark(mod(arenaNo,4),b);drawMineworks(b);drawTiles(b);drawTunnelProps(mod(arenaNo,4),b);drawAct(b);drawPlan();drawPursuitTell();
+  preDraw();drawTrapStructures();drawCollapse(b);drawDigger();drawBoss();drawParts();drawTexts();postDraw();drawForeground(b);
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.13;rect(0,TOP,W,H-TOP,GOLD);ctx.globalAlpha=1;}drawHUD(b);
+}
+
+// ---- deterministic evidence surfaces -----------------------------------------
+function signature(){return JSON.stringify({
+  state,runFrame,arenaFrame,worldSeed,arenaNo,grid:Array.from(grid).join(''),persona:persona.name,
+  digger:[round(digger.x),round(digger.y),round(digger.vx),round(digger.vy),digger.face,digger.pose,digger.stun,digger.digKey,digger.digT],
+  boss:[round(boss.x),round(boss.y),round(boss.vx),round(boss.vy),boss.face,boss.pose,boss.type,boss.homeRow,boss.hp,boss.stun,boss.aggro,boss.taunted,boss.rage,boss.hitT,boss.slipT,boss.retreat],
+  traps:traps.map(t=>[t.id,t.armed,t.arming,t.used,t.fall,t.impact,t.hit,round(t.crack)]),
+  plan:plan&&[plan.trapId,plan.stage,plan.serial],act:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.hazardLane],
+  hazards:hazards.map(h=>[round(h.x),round(h.y),round(h.vy),h.t,h.kind]),
+  stats:[stats.plans,stats.trapsSet,stats.lures,stats.caveIns,stats.hits,stats.slips,stats.bosses,stats.downs,stats.tilesDug,stats.acts,stats.lapses,stats.events,stats.progress,stats.apexes,stats.nearMisses,stats.chapters,stats.panicDrops,stats.appliedIntents]
+});}
+globalThis.__burrowBossProbe=()=>({state,runFrame,showFrame,arenaFrame,arenaNo,biome:BIOMES[mod(arenaNo,4)].name,persona:persona.name,outcome,finite:finite(),
+  digger:{x:digger.x,y:digger.y,vx:digger.vx,vy:digger.vy,pose:digger.pose,tactic:digger.intent&&digger.intent.tactic,stun:digger.stun},
+  boss:{x:boss.x,y:boss.y,vx:boss.vx,vy:boss.vy,pose:boss.pose,type:MONSTERS[boss.type].name,hp:boss.hp,stun:boss.stun,aggro:boss.aggro},
+  plan:plan&&{trapId:plan.trapId,stage:plan.stage,score:plan.score,runway:plan.runway,serial:plan.serial},
+  traps:traps.map(t=>({id:t.id,cx:t.cx,row:t.row,armed:t.armed,used:t.used,fall:t.fall,impact:t.impact,hit:t.hit})),
+  act:{phase:act.phase,type:act.type,warnAt:act.warnAt,landAt:act.landAt,endAt:act.endAt,warning:act.warning,notes:act.notes.slice()},
+  stats:Object.assign({},stats),maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),show:SHOW.probe(),playing:playing()});
+globalThis.__burrowBossSignature=signature;
+globalThis.__burrowBossNextRandom=()=>E.random();
+globalThis.__soakProbe=()=>({sig:[Math.round(digger.x*10),Math.round(digger.y*10),digger.pose,Math.round(boss.x*10),Math.round(boss.y*10),boss.pose,traps.reduce((n,t)=>n+t.fall,0),hazards.length].join('|'),events:eventSerial,progress:progressSerial,finite:finite()});
+globalThis.__burrowBossPlannerFixture=()=>{const before=signature(),a=chooseTrapPlan(),mid=signature(),b=chooseTrapPlan(),after=signature();return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),plan:a,candidates:traps.filter(t=>!t.used).map(planCandidate),finite:finite()};};
+globalThis.__burrowBossMotion=()=>[round(digger.x,7),round(digger.y,7),round(digger.vx,7),round(digger.vy,7),digger.intent&&digger.intent.tactic,plan&&plan.trapId,plan&&plan.stage].join('|');
+globalThis.__burrowBossActFixture=type=>{act.phase='calm';act.type=type||'tremor';act.index=act.type==='magma'?1:0;act.warnAt=showFrame+1;act.notes=[];plan=null;boss.taunted=false;boss.aggro=0;digger.x=cellX(13);digger.y=cellY(lanes[lanes.length-1]);return globalThis.__burrowBossProbe();};
+globalThis.__burrowBossAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const a=rawBotDecision();globalThis.__NO_ADMIRE=1;const b=rawBotDecision();delete globalThis.__NO_ADMIRE;pres=old;return{admired:a.tactic,gated:b.tactic};};
+globalThis.__burrowBossIntentSchemas=()=>{const h=humanIntent(),b=rawBotDecision();return{human:h,bot:b,humanKeys:Object.keys(h).sort(),botKeys:Object.keys(b).sort()};};
+globalThis.__burrowBossManual=()=>({playing:playing(),x:digger.x,y:digger.y,intent:digger.intent&&Object.assign({},digger.intent)});
+
+function diggerBox(){return{x:digger.x-11,y:digger.y-15,width:22,height:27};}
+function bossBox(){return{x:boss.x-17,y:boss.y-16,width:34,height:30};}
+function trapBox(t){return{x:cellX(t.cx)-12,y:cellY(t.row)-15,width:24,height:24};}
+function visualActors(){const out=[{id:'digger',kind:'digger',type:persona.name.toLowerCase(),box:diggerBox()},{id:'boss',kind:'boss',type:MONSTERS[boss.type].name.toLowerCase(),box:bossBox()}];for(const t of traps)if(t.armed||t.arming>0)out.push({id:'trap:'+t.id,kind:'structure',type:'shoring-charge',box:trapBox(t)});return out;}
+function visualLayout(){
+  const t=plan&&traps[plan.trapId]||traps[0],visibleSpawnX=154,contactX=cellX(t.cx),goalX=8,
+    trapRunways=traps.map(q=>({id:q.id,contactX:cellX(q.cx),fraction:(visibleSpawnX-cellX(q.cx))/(visibleSpawnX-goalX)})),
+    minApproachVisibilityFraction=Math.min(...trapRunways.map(q=>q.fraction));
+  return{playfield:{x:0,y:TOP,width:160,height:300},visibleSpawnX,contactX,goalX,
+    approachVisibilityFraction:(visibleSpawnX-contactX)/(visibleSpawnX-goalX),trapRunways,minApproachVisibilityFraction};
+}
+globalThis.__burrowBossVisualProbe=()=>({frame:showFrame,beat:visualBeat,biome:BIOMES[mod(arenaNo,4)].name,bossType:MONSTERS[boss.type].name,actors:visualActors(),layout:visualLayout(),diggerBox:diggerBox(),bossBox:bossBox(),planStage:plan&&plan.stage,collapse:traps.some(t=>t.fall>0),danger:dist(digger,boss)<38,finite:finite()});
+globalThis.__burrowBossSetVisualBeat=name=>{
+  visualFixture=false;resetGame(true);visualFixture=true;visualBeat=name;const parts=String(name).split(':'),base=parts[0],variant=Number(parts[1]);if(Number.isFinite(variant))visualBossVariant=clamp(variant,0,3);
+  const setArena=n=>{arenaNo=n;buildArena(n);state='hunt';};
+  if(base==='opening'){setArena(0);digger.x=22;digger.y=cellY(lanes[0]);boss.x=150;boss.y=cellY(lanes[2]);startPlan();}
+  else if(base==='tunneling'){setArena(0);digger.x=cellX(8);digger.y=cellY(10);digger.pose='dig';digger.intent=targetIntent({x:10,y:14},'DIG TO THE WEAK SEAM');boss.x=145;boss.y=cellY(lanes[1]);startPlan();}
+  else if(base==='trap-plan'){setArena(0);plan=planCandidate(traps[1]);plan.serial=1;plan.stage='set';digger.x=cellX(traps[1].anchor.x);digger.y=cellY(traps[1].anchor.y);digger.pose='set';digger.intent=targetIntent(traps[1].anchor,'SET THE SHORING CHARGE',{set:true});boss.x=144;boss.y=cellY(traps[1].row);}
+  else if(base==='lure'||base==='pursuit'||base==='danger'||base==='slip'){
+    setArena(base==='slip'?1:0);const t=traps[1];t.armed=true;t.arming=72;plan=planCandidate(t);plan.serial=1;plan.stage='lure';digger.x=base==='lure'?cellX(t.bait.x):cellX(t.cx-2);digger.y=cellY(t.row);digger.pose=base==='lure'?'taunt':'run';digger.face=-1;digger.intent=targetIntent(t.escape,base==='lure'?'LURE RUN!':'RUN THE LURE');boss.x=base==='danger'?digger.x+22:base==='slip'?cellX(t.cx)-18:base==='pursuit'?digger.x+38:142;boss.y=cellY(t.row);boss.taunted=true;boss.aggro=900;boss.pose=base==='lure'?'roar':'charge';
+    if(base==='slip'){t.used=true;t.fall=34;t.impact=true;t.hit=false;boss.slipT=40;say('IT SLIPS THE FALL!',RED,cellX(t.cx),cellY(t.row)-24,100);}
+  }
+  else if(base==='collapse'||base==='apex'){
+    setArena(base==='apex'?3:2);const t=traps[1];t.armed=true;t.arming=72;t.used=true;t.fall=base==='collapse'?17:28;t.impact=base==='apex';t.hit=base==='apex';plan=planCandidate(t);plan.serial=1;plan.stage='lure';digger.x=cellX(2);digger.y=cellY(t.row);digger.pose='survey';digger.intent=admireIntent();boss.x=cellX(t.cx);boss.y=cellY(t.row);boss.pose=base==='apex'?'buried':'charge';boss.hitT=base==='apex'?30:0;if(base==='apex'){boss.hp=0;offer('visual-boss-buried',3,boss.x,boss.y,'fixture');fxBurst(boss.x,boss.y,42,GOLD,3,.04);say(MONSTERS[boss.type].name+' BURIED!',GOLD,boss.x,boss.y-27,120);}
+  }
+  else if(base==='later'){setArena(3);digger.x=cellX(4);digger.y=cellY(lanes[1]);boss.x=139;boss.y=cellY(lanes[1]);for(const t of traps){t.armed=true;t.arming=72;t.used=t.id<6;}startPlan();}
+  else if(base==='warning'){setArena(2);digger.x=cellX(12);digger.y=cellY(lanes[3]);boss.x=142;boss.y=digger.y;startPlan();act.index=1;warnAct();digger.intent=targetIntent(act.safe,'CLIMB ABOVE THE MAGMA');}
+  else if(base==='scale-contract'){
+    setArena(visualBossVariant);boss.type=visualBossVariant;boss.x=118;boss.y=cellY(lanes[1]);boss.pose=visualBossVariant%2?'charge':'prowl';digger.x=38;digger.y=cellY(lanes[1]);digger.pose='dig';const t=traps[1];t.armed=true;t.arming=72;plan=planCandidate(t);plan.serial=1;plan.stage='lure';digger.intent=targetIntent(t.escape,'RUN THE LURE');
+  }else return false;
+  return true;
+};
+globalThis.__burrowBossVisualBeats=['opening','tunneling','trap-plan','lure','pursuit','danger','collapse','slip','later','warning','apex'];
+
+initSession('burrow-boss',[
+  ['ARROWS','DIG / RUN'],['SPACE','SET SHORING CHARGE'],['X','TAUNT THE MONSTER'],
+  ['Z / SHIFT','DROP THE CAVE-IN'],['ESC','RETURN TO AUTOPILOT']
+],{viewer:true});
+resetGame(true);start(()=>step(),()=>render());
+</script>
+</html>

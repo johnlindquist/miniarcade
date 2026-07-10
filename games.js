@@ -23,5 +23,7 @@
   {id:'neon-getaway',title:'NEON GETAWAY',label:'neon getaway',tagline:'swerve · swap · lose the heat',tone:'ng'},
   {id:'pico-cap',title:'PICO CAP',label:'pico cap',tagline:'shrink · slash · restore the glades',tone:'pc'},
   {id:'frog-convoy',title:'FROG CONVOY',label:'frog convoy',tagline:'lead · gather · arrive together',tone:'fc'},
-  {id:'tower-panic',title:'TOWER PANIC',label:'tower panic',tagline:'climb · reroute · bring them home',tone:'tp'}
+  {id:'tower-panic',title:'TOWER PANIC',label:'tower panic',tagline:'climb · reroute · bring them home',tone:'tp'},
+  {id:'burrow-boss',title:'BURROW BOSS',label:'burrow boss',tagline:'dig · bait · collapse',tone:'bb'},
+  {id:'raiders-cart',title:'RAIDERS OF THE LOST CART',label:'raiders of the lost cart',tagline:'push · divert · outrun the roll',tone:'rc'}
 ]));

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "game": "burrow-boss",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "2d9cac68d529c28fb3d9a05f15aa2e8a42e1ba563a600ff71f88137324c021c6",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "seed": "0x42555252",
+  "checkpoints": [
+    "opening@12",
+    "tunneling@9",
+    "trap-plan@12",
+    "lure@12",
+    "pursuit@13",
+    "danger@9",
+    "warning@12",
+    "collapse@9",
+    "slip@12",
+    "later@12",
+    "apex@6"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native size the helmeted digger reads through facing, gait, pick swing, set, taunt, run, and tumble poses; the four 33px bosses have distinct plated silhouettes, articulated legs, heads, horns, pursuit, stagger, slip, and burial reactions."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Layered strata, irregular tunnel lips, rails, ladders, braces, carts, lamps, roots, fossils, forge hardware, crystals, props, lighting, and foreground rubble make the HUD-free strip read as a constructed underground hunt."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Root Warren, Fossil Choir, Ember Vault, and Prism Cathedral alter lane and shaft composition, landmark silhouettes, materials, environmental motion, hazards, monster construction, and value structure rather than relying on palette swaps."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The sequence presents work and anticipation before the chase, articulated pursuit during the lure, falling rock geometry at contact, persistent opened ceiling and rubble afterward, a readable monster slip, and a broad burial apex with hit response and follow-through."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The gold or mint cave-in polygon, dotted lure route, falling chevrons, red pursuit tell, safe-cell warning, small bright digger, large warm boss, and explicit hit or slip text remain separable at 160x360 beside the reference rows."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Mining materials, timber infrastructure, compact actor construction, gold survey grammar, mint armed state, red danger language, chamber palettes, pixel HUD, and rockfall payoff share one authored subterranean visual system."
+    }
+  }
+}
