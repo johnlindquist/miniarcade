@@ -1,7 +1,8 @@
 # SIDE/QUEST Bot Intelligence Audit
 
-Audit of the AI in all eleven self-playing games, their eval coverage, and a plan for
-consolidating bot infrastructure and building evals that measure what actually matters:
+Audit of the AI in the original eleven self-playing games, plus the three-game
+fusion-max expansion, their eval coverage, and a plan for consolidating bot
+infrastructure and building evals that measure what actually matters:
 **fun to watch, sometimes creative, never stuck**.
 
 Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.js`,
@@ -11,6 +12,9 @@ Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.
 
 | Game | Intelligence | Variety/Creativity | autoplay.js usage | Deliberate imperfection | Eval watchability coverage |
 |---|---|---|---|---|---|
+| APOGEE FOUNDRY | 5/5 — phase targeting, copied-state orbital planning, dock guidance, physical recovery | 4/5 — three personas, cutoff lapses, three mechanical upgrade stages | `controllerMux` | bounded late cutoffs, visible calibrated replans | 20 seeded 15m endings, planner and sensor-policy A/Bs, exact trajectory/show/recovery contracts |
+| SKYHOOK YARD | 5/5 — exact pendulum/free-flight release planning and next-frame catcher validation | 4/5 — Rigger/Slinger/Closer profiles, showboat and steady-hands arcs | `controllerMux`, `skillProfile` | reaction delay, lapses, confidence-driven risky drops | 20 seeded 10m bands, two independent policy A/Bs, 100-job solvability, final-airship proof |
+| TIDELATCH | 5/5 — copied fixed-point flow schedules with conserved water and sediment | 4/5 — three reserve/risk personas, honest dry districts and breaches | `controllerMux`, `moveToward` | persona overflow tolerance and retained failures | 20 seeded 10m bands, planner A/B, conservation/order proofs, exact River Crown |
 | SCRAP SHIFT | 5/5 — A* over nav graph, intercept solving, target hysteresis, roles | 4/5 — four personas (VOLT/FORK/BULWARK/WISP), director set-pieces | `findPath`, `controllerMux` | plan-duration jitter, fire spread | **Best in repo**: damage-lull cap, low-speed cap, mode presence, action bands |
 | MEAT LAD | 5/5 — model-predictive: simulates real physics over jump candidates | 3/5 — depth-scaled deliberate fumbles (`err` up to 0.3) | **none** (doesn't load it) | yes — intentional under-powered jumps | progress + solvability only; can't tell clean play from warp-rescues |
 | BLOCK MINE | 4/5 — weighted A* w/ state-dependent costs, trips, combat tactics | 3/5 — world seed + seeded tower blueprints; **no persona** | `BinaryHeap` only | none | rich competence floors + 30m never-stuck seed search; no variety/pacing metric |
@@ -28,13 +32,13 @@ Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.
 The smartest bots (Meat Lad, Scrap Shift, Block Mine) hand-roll nearly everything;
 `simulateCandidates`, `searchPath`/`findPath`, `createMemory`, `firstApplicable`,
 `seek`/`flee`/`steer`, and `generateValidated` are essentially unused across all
-eleven games (Meat Lad doesn't even load `autoplay.js` — it needs bit-identical
+original eleven games (Meat Lad doesn't even load `autoplay.js` — it needs bit-identical
 physics as ground truth, which is legitimate).
 
 Implication: don't force planner consolidation — games rightly own tactics. The
 consolidation win is the **watchability layer**: `skillProfile`, personas, watchdogs,
-and standardized telemetry, which are game-agnostic. Only 3 of 11 games use
-`skillProfile`; only 2 use `progressWatchdog` while all eleven hand-roll stall guards.
+and standardized telemetry, which are game-agnostic. Only 3 of the original 11 games use
+`skillProfile`; only 2 use `progressWatchdog` while all original eleven hand-roll stall guards.
 
 ## Finding 2 — Anti-stall scar tissue is the repo's dominant pattern
 
@@ -107,7 +111,7 @@ Existing mechanisms, best-first:
    output (generalize what blockmine-30m already writes), and a `bootGame`-based runner.
    Port blockmine-30m-eval off its hand-rolled `eval()` boot onto `harness.bootGame`.
 
-## B. A generic watchability eval (one runner, eleven games)
+## B. A generic watchability eval (one runner, original eleven games)
 
 Compute from the standard event stream, per seed:
 
@@ -203,7 +207,7 @@ human-flavored imperfection), don't widen the band.
 
 ## Environment acts + payoff ladders (2026-07-09, fusion-max council)
 
-All eleven games now run `E.createShow` (see AGENTS.md "Acts and the payoff
+All original eleven games now run `E.createShow` (see AGENTS.md "Acts and the payoff
 ladder"). Per-game acts, each proven by a warn-phase A/B divergence against
 `__NO_ACTS` plus exact apex time budgets:
 
@@ -232,6 +236,46 @@ silently reset runs — the speed-curve band caught it); the kernel event log is
 bounded, so long-window telegraph pairing needs a footer note collector
 (Deadline Deck); pick A/B seeds so the pre-positioning situation actually
 arises during the first warn window, and document the rejected seeds.
+
+## Fusion-max expansion: three new simulation families (2026-07-09)
+
+Council session:
+`~/.fusion/sessions/2026/07/09/2026-07-09T23-58-46-002Z-e3db4e`.
+The selected slate deliberately avoids every existing primary mechanic:
+conserved-fluid routing, pendulum logistics, and orbital phasing/construction.
+
+1. **Tidelatch.** Twenty measured ten-minute seeds produced 134–156 deliveries,
+   5–19 dry failures, and 0–2 breaches. The copied-state flow planner beat greedy
+   routing 10/10 seeds and raised median deliveries 122.5→144.5 (+18.0%).
+   Water/sediment ledgers and edge-order independence are exact; breach repair is
+   a physical drone trip. The 12-minute River Crown spends exactly 6 held, 18
+   slowed, and 36 admire frames. The council's provisional 40–120 delivery range
+   was rejected after measurement; the permanent 125–190 band is derived from
+   the 20-seed distribution with margin.
+2. **Skyhook Yard.** The release planner beats reactive sight-lines 10/10 seeds
+   (141 vs 56 catches, +152%). A separate stale-release guard A/B reduces crashes
+   23→16 while preserving catches (129 vs 125); `__NO_RELEASE_GUARD` restores
+   the complete old patience policy. Across twenty ten-minute seeds: 61–73
+   catches, 3–9 crashes, 1–6 visible salvages, 70–77 releases, and a 16.2s worst
+   release gap. All 100 legal job fixtures solve, and the final engine unfolds
+   into an airship lift at 12.32 minutes.
+3. **Apogee Foundry.** Twenty fixed seeds consume exactly 20 delivered parts to
+   build Relay/Habitat/Crown and ignite 20/20 endings; all three personas and 20
+   distinct outcomes appear. Phase planning wins 9/10, improves median docks
+   9→12.5, and cuts p95 first capture 2878→693f. No fragment position or velocity
+   reset is invisible. Two independently ablated sensor fixes prove depot handoff
+   (10000→1657f progress lull) and physical pursuit calibration (5814→2064f);
+   replan/calibration behavior stays under 14.4% of commands across all endings.
+   Exact apex accounting is 6 hold / 24 slow / 60 kernel admire / 38 executed
+   admire, with zero sticky or ablated commands. After fixing the real
+   handed-off-fragment chase, the 20-seed progress-lull range was 29.3–63.7s;
+   the permanent ceiling is pinned at 65s rather than the rejected provisional
+   180s allowance.
+
+All three retain `__NO_PAYOFF_FX` same-seed simulation parity, exact 180–240f
+act telegraphs with physical warning-phase divergence, common human/bot intent
+paths, three native-resolution 60-second render probes, and deterministic
+15-minute ending renders.
 
 ## D. Per-game priorities
 

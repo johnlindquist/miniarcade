@@ -14,5 +14,8 @@
   {id:'webslam',title:'WEB SLAM',label:'web slam',tagline:"swing · serve · send 'em",tone:'ws'},
   {id:'deadline-deck',title:'DEADLINE DECK',label:'deadline deck',tagline:'throw · grind · beat the press',tone:'dd'},
   {id:'scrapshift',title:'SCRAP SHIFT',label:'scrap shift',tagline:'ram · arm · outlast',tone:'ss'},
-  {id:'misregister',title:'MISREGISTER',label:'misregister',tagline:'vault · align · print',tone:'mr'}
+  {id:'misregister',title:'MISREGISTER',label:'misregister',tagline:'vault · align · print',tone:'mr'},
+  {id:'skyhook',title:'SKYHOOK YARD',label:'skyhook yard',tagline:'swing · release · launch',tone:'sy'},
+  {id:'apogee',title:'APOGEE FOUNDRY',label:'apogee foundry',tagline:'phase · capture · ignite',tone:'af'},
+  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'route · store · crown the city',tone:'tl'}
 ]));

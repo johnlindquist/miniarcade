@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TIDELATCH</title>
+<style>
+  html,body{margin:0;height:100%;background:#07131f}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#0b1c2b}
+  canvas:focus-visible{outline:2px solid #63f3df;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Tidelatch. Route a living river through a vertical city, balance districts, flush silt, and repair visible breaches."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,RI,hash,clamp,rect,ring,stepRings,drawRings,stepParts,drawParts,preDraw,postDraw,
+  shake,start,keys,tap,manual,initSession,sessionStep,drawSession,playing,addScore,createShow,fxBurst}=E;
+const{controllerMux,moveToward}=AI;
+
+const INK='#07131f',DEEP='#0b1c2b',PIPE='#273b4d',WATER='#31b9d7',CYAN='#63f3df',
+  BLUE='#2b6ea6',SILT='#a56b3f',AMBER='#ffc857',CORAL='#ff6b6b',MINT='#76e6a2',PAPER='#e7f4ef';
+const NODE_SPECS=[
+  ['HEAD','reservoir',80,48,5200,0],['WEST','junction',43,94,1500,0],['EAST','junction',117,94,1500,0],
+  ['W TANK','tank',25,151,3000,1],['CISTERN','tank',80,153,3200,1],['E TANK','tank',135,151,3000,1],
+  ['MILLS','district',29,224,1200,0],['GLASS','district',78,224,1200,2],['GARDENS','district',131,224,1200,3],
+  ['CROWN','district',80,292,1400,4],['RETURN','catch',80,337,6000,0]
+];
+// id,a,b,rate,pipe-cap,gate,pump,fragile,unlock,controllable,label,turbine
+const EDGE_SPECS=[
+  [0,0,1,18,520,72,0,1,1,1,'W HEAD',1],[1,0,2,18,520,72,0,1,1,1,'E HEAD',1],
+  [2,1,3,14,420,55,0,0,1,1,'W BANK',0],[3,2,5,14,420,55,0,0,1,1,'E BANK',0],
+  [4,1,4,13,460,45,0,1,2,1,'W LINK',0],[5,2,4,13,460,45,0,1,2,1,'E LINK',0],
+  [6,3,6,12,420,100,0,1,1,1,'MILLS',0],[7,4,7,12,420,0,0,1,2,1,'GLASS',0],
+  [8,5,8,12,420,0,0,1,3,1,'GARDENS',0],[9,4,9,15,500,0,1,1,4,1,'CROWN LIFT',0],
+  [10,3,4,12,420,0,1,0,2,1,'W PUMP',0],[11,5,4,12,420,0,1,0,3,1,'E PUMP',0],
+  [12,6,10,7,250,0,0,0,1,0,'MILL RUN',0],[13,7,10,7,250,0,0,0,2,0,'GLASS RUN',0],
+  [14,8,10,7,250,0,0,0,3,0,'GARDEN RUN',0],[15,9,10,8,280,0,0,0,4,0,'CROWN RUN',0],
+  [16,0,10,24,620,8,0,0,1,1,'SPILLWAY',0],[17,4,10,18,520,10,0,0,2,1,'SILT FLUSH',0]
+];
+const DIST_SPECS=[
+  ['MILLS',6,0,0],['GLASS',7,9000,1],['GARDENS',8,18000,2],['CROWN',9,27000,3]
+];
+const PERSONAS=[
+  {name:'CONSERVATOR',reserve:62,overflow:72,pump:55,color:MINT},
+  {name:'SPRINTER',reserve:34,overflow:88,pump:86,color:AMBER},
+  {name:'SHOWBOAT',reserve:45,overflow:80,pump:72,color:CYAN}
+];
+const SHOW=createShow({tiers:{
+  1:{frames:14},
+  2:{frames:48,minGap:90},
+  3:{frames:100,minGap:300,hold:6,slowEvery:3,slowFrames:18,admire:36}
+}});
+
+let showFrame=0,cityFrame=0,WORLD,districts,stats,persona,personaIndex=0,cityVariant=0;
+let selectedGate=0,selectedPump=0,lastIntent=null,nextPlanFrame=0,plannedEdges=[],presentation={admire:false};
+let cloud,silt,crowned=false,crownCharge=0,crownWave=0,lastDeliveryFrame=0,lastActivityFrame=0;
+let drone,texts=[];
+const gateIds=EDGE_SPECS.filter(s=>s[9]).map(s=>s[0]),pumpIds=EDGE_SPECS.filter(s=>s[6]).map(s=>s[0]);
+
+function makeNode(s,i){return{id:i,name:s[0],kind:s[1],x:s[2],y:s[3],cap:s[4],unlock:s[5],v:0,sed:0,pressure:0};}
+function makeEdge(s){return{id:s[0],a:s[1],b:s[2],rate:s[3],cap:s[4],gate:s[5],gateTarget:s[5],pump:!!s[6],
+  fragile:!!s[7],unlock:s[8],control:!!s[9],label:s[10],turbine:!!s[11],pipe:0,sed:0,pumpDir:1,
+  energyCarry:0,lastIn:0,lastOut:0,flowDir:1,flowPhase:0,broken:false,wear:0,breachAt:-1};}
+function cloneWorld(src){return{nodes:src.nodes.map(n=>({...n})),edges:src.edges.map(e=>({...e})),power:src.power,
+  level:src.level,source:src.source,delivered:src.delivered,spilled:src.spilled,returned:src.returned,
+  sourceSed:src.sourceSed,sedWaste:src.sedWaste,initial:src.initial,initialSed:src.initialSed};}
+const currentWater=S=>S.nodes.reduce((a,n)=>a+n.v,0)+S.edges.reduce((a,e)=>a+e.pipe,0);
+const waterLedger=S=>currentWater(S)+S.delivered+S.spilled+S.returned-S.source;
+const currentSed=S=>S.nodes.reduce((a,n)=>a+n.sed,0)+S.edges.reduce((a,e)=>a+e.sed,0);
+const sedLedger=S=>currentSed(S)+S.sedWaste-S.sourceSed;
+const edgeOpen=(S,e)=>!e.broken&&e.unlock<=S.level&&e.gate>0;
+const edgeEnds=e=>e.pump&&e.pumpDir<0?[e.b,e.a]:[e.a,e.b];
+const gateRate=e=>Math.max(0,Math.floor(Math.max(1,e.rate-Math.floor(e.sed/180))*e.gate/100));
+function stableLimit(items,limit){
+  const out=new Map(),ordered=items.slice().sort((a,b)=>a.edge.id-b.edge.id),cap=Math.max(0,limit|0),sum=ordered.reduce((a,x)=>a+x.want,0);
+  if(sum<=cap){for(const item of ordered)out.set(item.edge.id,item.want);return out;}
+  let used=0;const remainders=[];
+  for(const item of ordered){const scaled=item.want*cap,take=Math.floor(scaled/sum);out.set(item.edge.id,take);used+=take;
+    remainders.push({id:item.edge.id,rem:scaled%sum});}
+  remainders.sort((a,b)=>b.rem-a.rem||a.id-b.id);
+  for(let i=0;i<cap-used&&i<remainders.length;i++)out.set(remainders[i].id,(out.get(remainders[i].id)||0)+1);
+  return out;
+}
+
+// Conservative integer fluid kernel. Releases and intakes are both computed
+// from frozen snapshots, limited per destination/source, then applied. The
+// stable id allocation makes a reversed edge traversal bit-identical.
+function flowKernel(S,edgeOrder){
+  const order=edgeOrder||S.edges.map((_,i)=>i),N=S.nodes.length;
+  for(const e of S.edges){e.lastIn=0;e.lastOut=0;}
+  const nV=S.nodes.map(n=>n.v),nS=S.nodes.map(n=>n.sed),pV=S.edges.map(e=>e.pipe),pS=S.edges.map(e=>e.sed);
+  const releases=[];
+  for(const oi of order){const e=S.edges[oi];if(!edgeOpen(S,e)||pV[e.id]<=0)continue;
+    const ends=edgeEnds(e),dst=ends[1],free=Math.max(0,S.nodes[dst].cap-nV[dst]);
+    releases.push({edge:e,dst,want:Math.min(pV[e.id],gateRate(e),free)});
+  }
+  const releaseAmt=new Map();
+  for(let ni=0;ni<N;ni++){
+    const group=releases.filter(x=>x.dst===ni),alloc=stableLimit(group,S.nodes[ni].cap-nV[ni]);
+    for(const x of group)releaseAmt.set(x.edge.id,alloc.get(x.edge.id)||0);
+  }
+  for(const x of releases){const e=x.edge,a=releaseAmt.get(e.id)||0;if(!a)continue;
+    const sed=Math.min(pS[e.id],Math.floor(pS[e.id]*a/Math.max(1,pV[e.id]))),dst=x.dst;
+    pV[e.id]-=a;pS[e.id]-=sed;nV[dst]+=a;nS[dst]+=sed;e.lastOut=a;e.flowDir=e.pumpDir;
+  }
+  const intakes=[];
+  for(const oi of order){const e=S.edges[oi];if(!edgeOpen(S,e))continue;
+    const ends=edgeEnds(e),src=ends[0],free=Math.max(0,e.cap-pV[e.id]);
+    intakes.push({edge:e,src,want:Math.min(nV[src],gateRate(e),free)});
+  }
+  const intakeAmt=new Map();
+  for(let ni=0;ni<N;ni++){
+    const group=intakes.filter(x=>x.src===ni),alloc=stableLimit(group,nV[ni]);
+    for(const x of group)intakeAmt.set(x.edge.id,alloc.get(x.edge.id)||0);
+  }
+  let energy=S.power,pumpCost=0,moved=0;
+  for(const x of intakes.slice().sort((a,b)=>a.edge.id-b.edge.id)){
+    const e=x.edge;let a=intakeAmt.get(e.id)||0;
+    if(e.pump&&a){a=Math.min(a,energy*64+(63-e.energyCarry));const total=e.energyCarry+a,cost=Math.floor(total/64);
+      e.energyCarry=total%64;energy-=cost;pumpCost+=cost;}
+    if(!a)continue;
+    const src=x.src,sed=Math.min(nS[src],Math.floor(nS[src]*a/Math.max(1,nV[src])));
+    nV[src]-=a;nS[src]-=sed;pV[e.id]+=a;pS[e.id]+=sed;e.lastIn=a;e.flowDir=e.pumpDir;moved+=a;
+  }
+  S.power=energy;
+  let leaked=0;
+  for(const e of S.edges){
+    if(e.broken&&pV[e.id]>0){const a=Math.min(3,pV[e.id]),sed=Math.min(pS[e.id],Math.floor(pS[e.id]*a/Math.max(1,pV[e.id])));
+      pV[e.id]-=a;pS[e.id]-=sed;S.spilled+=a;S.sedWaste+=sed;leaked+=a;}
+    const advance=e.lastIn+e.lastOut;if(advance)e.flowPhase=(e.flowPhase+advance)%104729;
+    e.pipe=pV[e.id];e.sed=pS[e.id];
+  }
+  for(let i=0;i<N;i++){S.nodes[i].v=nV[i];S.nodes[i].sed=nS[i];}
+  return{moved,pumpCost,leaked};
+}
+
+function addWater(nodeId,amount,sed){
+  const n=WORLD.nodes[nodeId],take=Math.min(amount,n.cap-n.v);WORLD.source+=amount;n.v+=take;WORLD.spilled+=amount-take;
+  if(sed){n.sed+=sed;WORLD.sourceSed+=sed;}
+  return take;
+}
+function drainNode(nodeId,amount,kind){
+  const n=WORLD.nodes[nodeId],take=Math.min(amount,n.v),sed=Math.min(n.sed,Math.floor(n.sed*take/Math.max(1,n.v)));
+  n.v-=take;n.sed-=sed;if(kind==='district')WORLD.delivered+=take;else WORLD.returned+=take;WORLD.sedWaste+=sed;return take;
+}
+function message(s,c,y,t){texts.push({s,c:c||PAPER,y:y||36,t:t||70});}
+function noteActivity(n){stats.activity+=n||1;lastActivityFrame=cityFrame;}
+function noteProgress(){stats.progress++;}
+
+function beginDemand(d,delay){
+  d.seq++;d.active=true;d.got=0;d.need=390+((d.id*97+d.seq*53+personaIndex*31+cityVariant*7)%170)+WORLD.level*18;
+  d.deadline=cityFrame+790+((d.seq*47+d.id*71+cityVariant*11)%210)+(delay||0);stats.demands++;noteActivity();
+}
+function unlockDistrict(d){
+  d.unlocked=true;WORLD.level=Math.max(WORLD.level,d.id+1);stats.activations++;d.satisfaction=500;
+  beginDemand(d,120);SHOW.offer({id:'district-'+d.id,tier:2,at:showFrame,tag:d.name});
+  fxBurst(WORLD.nodes[d.node].x,WORLD.nodes[d.node].y,12,MINT,1.7);message(d.name+' ONLINE',MINT,42,85);noteProgress();
+}
+function fulfillDemand(d){
+  d.active=false;d.services++;d.satisfaction=2400;d.nextAt=cityFrame+170+((d.seq*37+d.id*83+cityVariant*13)%150);
+  stats.deliveries++;stats.maxDry=Math.max(stats.maxDry,cityFrame-lastDeliveryFrame);lastDeliveryFrame=cityFrame;d.lastService=cityFrame;
+  SHOW.offer({id:'delivery',tier:1,at:showFrame,tag:d.name});
+  if(d.services%3===0){stats.perfects++;SHOW.offer({id:'district-fill',tier:2,at:showFrame,tag:d.name});
+    fxBurst(WORLD.nodes[d.node].x,WORLD.nodes[d.node].y,8,CYAN,1.4);}
+  if(playing())addScore(100+d.need);message(d.name+' LIT',CYAN,WORLD.nodes[d.node].y-21,50);noteActivity(2);noteProgress();
+}
+function missDemand(d){
+  d.active=false;d.misses++;stats.misses++;d.satisfaction=Math.max(0,d.satisfaction-420);
+  d.nextAt=cityFrame+130+((d.seq*29+d.id*41+cityVariant*17)%100);message(d.name+' DRY',CORAL,WORLD.nodes[d.node].y-20,60);noteActivity(2);
+}
+function stepDistricts(){
+  for(const d of districts){
+    if(!d.unlocked&&cityFrame>=d.unlockAt)unlockDistrict(d);
+    if(!d.unlocked)continue;
+    if(d.satisfaction>0)d.satisfaction--;
+    if(!d.active&&cityFrame>=d.nextAt)beginDemand(d,0);
+    if(!d.active)continue;
+    const n=WORLD.nodes[d.node],dirty=n.sed*20>Math.max(1,n.v);
+    const got=drainNode(d.node,dirty?1:3,'district');d.got+=got;
+    if(d.got>=d.need)fulfillDemand(d);else if(cityFrame>=d.deadline)missDemand(d);
+  }
+  stats.maxDry=Math.max(stats.maxDry,cityFrame-lastDeliveryFrame);
+}
+
+function breachEdge(edgeId,forced){
+  const e=WORLD.edges[edgeId];if(!e||e.broken)return false;e.broken=true;e.gateTarget=0;e.breachAt=cityFrame;e.wear=0;
+  stats.breaches++;SHOW.offer({id:'breach',tier:1,at:showFrame,tag:e.label});message('BREACH '+e.label,CORAL,116,70);
+  shake(3);noteActivity(3);if(forced)e.forced=true;return true;
+}
+function edgePoint(e,q){const ends=edgeEnds(e),a=WORLD.nodes[ends[0]],b=WORLD.nodes[ends[1]];return{x:a.x+(b.x-a.x)*q,y:a.y+(b.y-a.y)*q};}
+function stepDrone(){
+  if(drone.mode==='idle'){
+    const target=WORLD.edges.filter(e=>e.broken).sort((a,b)=>a.breachAt-b.breachAt||a.id-b.id)[0];
+    if(target){drone.target=target.id;drone.mode='travel';drone.departed=cityFrame;drone.travel=0;}
+  }
+  if(drone.mode==='travel'){
+    const e=WORLD.edges[drone.target];if(!e||!e.broken){drone.mode='idle';drone.target=-1;return;}
+    const p=edgePoint(e,.52),dx=p.x-drone.x,dy=p.y-drone.y,d=Math.hypot(dx,dy),speed=.48;
+    if(d<=speed){drone.x=p.x;drone.y=p.y;drone.mode='repair';drone.repairT=180;}
+    else{drone.x+=dx/d*speed;drone.y+=dy/d*speed;drone.travel+=speed;}
+  }else if(drone.mode==='repair'){
+    drone.repairT--;if(drone.repairT<=0){const e=WORLD.edges[drone.target];if(e){e.broken=false;e.forced=false;e.gateTarget=35;e.wear=0;}
+      stats.repairs++;stats.repairTravel+=cityFrame-drone.departed;SHOW.offer({id:'repair',tier:2,at:showFrame,tag:e&&e.label});
+      fxBurst(drone.x,drone.y,10,AMBER,1.7);message('SEAL HOLDS',AMBER,drone.y-12,55);noteActivity(3);noteProgress();
+      drone.mode='return';drone.target=-1;}
+  }else if(drone.mode==='return'){
+    const dx=80-drone.x,dy=330-drone.y,d=Math.hypot(dx,dy);if(d<.5){drone.x=80;drone.y=330;drone.mode='idle';}
+    else{drone.x+=dx/d*.48;drone.y+=dy/d*.48;}
+  }
+}
+function stepPressure(){
+  for(const n of WORLD.nodes)n.pressure=Math.round(n.v*100/Math.max(1,n.cap));
+  for(const e of WORLD.edges){if(!e.fragile||e.broken||e.unlock>WORLD.level)continue;
+    const src=WORLD.nodes[edgeEnds(e)[0]],load=Math.floor((e.lastIn+e.lastOut)/14)+(src.pressure>91?3:0);
+    e.wear=Math.max(0,e.wear+load-(load===0&&cityFrame%4===0?1:0));
+    if(e.wear>=17800+e.id*170)breachEdge(e.id,false);
+  }
+}
+
+function startCloudWarning(){cloud.phase='warn';cloud.landAt=cityFrame+240;stats.actWarnings++;noteActivity();
+  SHOW.note({kind:'act-warning',id:'cloudburst',at:showFrame,tag:cityFrame,landsAt:cloud.landAt});message('CLOUDBURST IN 4',CYAN,40,90);}
+function startSiltWarning(){silt.phase='warn';silt.landAt=cityFrame+210;silt.node=silt.count%2?3:5;stats.actWarnings++;noteActivity();
+  SHOW.note({kind:'act-warning',id:'silt-bore',at:showFrame,tag:cityFrame,landsAt:silt.landAt});message('SILT BORE RISING',SILT,40,90);}
+function stepActs(){
+  if(typeof __NO_ACTS!=='undefined')return;
+  if(cloud.phase==='calm'&&cityFrame===cloud.next)startCloudWarning();
+  else if(cloud.phase==='warn'&&cityFrame>=cloud.landAt){cloud.phase='live';cloud.endAt=cityFrame+720;cloud.count++;stats.actLands++;
+    SHOW.note({kind:'act-land',id:'cloudburst',at:showFrame,tag:cityFrame});message('CLOUDBURST!',WATER,40,75);shake(2);noteActivity(2);}
+  else if(cloud.phase==='live'&&cityFrame>=cloud.endAt){cloud.phase='calm';cloud.next+=10800;
+    SHOW.note({kind:'act-end',id:'cloudburst',at:showFrame,tag:cityFrame});}
+  if(silt.phase==='calm'&&cityFrame===silt.next)startSiltWarning();
+  else if(silt.phase==='warn'&&cityFrame>=silt.landAt){silt.phase='live';silt.endAt=cityFrame+660;silt.count++;stats.actLands++;
+    WORLD.nodes[silt.node].sed+=720;WORLD.sourceSed+=720;SHOW.note({kind:'act-land',id:'silt-bore',at:showFrame,tag:cityFrame});
+    message('SILT STRIKE',SILT,40,75);shake(2);noteActivity(2);}
+  else if(silt.phase==='live'){
+    if(cityFrame%60===0){WORLD.nodes[silt.node].sed+=35;WORLD.sourceSed+=35;stats.siltPulses++;}
+    if(cityFrame>=silt.endAt){silt.phase='calm';silt.next+=12000;SHOW.note({kind:'act-end',id:'silt-bore',at:showFrame,tag:cityFrame});}
+  }
+}
+
+function desiredSchedule(mode,target){
+  const g={0:65,1:65,2:45,3:45,4:30,5:30,6:0,7:0,8:0,9:0,10:0,11:0,16:8,17:8},p={9:1,10:1,11:1};
+  const active=districts.filter(d=>d.unlocked&&d.active);
+  if(mode==='BANK'){g[0]=100;g[1]=100;g[2]=100;g[3]=100;g[4]=22;g[5]=22;}
+  else if(mode==='VENT'){g[0]=18;g[1]=18;g[16]=100;g[17]=42;}
+  else if(mode==='FLUSH'){g[17]=100;g[4]=12;g[5]=12;g[10]=86;g[11]=86;p[10]=-1;p[11]=-1;}
+  else if(mode==='BALANCE'){
+    g[0]=86;g[1]=86;g[2]=68;g[3]=68;g[4]=62;g[5]=62;
+    for(const d of active)g[6+d.id]=100;g[16]=WORLD.nodes[0].pressure>persona.overflow?72:8;
+    if(WORLD.nodes[4].sed*16>Math.max(1,WORLD.nodes[4].v))g[17]=90;
+  }else if(target>=0){
+    for(const id of[6,7,8,9])g[id]=6;
+    if(target===0){g[0]=100;g[2]=100;g[6]=100;}
+    if(target===1){g[0]=92;g[1]=55;g[4]=100;g[5]=55;g[7]=100;}
+    if(target===2){g[1]=100;g[3]=100;g[8]=100;}
+    if(target===3){g[0]=82;g[1]=82;g[4]=92;g[5]=92;g[9]=100;p[9]=1;}
+  }
+  return{g,p};
+}
+function plannerSnapshot(){return{world:cloneWorld(WORLD),districts:districts.map(d=>({...d}))};}
+function simulateSchedule(snapshot,candidate){
+  const S=cloneWorld(snapshot.world),ds=snapshot.districts.map(d=>({...d})),desired=desiredSchedule(candidate.mode,candidate.target);
+  for(const e of S.edges){if(desired.g[e.id]!==undefined)e.gate=e.gateTarget=desired.g[e.id];if(desired.p[e.id])e.pumpDir=desired.p[e.id];}
+  let served=0,spilled0=S.spilled,power0=S.power;
+  // Four seconds, evaluated on 8-frame fixed-point blocks. Rates and demand
+  // are scaled with the block; no runtime state or RNG is touched.
+  const SCALE=20;for(const e of S.edges)e.rate*=SCALE;
+  for(let t=0;t<12;t++){
+    const source=(cloud.phase==='warn'&&t>8?15:5)*SCALE,n=S.nodes[0],take=Math.min(source,n.cap-n.v);n.v+=take;S.source+=source;S.spilled+=source-take;
+    flowKernel(S);
+    for(const d of ds){if(!d.unlocked||!d.active)continue;const n2=S.nodes[d.node],take2=Math.min(3*SCALE,n2.v,d.need-d.got);
+      n2.v-=take2;S.delivered+=take2;d.got+=take2;served+=take2*(1+clamp((cityFrame-(d.deadline-1000))/1000,0,1));}
+    const ret=Math.min(7*SCALE,S.nodes[10].v);S.nodes[10].v-=ret;S.returned+=ret;
+  }
+  const storage=S.nodes.slice(3,6).reduce((a,n)=>a+n.v,0),pressure=Math.max(...S.nodes.map(n=>n.v*100/n.cap));
+  let score=served*6+storage*.08-(S.spilled-spilled0)*3-(power0-S.power)*.4-Math.max(0,pressure-92)*40;
+  if(candidate.mode==='BALANCE')score+=snapshot.districts.filter(d=>d.unlocked&&d.active).length*110;
+  if(candidate.mode==='VENT'&&cloud.phase==='warn')score+=5000;
+  if(candidate.mode==='FLUSH'&&silt.phase==='warn')score+=5000;
+  return{score,served,storage,spilled:S.spilled-spilled0,power:S.power,signature:worldSignature(S)};
+}
+function chooseSmartPlan(){
+  const snap=plannerSnapshot(),active=districts.filter(d=>d.unlocked&&d.active),candidates=active.map(d=>({mode:'FEED',target:d.id}));
+  candidates.push(active.length?{mode:'BALANCE',target:active.sort((a,b)=>a.deadline-b.deadline)[0]?.id??-1}:{mode:'BANK',target:-1});
+  if(cloud.phase==='warn')candidates.push({mode:'VENT',target:-1});
+  if(silt.phase==='warn')candidates.push({mode:'FLUSH',target:-1});
+  let best=null;for(const c of candidates){const result=simulateSchedule(snap,c);stats.planSims++;
+    if(!best||result.score>best.result.score)best={candidate:c,result};}
+  stats.planChecksum=(stats.planChecksum+Math.round(best.result.score)+best.result.signature)%1000000007;return best.candidate;
+}
+function chooseGreedyPlan(){
+  const active=districts.filter(d=>d.unlocked&&d.active).sort((a,b)=>a.deadline-b.deadline||a.id-b.id);
+  return active.length?{mode:'FEED',target:active[0].id}:{mode:'BANK',target:-1};
+}
+function commandForPlan(plan){
+  const desired=desiredSchedule(plan.mode,plan.target),route=[];
+  for(const e of WORLD.edges)if((desired.g[e.id]||0)>=60)route.push(e.id);plannedEdges=route;
+  const diffs=WORLD.edges.filter(e=>e.control&&e.unlock<=WORLD.level&&desired.g[e.id]!==undefined&&e.gateTarget!==desired.g[e.id])
+    .sort((a,b)=>Math.abs(desired.g[b.id]-b.gateTarget)-Math.abs(desired.g[a.id]-a.gateTarget)||a.id-b.id);
+  const pumps=WORLD.edges.filter(e=>e.pump&&e.unlock<=WORLD.level&&desired.p[e.id]&&e.pumpDir!==desired.p[e.id]);
+  const e=diffs[0],p=pumps[0];return{gateId:e?e.id:-1,gateTarget:e?desired.g[e.id]:-1,pumpId:p?p.id:-1,pumpDir:p?desired.p[p.id]:0,
+    flush:plan.mode==='FLUSH',targetDistrict:plan.target,tactic:plan.mode};
+}
+function botIntent(){
+  if(presentation.admire&&typeof __NO_ADMIRE==='undefined')return{gateId:-1,gateTarget:-1,pumpId:-1,pumpDir:0,flush:false,targetDistrict:-1,tactic:'ADMIRE'};
+  const forecast=cloud.phase==='warn'?'VENT':silt.phase==='warn'?'FLUSH':'';
+  if(forecast&&lastIntent&&lastIntent.tactic!==forecast)nextPlanFrame=cityFrame;
+  if(cityFrame>=nextPlanFrame||!lastIntent){const plan=typeof __NO_FLOW_PLAN!=='undefined'?chooseGreedyPlan():chooseSmartPlan();
+    lastIntent=commandForPlan(plan);nextPlanFrame=cityFrame+(typeof __NO_FLOW_PLAN!=='undefined'?720:180);stats.planDecisions++;}
+  return lastIntent;
+}
+function humanIntent(){
+  const gd=(tap('right')?1:0)-(tap('left')?1:0),pd=(tap('down')?1:0)-(tap('up')?1:0);
+  const gate=WORLD.edges[gateIds[selectedGate]],pump=WORLD.edges[pumpIds[selectedPump]],toggle=tap('a'),reverse=tap('b');
+  return{selectGate:gd,selectPump:pd,gateId:toggle?gate.id:-1,gateTarget:toggle?(gate.gateTarget>=50?0:100):-1,
+    pumpId:reverse?pump.id:-1,pumpDir:reverse?-pump.pumpDir:0,flush:false,targetDistrict:-1,tactic:'MANUAL'};
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+function applyIntent(intent){
+  if(!intent)return;if(intent.selectGate)selectedGate=(selectedGate+intent.selectGate+gateIds.length)%gateIds.length;
+  if(intent.selectPump)selectedPump=(selectedPump+intent.selectPump+pumpIds.length)%pumpIds.length;
+  if(intent.gateId>=0){const e=WORLD.edges[intent.gateId];if(e&&e.control&&e.unlock<=WORLD.level&&e.gateTarget!==intent.gateTarget){
+    e.gateTarget=clamp(Math.round(intent.gateTarget),0,100);stats.gateCommits++;SHOW.offer({id:'gate',tier:1,at:showFrame,tag:e.label});noteActivity();}}
+  if(intent.pumpId>=0){const e=WORLD.edges[intent.pumpId];if(e&&e.pump&&e.unlock<=WORLD.level&&intent.pumpDir&&e.pumpDir!==intent.pumpDir){
+    e.pumpDir=intent.pumpDir;stats.pumpReversals++;SHOW.offer({id:'pump',tier:1,at:showFrame,tag:e.label});noteActivity();}}
+  stats.tactic=intent.tactic||stats.tactic;stats.target=intent.targetDistrict;
+}
+
+function stepGates(){for(const e of WORLD.edges){
+  if(e.id>=12&&e.id<=15){const src=WORLD.nodes[e.a];e.gateTarget=src.v*100>src.cap*82?100:0;}
+  e.gate=moveToward(e.gate,e.gateTarget,e.pump?2:3);
+}}
+function stepSource(){addWater(0,cloud.phase==='live'?16:5,0);}
+function stepCatch(){const n=WORLD.nodes[10],take=Math.min(9,n.v);if(take)drainNode(10,take,'return');}
+function stepEnergy(flow){
+  let made=0;for(const e of WORLD.edges)if(e.turbine&&e.lastOut>=8)made+=Math.floor(e.lastOut/8);
+  WORLD.power=clamp(WORLD.power+made,0,1800);stats.powerMade+=made;stats.powerSpent+=flow.pumpCost;
+}
+function stepCrown(){
+  if(crowned){if(crownWave>0)crownWave--;return;}
+  const ready=cityFrame>=36000&&districts.every(d=>d.unlocked&&d.services>=3&&d.satisfaction>0);
+  crownCharge=ready?crownCharge+1:Math.max(0,crownCharge-2);
+  if(crownCharge>=240){crowned=true;crownWave=900;stats.crowns++;SHOW.offer({id:'river-crown',tier:3,at:showFrame,tag:'RIVER CROWN'});
+    for(const d of districts)fxBurst(WORLD.nodes[d.node].x,WORLD.nodes[d.node].y,18,CYAN,2.3);
+    fxBurst(80,48,28,AMBER,2.8);message('RIVER CROWN',AMBER,122,150);noteActivity(8);noteProgress();if(playing())addScore(5000);}
+}
+function worldSignature(S){let h=S.power*13+S.source*3+S.delivered*5+S.spilled*7+S.returned*11;
+  for(const n of S.nodes)h=(h+n.v*17+n.sed*19+n.id*23)%2147483647;
+  for(const e of S.edges)h=(h+e.pipe*29+e.sed*31+e.gate*37+(e.broken?997:0)+e.pumpDir*41)%2147483647;return h;}
+function motionSignature(S,repair){
+  let h=0;for(const n of S.nodes)h=(h+n.v*17+n.sed*19)%2147483647;
+  for(const e of S.edges)h=(h+e.pipe*29+e.sed*31+e.gate*37+e.flowPhase*41+(e.broken?997:0))%2147483647;
+  if(repair){const mode=repair.mode==='travel'?1:repair.mode==='repair'?2:repair.mode==='return'?3:0;
+    h=(h+Math.round(repair.x*10)*43+Math.round(repair.y*10)*47+repair.repairT*53+mode*59)%2147483647;}
+  return h;
+}
+function finiteState(){return[...WORLD.nodes,...WORLD.edges,drone].every(o=>Object.values(o).every(v=>typeof v!=='number'||Number.isFinite(v)))&&
+  Object.values(stats).every(v=>typeof v!=='number'||Number.isFinite(v));}
+
+function resetCity(){
+  cityFrame=0;personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];cityVariant=RI(0,9999);
+  WORLD={nodes:NODE_SPECS.map(makeNode),edges:EDGE_SPECS.map(makeEdge),power:1200,level:1,source:0,delivered:0,spilled:0,returned:0,
+    sourceSed:0,sedWaste:0,initial:0,initialSed:0};
+  const shift=cityVariant%201-100,initial=[3100,280,280,720+shift,520,720-shift,80,0,0,0,0];
+  for(let i=0;i<initial.length;i++)WORLD.nodes[i].v=initial[i];
+  WORLD.initial=currentWater(WORLD);WORLD.initialSed=currentSed(WORLD);
+  districts=DIST_SPECS.map((s,i)=>({id:i,name:s[0],node:s[1],unlockAt:s[2],unlocked:false,active:false,need:0,got:0,
+    deadline:0,nextAt:0,seq:0,services:0,misses:0,satisfaction:0,lastService:0}));
+  stats={demands:0,deliveries:0,activations:0,perfects:0,misses:0,breaches:0,repairs:0,repairTravel:0,
+    gateCommits:0,pumpReversals:0,powerMade:0,powerSpent:0,planSims:0,planDecisions:0,planChecksum:0,
+    actWarnings:0,actLands:0,siltPulses:0,crowns:0,activity:0,progress:0,maxDry:0,tactic:'BANK',target:-1};
+  cloud={phase:'calm',next:3600,landAt:0,endAt:0,count:0};silt={phase:'calm',next:6900,landAt:0,endAt:0,count:0,node:3};
+  drone={x:80,y:330,target:-1,mode:'idle',repairT:0,departed:0,travel:0};texts=[];selectedGate=0;selectedPump=0;
+  lastIntent=null;nextPlanFrame=0;plannedEdges=[];crowned=false;crownCharge=0;crownWave=0;lastDeliveryFrame=0;lastActivityFrame=0;
+  SHOW.reset(showFrame);unlockDistrict(districts[0]);
+}
+
+function step(){
+  showFrame++;sessionStep({reset:resetCity});presentation=SHOW.step(showFrame);
+  if(!presentation.holdWorld&&showFrame%presentation.physicsEvery===0){
+    cityFrame++;stepActs();const intent=controller();applyIntent(intent);stepGates();stepSource();
+    const flow=flowKernel(WORLD);stepEnergy(flow);stepDistricts();stepCatch();stepPressure();stepDrone();stepCrown();
+    if(flow.moved>0&&cityFrame%30===0)noteActivity();
+  }
+  stepParts();stepRings();for(const t of texts){t.t--;t.y-=.08;}texts=texts.filter(t=>t.t>0);
+}
+
+function drawLine(a,b,width,color,alpha){ctx.globalAlpha=alpha===undefined?1:alpha;ctx.strokeStyle=color;ctx.lineWidth=width;
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.globalAlpha=1;}
+function drawArrow(e,a,b){if(e.lastIn+e.lastOut<=0||e.broken)return;const dir=e.flowDir<0?-1:1,q=((e.flowPhase*.013+e.id*.173)%1);
+  const t=dir>0?q:1-q,x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1;
+  ctx.fillStyle=CYAN;ctx.beginPath();ctx.moveTo(x+dx/d*3*dir,y+dy/d*3*dir);ctx.lineTo(x-dy/d*2,y+dx/d*2);
+  ctx.lineTo(x+dy/d*2,y-dx/d*2);ctx.closePath();ctx.fill();}
+function drawEdge(e){const a=WORLD.nodes[e.a],b=WORLD.nodes[e.b],unlocked=e.unlock<=WORLD.level,planned=plannedEdges.includes(e.id);
+  if(!unlocked){drawLine(a,b,3,'#182936',.35);return;}drawLine(a,b,7,planned?CYAN:PIPE,planned?.3:1);
+  const fill=clamp(e.pipe/e.cap,0,1);drawLine(a,b,Math.max(1,2+fill*2),e.sed*10>Math.max(1,e.pipe)?SILT:WATER,e.broken?.28:.8);
+  if(e.broken){const p=edgePoint(e,.52);ctx.fillStyle=CORAL;ctx.font='bold 10px monospace';ctx.fillText('×',p.x-3,p.y+3);
+    rect(p.x-4,p.y+5+(cityFrame%9),2,4,WATER);return;}
+  drawArrow(e,a,b);
+  if(e.control){const p=edgePoint(e,.5),sel=gateIds[selectedGate]===e.id;rect(p.x-4,p.y-4,8,8,sel?AMBER:INK);
+    rect(p.x-3,p.y-3,6,6,'#42576a');rect(p.x-2,p.y+2-e.gate*.04,4,Math.max(1,e.gate*.04),e.pump?AMBER:CYAN);
+    if(e.pump){ctx.strokeStyle=PAPER;ctx.beginPath();ctx.arc(p.x,p.y,5,cityFrame*.08,cityFrame*.08+4.4);ctx.stroke();}}
+}
+function drawTank(n,w,h){const x=n.x-w/2,y=n.y-h/2;rect(x,y,w,h,'#152a3a');rect(x+2,y+2,w-4,h-4,'#0a1925');
+  const fh=Math.round((h-4)*n.v/n.cap);rect(x+2,y+h-2-fh,w-4,fh,WATER);
+  if(n.sed>0){const sh=Math.min(fh,Math.ceil(n.sed/90));rect(x+2,y+h-2-sh,w-4,sh,SILT);}
+  ctx.strokeStyle=n.pressure>90?CORAL:'#49667a';ctx.strokeRect(x+.5,y+.5,w-1,h-1);
+  if(n.pressure>88){ctx.globalAlpha=.25+.2*Math.sin(showFrame*.2);ctx.strokeStyle=CORAL;ctx.strokeRect(x-2.5,y-2.5,w+5,h+5);ctx.globalAlpha=1;}}
+function drawDistrict(d){const n=WORLD.nodes[d.node],x=n.x,y=n.y;if(!d.unlocked){ctx.globalAlpha=.25;rect(x-10,y-9,20,18,'#334454');ctx.globalAlpha=1;return;}
+  const glow=d.satisfaction>0?MINT:'#304354';rect(x-11,y-10,22,20,glow);rect(x-8,y-7,5,5,d.satisfaction>0?AMBER:INK);
+  rect(x+2,y-7,5,5,d.satisfaction>0?CYAN:INK);rect(x-4,y+1,8,9,'#14283a');
+  if(d.active){const q=clamp(d.got/d.need,0,1),time=clamp((d.deadline-cityFrame)/1000,0,1);rect(x-13,y+13,26,4,INK);rect(x-13,y+13,26*q,4,CYAN);
+    rect(x-13,y+18,26,2,INK);rect(x-13,y+18,26*time,2,time<.25?CORAL:AMBER);}
+  ctx.font='bold 5px monospace';ctx.fillStyle=PAPER;ctx.fillText(d.name,x-d.name.length*1.5,y-13);}
+function drawActs(){
+  if(cloud.phase!=='calm'){const warn=cloud.phase==='warn',pulse=.55+.25*Math.sin(showFrame*.18);ctx.globalAlpha=pulse;
+    for(let i=0;i<5;i++){rect(22+i*27,34+(i%2)*3,22,5,warn?'#63809a':'#3d6079');rect(29+i*27,31+(i%2)*3,10,4,'#7891a5');}
+    if(warn){ctx.fillStyle=CYAN;ctx.font='bold 6px monospace';ctx.fillText('+'+Math.ceil((cloud.landAt-cityFrame)/60),72,41);}ctx.globalAlpha=1;}
+  if(silt.phase==='warn'){const n=WORLD.nodes[silt.node],q=clamp(1-(silt.landAt-cityFrame)/210,0,1);ctx.globalAlpha=.25+.35*Math.sin(showFrame*.25)**2;
+    ctx.strokeStyle=SILT;ctx.lineWidth=3;ctx.beginPath();ctx.arc(n.x,n.y,18-12*q,0,7);ctx.stroke();ctx.globalAlpha=1;}
+}
+function drawDrone(){ctx.save();ctx.translate(Math.round(drone.x),Math.round(drone.y));if(drone.target>=0){const p=edgePoint(WORLD.edges[drone.target],.52);
+    ctx.globalAlpha=.25;ctx.strokeStyle=AMBER;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(p.x-drone.x,p.y-drone.y);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
+  rect(-4,-3,8,6,AMBER);rect(-2,-5,4,3,PAPER);rect(-7,-5+(cityFrame%2),5,1,CYAN);rect(3,-5+(cityFrame%2),5,1,CYAN);
+  if(drone.mode==='repair'){ctx.strokeStyle=CYAN;ctx.beginPath();ctx.arc(0,0,7,0,(180-drone.repairT)/180*6.28);ctx.stroke();}ctx.restore();}
+function drawCrown(){if(!crowned&&crownWave<=0)return;const age=900-crownWave,wave=35+age*.42;ctx.globalAlpha=.1+.12*Math.sin(showFrame*.12)**2;
+  rect(0,0,W,Math.min(H,wave),CYAN);ctx.globalAlpha=1;for(const d of districts){const n=WORLD.nodes[d.node];if(n.y<wave){ctx.strokeStyle=AMBER;ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(n.x,n.y,12+(showFrame%12)*.35,0,7);ctx.stroke();}}}
+function drawHUD(){rect(0,0,W,31,INK);ctx.font='bold 8px monospace';ctx.fillStyle=PAPER;ctx.fillText('TIDELATCH',5,10);
+  ctx.fillStyle=persona.color;ctx.font='bold 5px monospace';ctx.fillText(persona.name,5,19);ctx.fillStyle=CYAN;ctx.fillText(stats.tactic,5,27);
+  const tm=Math.floor(cityFrame/3600)+':'+String(Math.floor(cityFrame/60)%60).padStart(2,'0');ctx.font='bold 7px monospace';ctx.fillStyle=AMBER;ctx.fillText(tm,75,10);
+  ctx.fillStyle=PAPER;ctx.fillText('L'+WORLD.level,105,10);ctx.fillText('FLOW '+stats.deliveries,75,20);ctx.fillText('PWR '+WORLD.power,116,20);
+  ctx.fillStyle=stats.breaches>stats.repairs?CORAL:MINT;ctx.fillText('SEAL '+stats.repairs+'/'+stats.breaches,75,29);}
+function drawTexts(){ctx.font='bold 7px monospace';for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);const w=t.s.length*4.2+8;
+  rect(80-w/2,t.y-9,w,11,INK);ctx.fillStyle=t.c;ctx.fillText(t.s,80-t.s.length*2.1,t.y);ctx.globalAlpha=1;}}
+function drawShow(){if(!presentation.cue)return;const s=presentation.cue.id==='river-crown'?'RIVER CROWN':presentation.cue.tag||'';if(!s)return;
+  ctx.globalAlpha=.72;rect(18,165,124,24,INK);ctx.globalAlpha=1;ctx.font='bold 9px monospace';ctx.fillStyle=presentation.cue.tier===3?AMBER:CYAN;
+  ctx.fillText(s,80-s.length*2.7,181);}
+function draw(){
+  rect(0,0,W,H,DEEP);for(let i=0;i<15;i++){const y=36+i*21;rect(0,y,160,1,i%2?'#0d2232':'#102638');}
+  preDraw();for(const e of WORLD.edges)drawEdge(e);drawTank(WORLD.nodes[0],34,22);drawTank(WORLD.nodes[3],22,30);
+  drawTank(WORLD.nodes[4],25,34);drawTank(WORLD.nodes[5],22,30);drawTank(WORLD.nodes[1],12,12);drawTank(WORLD.nodes[2],12,12);
+  for(const d of districts)drawDistrict(d);drawTank(WORLD.nodes[10],38,14);drawActs();drawDrone();drawParts();drawRings();drawCrown();postDraw();
+  drawTexts();drawShow();drawHUD();drawSession(false);
+}
+
+function probe(){return{showFrame,cityFrame,level:WORLD.level,persona:persona.name,cityVariant,selectedGate,selectedPump,cloud:{...cloud},silt:{...silt},
+  water:currentWater(WORLD),ledger:waterLedger(WORLD),sediment:currentSed(WORLD),sedLedger:sedLedger(WORLD),power:WORLD.power,
+  districts:districts.map(d=>({...d})),edges:WORLD.edges.map(e=>({id:e.id,gate:e.gate,target:e.gateTarget,pipe:e.pipe,sed:e.sed,
+    pumpDir:e.pumpDir,broken:e.broken,wear:e.wear,lastIn:e.lastIn,lastOut:e.lastOut})),drone:{...drone},stats:{...stats},
+  crowned,crownCharge,crownWave,show:SHOW.probe(),signature:worldSignature(WORLD),motion:motionSignature(WORLD,drone),finite:finiteState(),playing:playing()};}
+globalThis.__tlProbe=probe;
+globalThis.__soakProbe=()=>({sig:motionSignature(WORLD,drone),
+  events:stats.activity,progress:stats.deliveries+stats.activations+stats.repairs+stats.crowns*10,finite:finiteState()});
+globalThis.__tidelatchHooks={probe,cloneWorld,flowKernel,waterLedger,sedLedger,worldSignature,motionSignature,simulateSchedule,plannerSnapshot,breachEdge,resetCity};
+
+initSession('tidelatch',[['LEFT / RIGHT','SELECT GATE'],['SPACE','OPEN / CLOSE'],['UP / DOWN','SELECT PUMP'],['X','REVERSE PUMP']]);
+resetCity();start(step,draw);
+</script>
+</html>
