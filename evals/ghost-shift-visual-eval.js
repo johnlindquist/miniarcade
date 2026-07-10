@@ -9,13 +9,13 @@ const fs=require('fs');
 const path=require('path');
 const{
   bootRenderedGame,rgbaFrame,encodeRgbaPng
-}=require('../../render/runtime');
+}=require('../render/runtime');
 const{
   sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,analyzeBurst,
   writeContactSheet,verifyReviewReceipt,writeJson,quantile
 }=require('./visual-harness');
 
-const ROOT=path.join(__dirname,'..','..');
+const ROOT=path.join(__dirname,'..');
 const GAME_PATH=path.join(__dirname,'..','ghost-shift.html');
 const ARTIFACT_DIR=path.join(ROOT,'.artifacts','visual','ghost-shift');
 const FRAME_DIR=path.join(ARTIFACT_DIR,'frames');

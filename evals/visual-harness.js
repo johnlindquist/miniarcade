@@ -11,7 +11,7 @@ const{bootGame}=require('./harness');
 const{
   NATIVE_WIDTH,NATIVE_HEIGHT,bootRenderedGame,downsampleRgba,rgbaFrame,
   rgbaToCanvas,makeGameCanvas
-}=require('../../render/runtime');
+}=require('../render/runtime');
 
 const REVIEW_CATEGORIES=[
   'characterCraft','environmentCraft','levelVariety','animationImpact','readability','artDirectionCohesion'

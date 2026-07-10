@@ -10,14 +10,14 @@ const path=require('path');
 const{createRequire}=require('module');
 const{
   bootRenderedGame,rgbaFrame,encodeRgbaPng
-}=require('../../render/runtime');
+}=require('../render/runtime');
 const{
   sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,
   analyzeBurst,extractSkyline,skylineDistance,writeContactSheet,verifyReviewReceipt,writeJson,quantile
 }=require('./visual-harness');
 const OLD_TOPPLE_RECEIPTS=require('./visual-baselines/old-topple-range');
 
-const ROOT=path.join(__dirname,'..','..');
+const ROOT=path.join(__dirname,'..');
 const GAME_PATH=path.join(__dirname,'..','wingrush.html');
 const ARTIFACT_DIR=path.join(ROOT,'.artifacts','visual','wingrush');
 const FRAME_DIR=path.join(ARTIFACT_DIR,'frames');

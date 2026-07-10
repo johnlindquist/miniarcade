@@ -6,7 +6,7 @@
 // downsamples the 320x720 backing store to its actual 160x360 viewing size,
 // and judges rendered pixels rather than draw-call counts.
 const fs=require('fs'),path=require('path'),vm=require('vm'),crypto=require('crypto');
-const{createCanvas}=require('../../render/node_modules/@napi-rs/canvas');
+const{createCanvas}=require('../render/node_modules/@napi-rs/canvas');
 const{ROOT,seededRandom,inlineScript}=require('./harness');
 
 const ARTIFACTS=path.join(ROOT,'..','.artifacts','swarm-keeper-visual');
