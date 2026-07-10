@@ -443,11 +443,19 @@ evidence layer here too.
 **MOTO BOWL** crosses Tecmo Bowl with Excitebike: downs, play calling, and
 coordinator reads give the drama its grammar; throttle heat, ramps, whoops,
 mud, and oil give every snap its physics. One rusher (with two escort
-blockers) runs a 15-minute title match against a role-disciplined defense —
-linemen fire off the ball, backers mirror and fill, corners backpedal to cut
-breakaway angles, safeties keep depth — while the rival's off-screen offense
-scores on a fixed broadcast schedule. The match ends, win or lose, exactly at
-run frame 54,000.
+blockers) runs a 15-minute title match against a **wave defense** — the field
+is arranged Excitebike-style as spaced threat waves down the track (front
+line at 9-13 yards, second level 16-20, deep shell 26-44). Asleep waves hold
+their depth and visibly mirror the rusher's lane; they break into pursuit
+only when the run closes on them, so every snap opens with a real approach
+the viewer can read. Chains sit at 15 yards to match the geometry. Near the
+goal the whole structure squeezes proportionally into the remaining field
+(floor 0.55) and shell defenders who no longer fit in front of the plane are
+not fielded — goal-line stands are a dense box, not a wall — and the plane
+scores first: a rusher crossing the goal is untouchable even if a defender
+reaches him the same frame. The rival's off-screen offense scores on a fixed
+broadcast schedule and the match ends, win or lose, exactly at run frame
+54,000.
 
 Core contracts, all in `motobowl-eval.js`:
 
@@ -458,16 +466,25 @@ Core contracts, all in `motobowl-eval.js`:
   from sim RNG through `AI.generateValidated`, with a corridor validator over
   every 25-yard window; the eval generates 100 drives (100/100 valid, 23
   distinct layout shapes).
+- **Wave defense** (`__NO_WAVES` restores the legacy converge-at-the-snap
+  swarm): the aggravation metric is point-blank first contact — a defender
+  reaching the rusher inside 4 yards of the snap. Waves 11.9% vs swarm 18.6%
+  mean over six paired ten-minute seeds (5/6 wins) while keeping the drama
+  balance the swarm had (50 TDs / 54 turnovers across the six runs). A keyed
+  play fires the front wave off the ball at the snap, so the coordinator's
+  read is visible as behavior; a dodged read prints CAUGHT 'EM LEANING. The
+  camera leads the run (presentation-only) and the huddle draws the called
+  play as a gold ghost route on the grass.
 - **Copied-state lane planning** (`__NO_LANE_PLAN` restores widest-gap
   reactive running): candidate lanes x turbo policies roll the exact
   integrator and the exact defender pursuit 90 frames ahead. Won yards per
-  play 10/10 paired five-minute seeds, 12.83 vs 8.84 (+3.99), touchdowns
-  68 vs 32 (+113%).
+  play 10/10 paired five-minute seeds, 12.37 vs 9.11 (+3.26), touchdowns
+  43 vs 19 (+126%).
 - **Tendency-mixed play calling** (`__NO_PLAY_MIX` restores argmax): the
   defensive coordinator keys the offense's most frequent recent call (pure
   history math, no RNG); the bot charts its own tendencies and dodges the
-  read unless the best play is a blowout. Keyed-play rate 14.2% vs 48.9%
-  (-34.8pp), 8/8 paired seeds.
+  read unless the best play is a blowout. Keyed-play rate 18.5% vs 55.0%
+  (-36.5pp), 8/8 paired seeds.
 - **Acts.** STORM FRONT (240f warning, wet grip, slower turbo ceiling) and
   BLITZ PACKAGE (210f warning, stacked fronts on every huddle while live).
   Both prove first physical divergence against `__NO_ACTS` inside the warn
@@ -491,24 +508,28 @@ Core contracts, all in `motobowl-eval.js`:
   THE HOUSE) recomputed from the live plan's own integrator projection — the
   eval re-derives every sampled label from simulation truth.
 
-Thirty fixed ten-minute seeds (0xd000 + i*233) were all finite: 136..148
-plays, 6..17 TDs, 56..73 first downs, 120..142 tackles, 2..31 broken tackles,
-3..19 hurdles, 57..122 jukes, 260..289 blocks, 6..28 ramp launches, 0..8
-overheats, 4..16 tumbles, 3..13 turnovers, 8..33 keyed plays, 817..929 events,
-198..217 progress marks; worst story lull 717f, and the worst visible-event
-lull is a deterministic 262f (the touchdown-celebration-to-kickoff pipeline).
-A 20-seed 15-minute panel scored 98..154; the rival schedule is pinned at 98
-(the panel's 10th percentile), so most titles are won late and the flattest
-matches genuinely lose on the tiebreak. Football's own rules are the anti-
-stall layer: the play clock, the forward-progress whistle, and turnover on
-downs bound every possible wedge, and the shipping soak records 1s still /
-4s quiet / 7s stall over ten minutes with zero rescues of any kind.
+Thirty fixed ten-minute seeds (0xd000 + i*233), re-calibrated after the
+wave-defense redesign, were all finite: 141..155 plays, 5..14 TDs, 40..50
+first downs, 131..149 tackles, 1..28 broken tackles, 2..20 hurdles, 80..127
+jukes, 192..222 blocks, 14..35 ramp launches, 0..6 overheats, 5..17 tumbles,
+5..13 turnovers, 13..42 keyed plays, 754..872 events, 182..204 progress
+marks; worst story lull 851f, worst visible-event lull 413f, and home-TD
+droughts measured 6507..16371f (the rival schedule plus downs drama carry
+the scoreboard between home scores; the eval caps the drought at 19000f).
+A 20-seed 15-minute panel scored 63..147; the rival schedule is pinned at 63
+(the panel's 10th percentile, nine off-screen touchdowns), giving 17/20
+titles won — many by a single score — and three flattest matches lost on the
+63-63 tiebreak. Football's own rules are the anti-stall layer: the play
+clock, the forward-progress whistle, and turnover on downs bound every
+possible wedge, and the shipping soak records 1s still / 4s quiet / 11s
+stall over ten minutes with zero rescues of any kind.
 
 Deliberate cuts, recorded rather than hidden: no passing game, no special
 teams (a failed 4th down is always a turnover), no player-controlled defensive
 possessions, and the rival plays entirely off-screen on a deterministic
-schedule. Permanent switches: `__NO_LANE_PLAN`, `__NO_PLAY_MIX`, `__NO_ACTS`,
-`__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`, `__NO_VIEWER_STORY`.
+schedule. Permanent switches: `__NO_WAVES`, `__NO_LANE_PLAN`,
+`__NO_PLAY_MIX`, `__NO_ACTS`, `__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`,
+`__NO_VIEWER_STORY`.
 
 ## D. Per-game priorities
 

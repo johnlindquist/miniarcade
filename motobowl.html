@@ -45,13 +45,18 @@ const PERSONAS=[
 // deterministic pressure beats on the scoreboard. Fourteen touchdowns sit at
 // the 2026-07-10 calibration's 10th-percentile final score: most matches are
 // close wins, and a flat match genuinely loses the title.
-const RIVAL_SCHEDULE=[[3300,7],[6900,7],[10500,7],[14100,7],[17700,7],[21300,7],[24900,7],
-  [28500,7],[32100,7],[35700,7],[39300,7],[42900,7],[46500,7],[50100,7]];
+// Nine rival touchdowns = 63 points, the 10th percentile of the 20-seed
+// wave-defense ending panel: the flattest title runs genuinely lose.
+const RIVAL_SCHEDULE=[[3000,7],[9000,7],[15000,7],[21000,7],[27000,7],
+  [33000,7],[39000,7],[45000,7],[51000,7]];
 
 let showFrame=0,runFrame=0,matchNo=0,state='huddle',stateT=0,resultT=0,outcome='',camY=0;
 let rusher=null,defenders=[],blockers=[],terrain=null,texts=[],plan=null,planAt=-1e9,defSerial=0;
 let persona=PERSONAS[0],personaIndex=0,lastLapse=false;
-let down=1,scrimmage=20*PPY,toGain=30*PPY,driveNo=0,playNo=0,wave=0;
+let down=1,scrimmage=20*PPY,toGain=30*PPY,driveNo=0,playNo=0,wave=0,dodgedCall=false;
+// Waved chains: the front wave sits 9-13 yards deep, so a 10-yard first down
+// would be free grass. The chains move to match the geometry.
+function chainYd(){return typeof globalThis.__NO_WAVES==='undefined'?15:10;}
 let homeScore=0,rivalScore=0,rivalNext=0;
 let pickIndex=1,defKey=1,keyed=false,pickHistory=[],genAttempts=0;
 let playMaxY=0,playMaxYFrame=0,playStartY=0,pendingTurnover=false;
@@ -190,7 +195,52 @@ function defSpeed(d){
   return(base+Math.min(5,wave)*.045)*(stormLive()?.94:1)*(d.boostT>0?1.16:1);
 }
 function makeDefender(role,x,y){
-  return{id:defSerial++,role,x,y,vx:0,vy:0,diveT:0,sprawlT:0,engageT:0,dvx:0,dvy:0,boostT:0,hurdled:false};
+  // Squeezed corners lose their contain assignment: parked on the goal line
+  // there is no depth left to protect, so they play the man, not the plane —
+  // a goal-line stand stays winnable by power and angle instead of a wall.
+  const contain=waveSqueeze()>=.999;
+  return{id:defSerial++,role,x,y,zoneX:x,contain,
+    // The deep shell (corners, safeties) is always live: its whole job is
+    // staying ahead of the run and cutting angles, not joining the scrum.
+    awake:role==='corner'||role==='safety'||typeof globalThis.__NO_WAVES!=='undefined',
+    vx:0,vy:0,diveT:0,sprawlT:0,engageT:0,dvx:0,dvy:0,boostT:0,hurdled:false};
+}
+// Wave defense: the field is arranged Excitebike-style as spaced threat waves
+// down the track — front line, second level, deep shell — instead of a scrum
+// at the ball. Asleep waves hold their depth and shade laterally toward the
+// rusher's lane (visible intent); they only break into pursuit once the run
+// closes on them. __NO_WAVES restores the legacy converge-at-the-snap swarm.
+function waveDepth(role,stacked){
+  if(typeof globalThis.__NO_WAVES!=='undefined'){
+    if(role==='line')return RI(2,4);
+    if(role==='backer')return RI(8,11);
+    if(role==='safety')return stacked?RI(12,15):RI(19,24);
+    return RI(29,35);
+  }
+  if(role==='line')return stacked?RI(5,7):RI(9,13);
+  if(role==='backer')return stacked?RI(11,14):RI(16,20);
+  if(role==='safety')return stacked?RI(16,19):RI(26,32);
+  return RI(38,44);
+}
+// Near the goal the whole wave structure squeezes proportionally into the
+// remaining field instead of spawning past the end line — red-zone football:
+// the short field turns spread waves into a dense goal-line formation, but
+// every defender still starts short of the plane with honest spacing.
+function waveSqueeze(){
+  if(typeof globalThis.__NO_WAVES!=='undefined')return 1;
+  // Floor: waves compress toward the goal but never below playable spacing —
+  // a goal-line stand is a dense box, not five bodies in four yards of grass.
+  return clamp((GOAL-scrimmage)/(46*PPY),.55,1);
+}
+// Goal-to-go thins the shell instead of piling it: a corner or safety whose
+// squeezed depth no longer fits in front of the plane is not fielded (he is
+// wide, covering ghosts) — the stand is a box the rusher can genuinely beat.
+function waveY(role,stacked){
+  const d=waveDepth(role,stacked)*PPY;
+  if(typeof globalThis.__NO_WAVES!=='undefined')return scrimmage+d;
+  const y=scrimmage+d*waveSqueeze();
+  if((role==='corner'||role==='safety')&&y>GOAL-2*PPY)return-1;
+  return Math.min(y,GOAL-2*PPY);
 }
 function spawnDefense(){
   defenders=[];
@@ -199,19 +249,37 @@ function spawnDefense(){
   for(let i=0;i<lineN;i++){
     const spread=stacked?38:56;
     const x=clamp(80+(i-(lineN-1)/2)*spread+RI(-6,6),LEFT+6,RIGHT-6);
-    defenders.push(makeDefender('line',x,scrimmage+RI(2,4)*PPY));
+    defenders.push(makeDefender('line',x,waveY('line',stacked)));
   }
-  for(let i=0;i<2;i++)defenders.push(makeDefender('backer',clamp(50+i*60+RI(-8,8),LEFT+6,RIGHT-6),scrimmage+RI(8,11)*PPY));
+  for(let i=0;i<2;i++)defenders.push(makeDefender('backer',clamp(50+i*60+RI(-8,8),LEFT+6,RIGHT-6),waveY('backer',stacked)));
   const safetyN=1+(wave>=2?1:0);
-  for(let i=0;i<safetyN;i++)defenders.push(makeDefender('safety',
-    clamp(56+i*48+RI(-10,10),LEFT+6,RIGHT-6),scrimmage+(stacked?RI(12,15):RI(19,24))*PPY));
+  for(let i=0;i<safetyN;i++){
+    const x=clamp(56+i*48+RI(-10,10),LEFT+6,RIGHT-6),y=waveY('safety',stacked);
+    if(y>=0)defenders.push(makeDefender('safety',x,y));
+  }
   // Corners live in the open field: they backpedal to stay ahead of the run
   // and turn breakaways into real chases instead of free grass.
   const cornerN=1+(wave>=2?1:0)+(wave>=4?1:0);
-  for(let i=0;i<cornerN;i++)defenders.push(makeDefender('corner',i%2?126:34,scrimmage+RI(29,35)*PPY));
+  for(let i=0;i<cornerN;i++){
+    const y=waveY('corner',stacked);
+    if(y>=0)defenders.push(makeDefender('corner',i%2?126:34,y));
+  }
 }
 function stepDefender(d,r){
   if(d.boostT>0)d.boostT--;
+  if(!d.awake){
+    const wakeYd=d.role==='backer'?14:9;
+    if(r.y>d.y-wakeYd*PPY||Math.hypot(r.x-d.x,r.y-d.y)<70)d.awake=true;
+    else{
+      // Asleep wave: hold the line, mirror the rusher's lane at walking pace.
+      const ax=clamp(r.x,d.zoneX-24,d.zoneX+24);
+      d.vx+=(clamp(ax-d.x,-6,6)/6*defSpeed(d)*.5-d.vx)*.07;
+      d.vy*=.8;
+      if(mudAt(d.x,d.y))d.vx*=.94;
+      d.x=clamp(d.x+d.vx,LEFT,RIGHT);d.y+=d.vy;
+      return;
+    }
+  }
   if(d.engageT>0){d.engageT--;d.vx*=.85;d.vy*=.85;d.x=clamp(d.x+d.vx,LEFT,RIGHT);d.y+=d.vy;return;}
   if(d.sprawlT>0){d.sprawlT--;d.vx*=.86;d.vy*=.86;d.x+=d.vx;d.y+=d.vy;return;}
   if(d.diveT>0){
@@ -228,7 +296,7 @@ function stepDefender(d,r){
   let ax=r.x+r.vx*lead,ay=r.y+r.v*lead;
   if(d.role==='backer'&&dy<-2*PPY){ax=r.x*.7+d.x*.3;ay=d.y+2;}
   if(d.role==='safety'&&dist>92){ax=r.x*.6+80*.4;ay=d.y+Math.max(0,r.v-.6);}
-  if(d.role==='corner'&&dy<9*PPY&&dist>52){ax=r.x*.8+d.x*.2;ay=Math.max(d.y,r.y+8*PPY);}
+  if(d.role==='corner'&&d.contain&&dy<9*PPY&&dist>52){ax=r.x*.8+d.x*.2;ay=Math.max(d.y,r.y+8*PPY);}
   const adx=ax-d.x,ady=ay-d.y,ad=Math.hypot(adx,ady)||1;
   d.vx+=(adx/ad*sp-d.vx)*.085;d.vy+=(ady/ad*sp-d.vy)*.085;
   if(mudAt(d.x,d.y)){d.vx*=.94;d.vy*=.94;}
@@ -283,7 +351,7 @@ function defenderContact(){
 // ---- downs, drives, plays -------------------------------------------------------
 function newDrive(reason){
   driveNo++;stats.drives++;wave=Math.min(6,driveNo-1);
-  down=1;scrimmage=20*PPY;toGain=scrimmage+10*PPY;
+  down=1;scrimmage=20*PPY;toGain=scrimmage+chainYd()*PPY;
   terrain=genTerrain(scrimmage);
   pickHistory=[];
   startHuddle();
@@ -311,9 +379,16 @@ function snap(){
   pickHistory.push(pickIndex);if(pickHistory.length>8)pickHistory.shift();
   keyed=pickIndex===defKey;
   if(keyed){stats.keyedPlays++;
-    for(const d of defenders)if(d.role==='line')d.boostT=120;
+    // A read play fires the front wave off the ball at the snap — the
+    // coordinator's guess is visible as behavior, not just a caption.
+    for(const d of defenders)if(d.role==='line'){d.boostT=150;d.awake=true;}
     sayAt('DEFENSE READS IT!',CORAL,scrimmage+8*PPY,66);shake(2);
+  }else if(dodgedCall){
+    // The other half of the mind game: the offense ducked the coordinator's
+    // read and the viewer gets told the trap worked.
+    sayAt("CAUGHT 'EM LEANING!",GOLD,scrimmage+8*PPY,66);
   }
+  dodgedCall=false;
   markEvent();
 }
 function endPlay(reason,tier1Id){
@@ -325,7 +400,7 @@ function endPlay(reason,tier1Id){
   scrimmage=clamp(rusher.y,6*PPY,GOAL-1);
   if(scrimmage>=toGain){
     const fourth=down===4;
-    down=1;toGain=Math.min(GOAL,scrimmage+10*PPY);
+    down=1;toGain=Math.min(GOAL,scrimmage+chainYd()*PPY);
     stats.firstDowns++;markProgress(40);
     if(fourth){stats.fourthDownConversions++;offer('fourth-down',2,rusher.x,rusher.y,driveNo);
       sayAt('4TH DOWN MOVES THE CHAINS',GOLD,rusher.y+20,80);fxBurst(rusher.x,sy(rusher.y),10,GOLD,1.6);}
@@ -421,6 +496,7 @@ function simulateLane(targetX,turboOn){
     const steer=clamp((targetX-b.x)*.12,-1,1);
     const ev=advanceBike(b,{steer,turbo:turboOn&&b.heat<92,brake:false,jump:false,juke:0},{wet:forecastWet(f)});
     if(ev.launched)rampHit=true;if(ev.overheated)overheated=true;
+    if(b.y>=GOAL)break; // plane scores before any contact
     for(const bk of bks)stepBlocker(bk,b,ds);
     for(const d of ds){
       stepDefender(d,b);
@@ -471,7 +547,7 @@ function choosePlay(){
   const predicted=predictKey();
   if(best===predicted){
     let alt=-1;for(let i=0;i<3;i++)if(i!==best&&(alt<0||scores[i]>scores[alt]))alt=i;
-    if(alt>=0&&scores[best]-scores[alt]<5){stats.readsDodged++;return alt;}
+    if(alt>=0&&scores[best]-scores[alt]<5){stats.readsDodged++;dodgedCall=true;return alt;}
   }
   return best;
 }
@@ -590,7 +666,9 @@ function stepWorld(){
         d.hurdled=true;stats.hurdles++;markEvent(25);offer('hurdle',1,rusher.x,rusher.y,'clear');
         sayAt('HURDLED!',GOLD,rusher.y+12,54);}
     }
-    const d=defenderContact();
+    // The plane scores first: a rusher crossing the goal line is untouchable
+    // even if a goal-line defender reaches him on the same frame.
+    const d=rusher.y>=GOAL?null:defenderContact();
     if(d){
       const power=rusher.v*.5+(rusher.intent&&rusher.intent.turbo?.28:0)+persona.power-Math.min(5,wave)*.045;
       if(rusher.breakCd<=0&&power>.9&&hash(d.id*13+playNo,runFrame)<clamp(power-.75,0,.6)){
@@ -621,7 +699,10 @@ function stepWorld(){
     stateT--;rusher.wheelie=Math.min(12,rusher.wheelie+1);rusher.y+=Math.max(.4,rusher.v*.98);rusher.v*=.985;
     if(stateT<=0){rusher.wheelie=0;newDrive('KICKOFF — FRESH DEFENSE');}
   }
-  camY+=(rusher.y-camY)*.12;
+  // Camera leads the run so the viewer sees the next wave before the bot
+  // commits to a line. Presentation only: the sim signature excludes camY.
+  const lookAhead=state==='play'?Math.min(64,rusher.v*36):0;
+  camY+=(rusher.y+lookAhead-camY)*.12;
 }
 function step(){
   showFrame++;
@@ -741,6 +822,19 @@ function drawDefender(d){
 }
 function drawHuddleCards(){
   if(state!=='huddle')return;
+  // Ghost route: the selected play drawn on the grass, so the viewer sees the
+  // called lane and can watch it work (or get keyed) after the snap.
+  if(viewerStoryOn()){
+    const px=PLAY_DEFS[pickIndex].x;
+    ctx.globalAlpha=.5;
+    for(let i=0;i<9;i++){
+      const t=i/8,wy=rusher.y+6*PPY+t*16*PPY,gx=rusher.x+(px-rusher.x)*Math.min(1,t*1.6);
+      const gy=sy(wy);if(gy>-6&&gy<H+6)rect(gx-1,gy-3,2,4,GOLD);
+    }
+    const hy=sy(rusher.y+23*PPY);
+    if(hy>-6&&hy<H+6){rect(px-3,hy,6,2,GOLD);rect(px-1,hy-3,2,3,GOLD);}
+    ctx.globalAlpha=1;
+  }
   const baseY=H-58;
   ctx.globalAlpha=.92;rect(12,baseY,W-24,26,INK);ctx.globalAlpha=1;
   ctx.strokeStyle='#2a3b52';ctx.strokeRect(12.5,baseY+.5,W-25,25);

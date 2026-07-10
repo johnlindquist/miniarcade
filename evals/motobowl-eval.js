@@ -26,6 +26,12 @@ globalThis.__mbScoreGap=()=>{const a=globalThis.__mbTdFrames;let max=a.length?a[
   for(let i=1;i<a.length;i++)max=Math.max(max,a[i]-a[i-1]);if(a.length)max=Math.max(max,showFrame-a.at(-1));return max;};
 globalThis.__mbForceSnap=()=>{if(state==='huddle'){stateT=1;stepWorld();}return state;};
 globalThis.__mbHeatUp=v=>{rusher.heat=v;return rusher.heat;};
+globalThis.__mbContacts=[];
+{let hit=false,snapF=0,snapY=0;
+ const __mbs0=snap;snap=function(){snapF=runFrame;snapY=rusher.y;hit=false;return __mbs0();};
+ const __mbc0=defenderContact;defenderContact=function(){const d=__mbc0();
+  if(d&&!hit&&state==='play'){hit=true;globalThis.__mbContacts.push({dur:runFrame-snapF,yd:(rusher.y-snapY)/PPY});}
+  return d;};}
 `;
 
 let failed=false;
@@ -37,22 +43,22 @@ const mean=a=>a.reduce((n,v)=>n+v,0)/a.length;
 const ypp=p=>p.stats.yards/Math.max(1,p.stats.plays);
 const keyedRate=p=>p.stats.keyedPlays/Math.max(1,p.stats.plays);
 
-// Pre-registered 30-seed x 10-minute calibration on 2026-07-10 (seeds
-// 0xd000 + i*233). Observed min..max: plays 136..148, tds 6..17, first downs
-// 56..73, tackles 120..142, broken 2..31, hurdles 3..19, jukes 57..122,
-// blocks 260..289, launches 6..28, overheats 0..8, tumbles 4..16, turnovers
-// 3..13, keyed 8..33, lapses 1..6, events 817..929, progress 198..217,
-// event lull exactly 262f (the TD-celebration + kickoff pipeline), story
-// lull max 717f. Bands below add explicit margin around those extrema.
+// Re-registered 30-seed x 10-minute calibration on 2026-07-10 after the
+// wave-defense redesign (seeds 0xd000 + i*233). Observed min..max: plays
+// 141..155, tds 5..14, first downs 40..50, tackles 131..149, broken 1..28,
+// hurdles 2..20, jukes 80..127, blocks 192..222, launches 14..35, overheats
+// 0..6, tumbles 5..17, turnovers 5..13, keyed 13..42, lapses 0..5, events
+// 754..872, progress 182..204, event lull 262..413f (TD celebration +
+// kickoff pipeline), story lull max 851f. Bands add margin on both sides.
 const WATCH_BANDS={
-  plays:[125,165],tds:[4,22],firstDowns:[45,85],tackles:[105,158],
-  brokenTackles:[1,40],hurdles:[2,28],jukes:[45,140],blocks:[235,320],
-  launches:[4,38],overheats:[0,12],tumbles:[2,24],turnovers:[2,18],
-  keyedPlays:[5,42],lapses:[1,8]
+  plays:[132,168],tds:[3,20],firstDowns:[33,60],tackles:[120,162],
+  brokenTackles:[1,36],hurdles:[1,26],jukes:[65,140],blocks:[175,240],
+  launches:[9,42],overheats:[0,10],tumbles:[3,22],turnovers:[3,18],
+  keyedPlays:[9,48],lapses:[0,8]
 };
 // Both policies from the 10-pair lane-plan ablation must stay watchable:
 // planned is competent, reactive visibly worse, neither inert nor absurd.
-const POLICY_BANDS={plays:[50,110],tds:[0,14],tackles:[40,105],turnovers:[0,16],blocks:[90,200]};
+const POLICY_BANDS={plays:[50,110],tds:[0,14],tackles:[40,105],turnovers:[0,16],blocks:[60,200]};
 const inBands=(p,bands,label)=>{for(const[k,[lo,hi]]of Object.entries(bands)){
   const v=p.stats?p.stats[k]:p[k];
   if(v<lo||v>hi)fail(`${label}: ${k} ${v} outside measured band ${lo}..${hi}`);}};
@@ -139,10 +145,13 @@ for(const seed of watchSeeds){
   actPairs(p,'storm',240,`seed ${seed.toString(16)}`,3);
   actPairs(p,'blitz',210,`seed ${seed.toString(16)}`,3);
   inBands(p,WATCH_BANDS,`seed ${seed.toString(16)} ${p.persona}`);
-  if(p.stats.events<770||p.stats.events>1000||p.stats.progress<185||p.stats.progress>235)
-    fail(`seed ${seed.toString(16)}: event/progress totals ${p.stats.events}/${p.stats.progress} outside measured margin 770..1000 / 185..235`);
-  if(p.maxEventLull>420)fail(`seed ${seed.toString(16)}: visible-event lull ${p.maxEventLull}f exceeds 420f`);
-  if(p.scoreGap>15000)fail(`seed ${seed.toString(16)}: touchdown drought ${p.scoreGap}f exceeds 15000f`);
+  if(p.stats.events<740||p.stats.events>980||p.stats.progress<176||p.stats.progress>235)
+    fail(`seed ${seed.toString(16)}: event/progress totals ${p.stats.events}/${p.stats.progress} outside measured margin 740..980 / 176..235`);
+  if(p.maxEventLull>460)fail(`seed ${seed.toString(16)}: visible-event lull ${p.maxEventLull}f exceeds 460f`);
+  // Home-TD droughts measured 6507..16371f across the calibration seeds —
+  // turnovers are back in the game, and the rival schedule + downs drama
+  // carry the scoreboard between home scores. Cap re-derived with margin.
+  if(p.scoreGap>19000)fail(`seed ${seed.toString(16)}: touchdown drought ${p.scoreGap}f exceeds 19000f`);
   if(p.maxProgressLull>1200)fail(`seed ${seed.toString(16)}: story-progress lull ${p.maxProgressLull}f exceeds hard 1200f`);
   // Landings may trail launches: a flight that crosses the goal line scores
   // mid-air and never lands. A large deficit still means physics is broken.
@@ -278,7 +287,7 @@ console.log('9) 15-minute title match + payoff ladder: exact apex budgets and ad
     `tiers ${JSON.stringify(o)} shown ${JSON.stringify(s)}; hold ${show.heldFrames}, slow ${show.slowedFrames}, admire ${show.admireFrames}`);
   if(!ending||ending.runFrame!==54000||ending.state!=='ending'||ending.resultT!==360||p.stats.endings!==1)
     fail(`the title match did not culminate exactly at run frame 54000: ${JSON.stringify(ending)}`);
-  if(ending.outcome!=='TITLE WON'||ending.homeScore<=ending.rivalScore||ending.rivalScore!==98)
+  if(ending.outcome!=='TITLE WON'||ending.homeScore<=ending.rivalScore||ending.rivalScore!==63)
     fail(`15-minute arc ended without an earned title on the calibrated seed: ${JSON.stringify(ending)}`);
   if(!((o[1]||0)>(o[2]||0)&&(o[2]||0)>(o[3]||0)&&(o[3]||0)>=1))fail(`offered payoff ladder not strictly ordered: ${JSON.stringify(o)}`);
   if(!((s[1]||0)>(s[2]||0)&&(s[2]||0)>(s[3]||0)&&(s[3]||0)>=1))fail(`shown payoff ladder not strictly ordered: ${JSON.stringify(s)}`);
@@ -312,7 +321,7 @@ console.log('11) shared ten-minute soak: moving, happening, and scoring');
 {
   const{samples}=runSoak('motobowl',{seed:0xd000,footer:FOOTER,minutes:10}),report=analyzeSoak(samples);
   console.log('  '+soakLine(report));
-  assertSoak('motobowl soak',report,{still:4,quiet:8,stall:20,minEvents:770,minProgress:185},fail);
+  assertSoak('motobowl soak',report,{still:4,quiet:8,stall:20,minEvents:740,minProgress:176},fail);
 }
 
 console.log('12) viewer story: plain goal from frame one, truthful receipts, presentation-only A/B');
@@ -322,7 +331,7 @@ console.log('12) viewer story: plain goal from frame one, truthful receipts, pre
   console.log(`  opening "${v.drawn.hud}" / "${v.drawn.verb}" / "${v.drawn.downLine}" chains ${v.drawn.chainDrawn}`);
   if(!v.enabled||!v.drawn.enabled||v.drawn.frame!==game.sandbox.__motobowlProbe().showFrame||
     v.drawn.hud!=='MOTO BOWL  HOME 0 · AWAY 0'||v.drawn.hud!==v.hud||
-    v.drawn.downLine!=='1ST & 10'||v.drawn.downLine!==v.downLine||
+    v.drawn.downLine!=='1ST & 15'||v.drawn.downLine!==v.downLine||
     !v.drawn.verb||v.drawn.verb!==v.verb||!v.drawn.chainDrawn)
     fail(`first rendered frame did not plainly explain the show: ${JSON.stringify(v)}`);
   game.frames(7199,true);
@@ -358,6 +367,33 @@ console.log('12) viewer story: plain goal from frame one, truthful receipts, pre
   if(ra!==rb)fail('viewer story consumed engine RNG for simulation-invisible work');
   if(!va.enabled||vb.enabled||vb.drawn.hud!==''||vb.drawn.verb!==''||vb.drawn.downLine!==''||vb.drawn.chainDrawn)
     fail(`__NO_VIEWER_STORY did not cleanly ablate the presentation layer: ${JSON.stringify({va,vb})}`);
+}
+
+console.log('13) wave defense A/B: six paired ten-minute seeds against the legacy snap swarm');
+{
+  // The aggravation metric: point-blank first contact (a defender reaches the
+  // rusher inside 4 yards of the snap) — waves must keep launches breathable.
+  // Ten-minute pairs: the swarm's point-blank rate grows with the wave-speed
+  // scaling across a match, which is exactly the horizon viewers watch.
+  const pb=c=>c.length?c.filter(x=>x.yd<4).length/c.length:1;
+  let wins=0;const wr=[],sr=[];let wTo=0,wTd=0;
+  for(let i=0;i<6;i++){
+    const seed=0xaa00+i*191,a=bootGame('motobowl',{seed,footer:FOOTER}),b=bootGame('motobowl',{seed,footer:FOOTER});
+    b.sandbox.__NO_WAVES=1;a.frames(36000,false);b.frames(36000,false);
+    const ca=a.sandbox.__mbContacts,cb=b.sandbox.__mbContacts,
+      pa=a.sandbox.__motobowlProbe(),pbb=b.sandbox.__motobowlProbe();
+    wr.push(pb(ca));sr.push(pb(cb));if(pb(ca)<pb(cb))wins++;
+    wTo+=pa.stats.turnovers;wTd+=pa.stats.tds;
+    if(!pa.finite||!pbb.finite)fail(`seed ${seed.toString(16)}: non-finite state in wave A/B`);
+    console.log(`  ${seed.toString(16)} ${pa.persona.padEnd(8)} waves ${(pb(ca)*100).toFixed(1)}% point-blank `+
+      `vs swarm ${(pb(cb)*100).toFixed(1)}% (${ca.length}/${cb.length} first contacts)`);
+  }
+  const mw=mean(wr),ms=mean(sr);
+  console.log(`  ${wins}/6 point-blank wins; mean ${(mw*100).toFixed(1)}% vs ${(ms*100).toFixed(1)}%; `+
+    `waves drama: ${wTd} tds, ${wTo} turnovers across six runs`);
+  if(wins<5)fail(`wave defense reduced point-blank first contacts on only ${wins}/6 seeds`);
+  if(mw>ms*.75)fail(`wave defense point-blank rate ${(mw*100).toFixed(1)}% not clearly below swarm ${(ms*100).toFixed(1)}%`);
+  if(wTd<24||wTo<24)fail(`wave defense lost the drama balance: ${wTd} tds / ${wTo} turnovers across six ten-minute runs`);
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
