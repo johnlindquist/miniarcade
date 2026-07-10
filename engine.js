@@ -270,8 +270,8 @@ const E=(()=>{
 
   // ---- player sessions: attract (AI plays) -> ENTER -> instructions -> ENTER -> playing
   //      -> game over -> attract
-  const SES={mode:'attract',score:0,best:0,t:0,name:'game',info:'',help:[]};
-  function initSession(name,help){SES.name=name;SES.help=help||[];
+  const SES={mode:'attract',score:0,best:0,t:0,name:'game',info:'',help:[],viewer:false};
+  function initSession(name,help,options){SES.name=name;SES.help=help||[];SES.viewer=!!(options&&options.viewer);
     try{SES.best=+(localStorage.getItem('sq-'+name)||0);}catch(e){}}
   function playing(){return SES.mode==='playing';}
   function addScore(n){SES.score+=n;}
@@ -297,7 +297,15 @@ const E=(()=>{
     const cx2=W/2;
     ctx.font='bold 8px monospace';
     if(SES.mode==='attract'){
-      if(Math.floor(SES.t/45)%2===0){
+      if(SES.viewer){
+        // These games are ambient shows first. On a direct page, interaction is
+        // a delayed corner affordance; gallery previews and recordings stay pure.
+        if(!preview&&SES.t>480&&Math.floor((SES.t-480)/90)%2===0){
+          ctx.font='bold 5px monospace';const s='ENTER · TAKE OVER',w2=s.length*3+6;
+          ctx.globalAlpha=0.28;rect(W-w2-3,H-10,w2,8,'#0a0d14');ctx.globalAlpha=0.48;
+          ctx.fillStyle='#c8d2e0';ctx.fillText(s,W-w2,H-4);ctx.globalAlpha=1;
+        }
+      }else if(Math.floor(SES.t/45)%2===0){
         const s='ENTER · PLAY',w2=s.length*5+10;
         ctx.globalAlpha=0.6;rect(cx2-w2/2,H-26,w2,12,'#0a0d14');
         ctx.globalAlpha=0.9;ctx.fillStyle='#e8ebf2';
@@ -498,5 +506,6 @@ const E=(()=>{
   return{cv,ctx,W,H,random,seedRandom,R,RI,hash,dist,clamp,rect,spawn,burst,dust,stepParts,drawParts,
     fxRandom,fxR,fxRI,fxBurst,fxDust,createShow,
     ring,stepRings,drawRings,shake,preDraw,postDraw,start,runFrames,keys,tap,manual,axis2,record,recordTurbo,
-    profileReport,initSession,sessionStep,drawSession,playing,addScore,gameOver};
+    profileReport,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+    sessionProbe:()=>({mode:SES.mode,t:SES.t,name:SES.name,viewer:SES.viewer})};
 })();

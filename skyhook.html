@@ -28,6 +28,7 @@ const RAIL_Y=31,RAIL_L=18,RAIL_R=142,FLOOR_Y=329;
 const PICK_X=32,PICK_Y=301,SCREEN_X=80,SCREEN_TOP=203;
 const GRAVITY=.115,MIN_ROPE=62,MAX_ROPE=272,SWING_ROPE=126;
 const MODULE_CATCHES=3,REQUIRED_MODULES=26;
+const LEGACY_LAUNCH_FRAMES=320,LONG_LAUNCH_FRAMES=960;
 const INK='#0a1724',SKY='#173a4d',SKY2='#245264',FOG='#8fb7bd',CREAM='#f4e7c5';
 const GOLD='#ffd166',CORAL='#ef6b67',TEAL='#43d6b2',BLUE='#54a8d8',VIOLET='#aa7ee8';
 const TYPES=[
@@ -56,6 +57,51 @@ const stats={catches:0,perfects:0,crashes:0,salvages:0,releases:0,latches:0,modu
   launches:0,aborts:0,lapses:0,events:0,progress:0,maxEventLull:0,maxProgressLull:0,
   maxSwing:0,maxRopeError:0,maxRecoveryStep:0,forecasts:0,maxForecastError:0,
   deadlineMisses:0,lostModules:0,finalEngines:0};
+
+// Viewer-story rendering is deliberately sim-inert. The switches stay global so
+// the eval can replay the exact same seed with the old presentation forever.
+// __NO_LONG_LAUNCH is separate because it intentionally extends only the
+// post-completion ceremony; every pre-launch body and outcome remains identical.
+const viewerStoryOn=()=>typeof __NO_VIEWER_STORY==='undefined';
+const partialHullOn=()=>typeof __NO_PARTIAL_HULL==='undefined';
+const longLaunchOn=()=>typeof __NO_LONG_LAUNCH==='undefined';
+const launchFrameLimit=()=>longLaunchOn()?LONG_LAUNCH_FRAMES:LEGACY_LAUNCH_FRAMES;
+let viewerDraw={frame:-1,enabled:false,hud:'',verb:'',trajectory:'',targetLabel:'',
+  phase:'',visiblePartialCount:0,ghost:false,silhouetteStage:0};
+
+function viewerPhaseFor(count){
+  if(count>=REQUIRED_MODULES||state==='launch')return{index:4,label:'AIRSHIP COMPLETE',short:'LAUNCH'};
+  if(count>=20)return{index:3,label:'FIT FINAL ENGINE',short:'ENGINE'};
+  if(count>=13)return{index:2,label:'ADD LIFT WINGS',short:'LIFT'};
+  if(count>=6)return{index:1,label:'POWER THE HULL',short:'POWER'};
+  return{index:0,label:'BUILD THE FRAME',short:'FRAME'};
+}
+function viewerVerb(){
+  if(state==='launch'){
+    if(launchT<90)return'UNFOLD AIRSHIP';
+    if(launchT<360)return'AIRSHIP COMPLETE';
+    if(launchT<720)return'LAUNCHING AIRSHIP';
+    return'BON VOYAGE';
+  }
+  if(state==='supply'||state==='pickup')return'PICK UP CARGO';
+  if(state==='swing')return'SWING TO GREEN BAY';
+  if(state==='flight')return'DROP IN GREEN BAY';
+  if(state==='caught')return moduleFill?'BUILD PART '+moduleFill+'/3':'MODULE LOCKED';
+  if(state==='crash')return'MISSED - RECOVER';
+  if(state==='salvage')return'SALVAGE THE PART';
+  if(state==='lost')return'REPLACE THE PART';
+  return'BUILD THE AIRSHIP';
+}
+function trajectoryStory(){
+  const flight=releasePlan&&releasePlan.flight,cross=flight&&flight.cross;
+  if(!cargo||!releasePlan)return{label:'',delta:null,tolerance:cargo&&cargo.tol||null,color:FOG};
+  if(releasePlan.collision||flight&&flight.collision)
+    return{label:'BLOCKED',delta:null,tolerance:cargo.tol,color:CORAL};
+  if(!cross)return{label:'NO LINE',delta:null,tolerance:cargo.tol,color:CORAL};
+  const delta=cross.x-cross.targetX,tol=cargo.tol;
+  if(Math.abs(delta)<=tol)return{label:'ON TARGET',delta,tolerance:tol,color:TEAL};
+  return{label:delta<0?'SHORT':'LONG',delta,tolerance:tol,color:CORAL};
+}
 
 const SHOW=createShow({tiers:{
   1:{frames:12},
@@ -302,7 +348,9 @@ function completeCatch(perfect){
     SHOW.offer({id:'module',tier:2,at:showFrame,x:slot.x,y:slot.y});
     fxBurst(slot.x,slot.y,16,cargo.color,2.1,.02);say('MODULE '+hullModules.length+'/'+REQUIRED_MODULES,GOLD,106,217,70);
     if(hullModules.length===4){markEvent();say('CATCHER ON RAILS',TEAL,105,204,78);}
-    if(hullModules.length===6){markEvent();say('WINDSCREEN ONLINE',VIOLET,80,187,82);}
+    if(hullModules.length===6){markEvent();say(viewerStoryOn()?'FRAME COMPLETE':'WINDSCREEN ONLINE',VIOLET,80,187,82);}
+    if(viewerStoryOn()&&hullModules.length===13)say('LIFT WINGS READY',GOLD,80,174,90);
+    if(viewerStoryOn()&&hullModules.length===20)say('FINAL ENGINE NEXT',CORAL,80,161,90);
     if(hullModules.length>=REQUIRED_MODULES)pendingLaunch=true;
   }
 }
@@ -527,8 +575,18 @@ function physicsStep(){
   }else if(state==='launch'){
     integratePendulum(T,intent,windAx,.2);launchT++;
     if(launchT===90){markEvent();say('AIRSHIP LIFTS',GOLD,80,128,100);fxBurst(119,296,24,CREAM,2.2,.01);}
-    if(launchT>90){const t=launchT-90;launchY-=.16+t*.0019;if(launchT%18===0)fxDust(113,310+launchY,5,CREAM);}
-    if(launchT>=320){craftNo++;resetCraft(false);}
+    if(launchT>90){
+      const t=launchT-90;
+      if(longLaunchOn()){
+        // Rise into a readable victory pose, hold in the frame, then depart.
+        // This is closed-form motion: no RNG and no accumulating drift.
+        if(t<=420)launchY=-Math.min(52,t*.14);
+        else{const d=t-420;launchY=-52-d*.13-d*d*.00036;}
+        if(launchT===360||launchT===720)markEvent();
+      }else launchY-=.16+t*.0019;
+      if(launchT%18===0)fxDust(113,310+launchY,5,CREAM);
+    }
+    if(launchT>=launchFrameLimit()){craftNo++;resetCraft(false);}
   }
   stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
   stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
@@ -586,30 +644,75 @@ function drawWindScreen(){
   rect(SCREEN_X-4,SCREEN_TOP,8,FLOOR_Y-SCREEN_TOP,'#273e49');rect(SCREEN_X-7,SCREEN_TOP-5,14,5,'#49636b');
   for(let y=SCREEN_TOP+8;y<FLOOR_Y-8;y+=14){rect(SCREEN_X-6,y,12,3,'#4d6d76');rect(SCREEN_X-1,y-4,2,11,'#172b34');}
 }
+function drawAirshipGhost(){
+  viewerDraw.ghost=true;
+  ctx.globalAlpha=.18;ctx.fillStyle='#9ad8db';ctx.strokeStyle=FOG;ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(125,202);ctx.lineTo(148,224);ctx.lineTo(154,285);
+  ctx.lineTo(143,318);ctx.lineTo(107,318);ctx.lineTo(97,285);ctx.lineTo(102,224);
+  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.moveTo(103,246);ctx.lineTo(78,264);ctx.lineTo(103,276);
+  ctx.moveTo(147,246);ctx.lineTo(159,264);ctx.lineTo(147,276);ctx.stroke();
+  for(let i=0;i<3;i++){ctx.beginPath();ctx.moveTo(112+i*14,318);ctx.lineTo(118+i*10,329);ctx.stroke();}
+  ctx.globalAlpha=1;ctx.lineWidth=1;
+}
 function drawHull(){
   const oy=state==='launch'?launchY:0;
   ctx.save();ctx.translate(0,oy);
   // Mooring cradle and catcher — target movement stays visually explicit.
-  rect(99,target.y+7,54,4,'#314955');rect(target.x-target.w/2,target.y-5,target.w,11,'#213944');
-  rect(target.x-target.w/2,target.y-5,3,11,TEAL);rect(target.x+target.w/2-3,target.y-5,3,11,TEAL);
-  ctx.strokeStyle=TEAL;ctx.beginPath();ctx.arc(target.x,target.y,8,0,7);ctx.stroke();
+  if(state!=='launch'||!viewerStoryOn()){
+    rect(99,target.y+7,54,4,'#314955');rect(target.x-target.w/2,target.y-5,target.w,11,'#213944');
+    const catcherPulse=viewerStoryOn()?.16+.08*Math.sin(showFrame*.18):0;
+    if(viewerStoryOn()&&state!=='launch'){
+      ctx.globalAlpha=.18+catcherPulse;ctx.fillStyle=TEAL;ctx.beginPath();ctx.arc(target.x,target.y,15,0,7);ctx.fill();ctx.globalAlpha=1;
+    }
+    rect(target.x-target.w/2,target.y-6,4,13,TEAL);rect(target.x+target.w/2-4,target.y-6,4,13,TEAL);
+    ctx.strokeStyle=TEAL;ctx.lineWidth=viewerStoryOn()?2:1;ctx.beginPath();ctx.arc(target.x,target.y,viewerStoryOn()?11:8,0,7);ctx.stroke();ctx.lineWidth=1;
+  }
   // Growing airship silhouette: every three catches becomes one persistent cell.
-  ctx.globalAlpha=.26;rect(102,227,48,89,'#101f29');ctx.globalAlpha=1;
+  if(viewerStoryOn())drawAirshipGhost();
+  else{ctx.globalAlpha=.26;rect(102,227,48,89,'#101f29');ctx.globalAlpha=1;}
   for(let i=0;i<REQUIRED_MODULES;i++){const s=hullSlot(i),built=hullModules[i];
     if(built){rect(s.x-6,s.y-5,12,10,built.color);rect(s.x-4,s.y-3,8,6,'#234352');
       if(built.kind==='CELL')rect(s.x-3,s.y-2,6,4,'#b9f5f1');
       if(built.kind==='ENGINE')rect(s.x+3,s.y-3,5,6,CORAL);
     }else{ctx.globalAlpha=.18;ctx.strokeStyle=FOG;ctx.strokeRect(s.x-6.5,s.y-5.5,12,10);ctx.globalAlpha=1;}
   }
+  let visiblePartials=0;
+  if(partialHullOn()&&placedPieces.length){
+    const slot=placedPieces[0].slot;ctx.strokeStyle=GOLD;ctx.lineWidth=2;
+    ctx.strokeRect(slot.x-7,slot.y-6,14,12);ctx.lineWidth=1;
+    for(let i=0;i<placedPieces.length;i++){
+      const p=placedPieces[i],s=p.slot,x=s.x-6+i*4;
+      rect(x,s.y-5,4,10,p.color);rect(x+1,s.y-3,2,6,CREAM);visiblePartials++;
+    }
+  }
+  viewerDraw.visiblePartialCount=visiblePartials;
+  const phase=viewerPhaseFor(hullModules.length);viewerDraw.phase=phase.label;viewerDraw.silhouetteStage=phase.index;
   if(hullModules.length){
     ctx.fillStyle=CREAM;ctx.beginPath();ctx.moveTo(100,310);ctx.lineTo(151,310);ctx.lineTo(143,318);ctx.lineTo(108,318);ctx.closePath();ctx.fill();
     rect(112,219,28,8,'#d9c99f');rect(121,211,4,9,GOLD);
   }
+  if(viewerStoryOn()&&phase.index>=1){
+    rect(100,280,4,30,VIOLET);rect(147,280,4,30,VIOLET);
+    rect(107,313,10,5,TEAL);rect(133,313,10,5,TEAL);
+  }
+  if(viewerStoryOn()&&phase.index>=2){
+    const staged=state==='launch'?.62+.38*clamp(launchT/90,0,1):.62;
+    ctx.fillStyle=CREAM;ctx.beginPath();ctx.moveTo(108,251);ctx.lineTo(108-26*staged,263);
+    ctx.lineTo(108,270);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(142,251);
+    ctx.lineTo(142+15*staged,263);ctx.lineTo(142,270);ctx.closePath();ctx.fill();
+  }
+  if(viewerStoryOn()&&phase.index>=3){
+    ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(113,219);ctx.lineTo(125,202);ctx.lineTo(138,219);ctx.closePath();ctx.fill();
+    rect(116,216,18,5,'#d9c99f');
+  }
   if(state==='launch'){
     const unfold=clamp(launchT/90,0,1);
-    ctx.fillStyle=CREAM;ctx.beginPath();ctx.moveTo(108,251);ctx.lineTo(108-26*unfold,263);
-    ctx.lineTo(108,270);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(142,251);
-    ctx.lineTo(142+15*unfold,263);ctx.lineTo(142,270);ctx.closePath();ctx.fill();
+    if(!viewerStoryOn()){
+      ctx.fillStyle=CREAM;ctx.beginPath();ctx.moveTo(108,251);ctx.lineTo(108-26*unfold,263);
+      ctx.lineTo(108,270);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(142,251);
+      ctx.lineTo(142+15*unfold,263);ctx.lineTo(142,270);ctx.closePath();ctx.fill();
+    }
     for(let i=0;i<3&&launchT>=90;i++){const x=112+i*14;ctx.globalAlpha=.35+.25*Math.sin(showFrame*.3+i);
       ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(x-3,318);ctx.lineTo(x+3,318);ctx.lineTo(x,329+Math.sin(showFrame*.2+i)*3);ctx.fill();}
     ctx.globalAlpha=1;
@@ -641,28 +744,66 @@ function drawCargo(c){
 function drawDebris(){for(const d of debris){ctx.globalAlpha=clamp(d.t/20,0,1);rect(d.x-2,d.y-2,4,4,d.color);}ctx.globalAlpha=1;}
 function drawPlan(){
   if(!cargo||(state!=='swing'&&state!=='flight'))return;
+  const story=trajectoryStory(),storyOn=viewerStoryOn(),lineColor=storyOn&&story.label?story.color:CREAM;
   if(plannedArc.length){
-    ctx.globalAlpha=.34;ctx.strokeStyle=CREAM;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.beginPath();
+    ctx.globalAlpha=storyOn?.68:.34;ctx.strokeStyle=lineColor;ctx.lineWidth=storyOn?2:1;ctx.setLineDash([3,3]);ctx.beginPath();
     plannedArc.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();ctx.setLineDash([]);
-    ctx.globalAlpha=.84;ctx.fillStyle=persona.color;
+    ctx.globalAlpha=storyOn?.92:.84;ctx.fillStyle=storyOn?lineColor:persona.color;
     for(let i=0;i<plannedArc.length;i++){const p=plannedArc[i];if(p.y>42&&p.y<FLOOR_Y)ctx.fillRect(Math.round(p.x)-1,Math.round(p.y)-1,i%3?2:3,i%3?2:3);}
-    if(releasePlan&&releasePlan.flight.cross){const q=releasePlan.flight.cross;ctx.strokeStyle=GOLD;ctx.strokeRect(q.x-4.5,q.y-4.5,9,9);}
+    if(releasePlan&&releasePlan.flight.cross){const q=releasePlan.flight.cross;ctx.strokeStyle=storyOn?lineColor:GOLD;ctx.lineWidth=storyOn?2:1;
+      ctx.strokeRect(q.x-(storyOn?7:4.5),q.y-(storyOn?7:4.5),storyOn?14:9,storyOn?14:9);ctx.lineWidth=1;}
   }
   ctx.globalAlpha=1;
-  if(state==='swing'&&releasePlan&&typeof __NO_RELEASE_PLAN==='undefined'){
+  if(!storyOn&&state==='swing'&&releasePlan&&typeof __NO_RELEASE_PLAN==='undefined'){
     const count=clamp(Math.ceil((releasePlan.delay-(showFrame-planAt))/12),0,8);
     for(let i=0;i<8;i++)rect(60+i*5,54,3,3,i<count?GOLD:'#36515d');
   }
-  if(state==='flight'&&releasePlan&&releasePlan.actual&&releasePlan.miss<900){
+  if(storyOn&&story.label){
+    viewerDraw.trajectory=story.label;const w=story.label.length*5+10;
+    ctx.globalAlpha=.92;rect(80-w/2,51,w,13,INK);ctx.globalAlpha=1;ctx.strokeStyle=story.color;
+    ctx.strokeRect(80-w/2+.5,51.5,w-1,12);ctx.font='bold 8px monospace';ctx.fillStyle=story.color;
+    ctx.fillText(story.label,80-story.label.length*2.5,61);
+  }else if(state==='flight'&&releasePlan&&releasePlan.actual&&releasePlan.miss<900){
     const s='FORECAST '+releasePlan.miss.toFixed(1);ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;
     ctx.fillText(s,80-s.length*1.8,55);
+  }
+}
+function drawViewerStory(){
+  if(!viewerStoryOn())return;
+  const verb=viewerVerb(),w=Math.min(148,verb.length*5+12);
+  viewerDraw.verb=verb;viewerDraw.targetLabel=state==='launch'?'':'DROP HERE';
+  ctx.globalAlpha=.94;rect(80-w/2,35,w,13,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;
+  ctx.strokeRect(80-w/2+.5,35.5,w-1,12);ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;
+  ctx.fillText(verb,80-verb.length*2.5,45);
+  if(state!=='launch'){
+    const label='DROP HERE',tx=clamp(target.x,27,133),tw=label.length*4+8;
+    ctx.globalAlpha=.9;rect(tx-tw/2,target.y-25,tw,11,INK);ctx.globalAlpha=1;
+    ctx.font='bold 7px monospace';ctx.fillStyle=TEAL;ctx.fillText(label,tx-label.length*2.1,target.y-17);
+  }
+  if(state==='caught'&&cargo){
+    const slot=hullSlot(Math.min(REQUIRED_MODULES-1,hullModules.length));
+    ctx.globalAlpha=.72;ctx.strokeStyle=cargo.color;ctx.lineWidth=2;ctx.setLineDash([3,2]);
+    ctx.beginPath();ctx.moveTo(cargo.x,cargo.y);ctx.lineTo(slot.x,slot.y);ctx.stroke();
+    ctx.setLineDash([]);ctx.lineWidth=1;ctx.globalAlpha=1;
   }
 }
 function drawTexts(){ctx.font='bold 7px monospace';for(const t of texts){
   const w=t.s.length*4.2+7;ctx.globalAlpha=Math.min(1,t.t/10)*.9;rect(t.x-w/2,t.y-8,w,11,INK);
   ctx.fillStyle=t.c;ctx.fillText(t.s,t.x-t.s.length*2.1,t.y);ctx.globalAlpha=1;}}
 function drawHUD(){
-  ctx.globalAlpha=.94;rect(0,0,W,25,INK);ctx.globalAlpha=1;
+  ctx.globalAlpha=.94;rect(0,0,W,viewerStoryOn()?31:25,INK);ctx.globalAlpha=1;
+  if(viewerStoryOn()){
+    const count=('00'+hullModules.length).slice(-2)+'/'+REQUIRED_MODULES,
+      hud='BUILD AIRSHIP '+count,phase=viewerPhaseFor(hullModules.length),part='PART '+moduleFill+'/3';
+    viewerDraw.hud=hud;viewerDraw.phase=phase.label;
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('BUILD AIRSHIP',5,10);
+    ctx.fillStyle=GOLD;ctx.fillText(count,132,10);
+    ctx.font='bold 6px monospace';ctx.fillStyle=moduleFill?GOLD:'#94abb3';ctx.fillText(part,5,21);
+    ctx.fillStyle=TEAL;ctx.fillText(phase.short,70,21);
+    ctx.fillStyle=cargo&&cargo.color||FOG;ctx.fillText(cargo?cargo.type:'AIRSHIP',131,21);
+    const total=(hullModules.length+moduleFill/MODULE_CATCHES)/REQUIRED_MODULES;
+    rect(4,26,152,4,'#243c48');rect(4,26,152*clamp(total,0,1),4,GOLD);return;
+  }
   ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('SKYHOOK',5,10);
   ctx.fillStyle=persona.color;ctx.fillText(persona.name,72,10);
   ctx.fillStyle=GOLD;ctx.fillText(('00'+hullModules.length).slice(-2)+'/'+REQUIRED_MODULES,132,10);
@@ -675,12 +816,24 @@ function drawHUD(){
   }
 }
 function draw(){
-  drawSky();preDraw();drawActs();drawSupply();drawWindScreen();drawHull();drawPlan();drawRail();
+  viewerDraw={frame:showFrame,enabled:viewerStoryOn(),hud:'',verb:'',trajectory:'',targetLabel:'',
+    phase:'',visiblePartialCount:0,ghost:false,silhouetteStage:0};
+  drawSky();preDraw();drawActs();drawSupply();drawWindScreen();drawHull();drawPlan();drawViewerStory();drawRail();
   if(cargo&&state!=='launch')drawCargo(cargo);drawDebris();drawParts();drawRings();drawTexts();postDraw();drawHUD();drawSession(false);
 }
 
 // Browser and footer eval surface. The soak counters are cumulative across
 // craft launches, while the signature includes actual moving bodies.
+function viewerProbe(){
+  const count=('00'+hullModules.length).slice(-2)+'/'+REQUIRED_MODULES,
+    phase=viewerPhaseFor(hullModules.length),trajectory=trajectoryStory();
+  return{enabled:viewerStoryOn(),partialHull:partialHullOn(),longLaunch:longLaunchOn(),
+    launchFrameLimit:launchFrameLimit(),hud:'BUILD AIRSHIP '+count,verb:viewerVerb(),
+    phase:phase.label,phaseIndex:phase.index,moduleFill,placedPieces:placedPieces.length,
+    expectedVisiblePartialCount:partialHullOn()?placedPieces.length:0,
+    trajectory:trajectory.label,trajectoryDelta:trajectory.delta,trajectoryTolerance:trajectory.tolerance,
+    drawn:{...viewerDraw}};
+}
 function probe(){return{frame,showFrame,runFrame,craftNo,state,stateT,jobNo,moduleFill,hull:hullModules.length,
   persona:persona.name,tactic,windAx,gust:{...gust},moor:{...moor},target:{...target},trolley:{...T},
   cargo:cargo&&{...cargo},planned:releasePlan&&{delay:releasePlan.delay,miss:releasePlan.miss,collision:releasePlan.collision},
@@ -698,6 +851,13 @@ function signature(){
 globalThis.__skyhookProbe=probe;
 globalThis.__skyhookSignature=signature;
 globalThis.__skyhookForecasts=()=>releaseHistory.map(o=>({...o}));
+globalThis.__skyhookViewerProbe=viewerProbe;
+globalThis.__skyhookViewerPhase=count=>({...viewerPhaseFor(count)});
+globalThis.__skyhookSetViewerHull=count=>{
+  count=clamp(Math.floor(count),0,REQUIRED_MODULES);hullModules=Array.from({length:count},(_,i)=>{
+    const type=TYPES[i%TYPES.length],slot=hullSlot(i);return{x:slot.x,y:slot.y,color:type.color,kind:type.name};});
+  moduleFill=0;placedPieces=[];pendingLaunch=false;return viewerProbe();
+};
 globalThis.__soakProbe=()=>({sig:Math.round(T.x*17+T.theta*1009+(cargo?cargo.x*7+cargo.y*3:0)+launchY),
   events:eventSerial,progress:progressSerial,finite:allFinite()});
 globalThis.__skyhookMechanicsFixture=()=>{
@@ -788,7 +948,7 @@ globalThis.__skyhookSetManualSwing=()=>{
     deadline:900,deadlineLeft:900,deadlineWarned:false,crossed:false};return probe();
 };
 
-initSession('skyhook',[['LEFT / RIGHT','TROLLEY'],['UP / DOWN','WINCH'],['SPACE','MAGNET'],['X','BRAKE · RELEASE']]);
+initSession('skyhook',[['LEFT / RIGHT','TROLLEY'],['UP / DOWN','WINCH'],['SPACE','MAGNET'],['X','BRAKE · RELEASE']],{viewer:true});
 resetCraft(true);start(()=>step(),()=>draw());
 </script>
 </html>

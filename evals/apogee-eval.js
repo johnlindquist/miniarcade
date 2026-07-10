@@ -3,7 +3,7 @@
 
 const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
-const MISSION_FRAMES=15*60*60,IGNITE_AT=13*60*60+20*60;
+const MISSION_FRAMES=15*60*60,IGNITE_AT=13*60*60+20*60,PROMPT_IGNITION_FRAMES=5*60;
 const ARC_SEEDS=Array.from({length:20},(_,i)=>0xad00+i);
 
 const FOOTER=`
@@ -11,7 +11,8 @@ const __aq=n=>Math.round(n*1e6);
 const __abody=b=>b&&[b.id,b.kind,__aq(b.x),__aq(b.y),__aq(b.vx),__aq(b.vy),!!b.dead,!!b.captured,
   b.surfaceT||0,b.recoverCd||0,b.targetCd||0,b.replanT||0,b.bounces||0,__aq(b.depotLift||0)];
 const __aphys=b=>b&&[b.id,b.kind,__aq(b.x),__aq(b.y),__aq(b.vx),__aq(b.vy)];
-globalThis.__apoSig=()=>JSON.stringify({frame,showFrame,missionFrame,state,segments,segmentParts,buildParts,partsSpent,reserveParts,ringLevel,ignited,targetSince,
+globalThis.__apoSig=()=>JSON.stringify({frame,showFrame,missionFrame,state,stateT,segments,segmentParts,buildParts,partsSpent,reserveParts,ringLevel,ignited,
+  finalConstructionFrame,ignitionFrame,targetSince,
   dock:__aq(dockAngle),targetId,act:[act.kind,act.phase,act.warnAt,act.landAt,act.endAt,__aq(act.angle)],
   tug:[...__abody(tug),__aq(tug.fuel),__aq(tug.heat),tug.crashT,tug.active,tug.intent&&tug.intent.tactic],
   cargo:__abody(cargo),salvage:salvage.map(__abody),fragments:fragments.map(__abody),debris:debris.map(__abody),
@@ -103,6 +104,16 @@ globalThis.__apoOverlayFixture=mode=>{
     if(p.cargo&&a.cargo)maxCargo=Math.max(maxCargo,Math.hypot(p.cargo.x-a.cargo.x,p.cargo.y-a.cargo.y,p.cargo.vx-a.cargo.vx,p.cargo.vy-a.cargo.vy));}
   delete globalThis.__NO_ACTS;return{mode,samples:actual.length,maxTug,maxCargo,predicted,actual};
 };
+globalThis.__apoStory=()=>__apogeeStoryProbe();
+globalThis.__apoStoryBankFixture=()=>{
+  resetMission();missionFrame=10700;segments=4;ringLevel=1;buildParts=4;partsSpent=4;segmentParts=0;reserveParts=0;
+  salvage=[];fragments=[];debris=[];cargo=null;targetId=0;
+  const snap=()=>({story:__apogeeStoryProbe(),probe:__apogeeProbe()});
+  const deliver=id=>{const d=dockState(0,0),s={id,kind:'salvage',x:d.x,y:d.y,vx:d.vx,vy:d.vy,mass:.52,dead:false,
+    captured:true,spin:0,shape:0,value:2,age:0,targeted:false};salvage=[s];cargo=s;tractorLatched=true;return dockCargo();};
+  const before=snap(),d1=deliver(9601),one=snap(),d2=deliver(9602),two=snap();missionFrame=10800;const built=advanceConstruction(),installed=snap();
+  return{before,d1,one,d2,two,built,installed};
+};
 globalThis.__apoForceCrash=()=>crashTug('FIXTURE CRASH');
 globalThis.__apoRecovery=()=>({active:tug.active,crashT:tug.crashT,relaunches:stats.relaunches,crashes:stats.crashes,
   wrecks:fragments.filter(f=>f.kind==='wreck').length,x:tug.x,y:tug.y,finite:finiteBody(tug)});
@@ -125,6 +136,9 @@ const fail=message=>{console.error('  FAIL:',message);failed=true;};
 const press=(game,code)=>{game.key('keydown',code);game.frames(1,false);game.key('keyup',code);};
 const median=values=>{const a=values.slice().sort((x,y)=>x-y),m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2;};
 const percentile=(values,q)=>{const a=values.slice().sort((x,y)=>x-y);return a[Math.min(a.length-1,Math.floor((a.length-1)*q))];};
+const advanceUntil=(game,predicate,maxFrames,chunk=30)=>{let used=0,probe=game.sandbox.__apogeeProbe();
+  while(!predicate(probe)&&used<maxFrames){const n=Math.min(chunk,maxFrames-used);game.frames(n,false);used+=n;probe=game.sandbox.__apogeeProbe();}
+  return{probe,used};};
 
 console.log('1) orbital mechanics: circular stability and honest prograde/retrograde energy response');
 let game=bootGame('apogee',{seed:0xa001,footer:FOOTER});
@@ -147,6 +161,44 @@ for(const mode of['capture','dock','recovery']){
     fail(`${mode} overlay does not execute the displayed guidance/tether path: ${JSON.stringify({samples:path.samples,maxTug:path.maxTug,maxCargo:path.maxCargo})}`);
 }
 if(game.sandbox.__apogeeProbe().overlayWidth<2)fail('predicted orbit overlay is too thin at native 160px scale');
+
+console.log('2b) viewer story: render-only ablations, one focus, plain verbs, and physical bank truth');
+{
+  const shown=bootGame('apogee',{seed:0xa031,footer:FOOTER}),noViewer=bootGame('apogee',{seed:0xa031,footer:FOOTER}),
+    noMission=bootGame('apogee',{seed:0xa031,footer:FOOTER});
+  noViewer.sandbox.__NO_VIEWER_STORY=1;noMission.sandbox.__NO_MISSION_STORY=1;
+  shown.frames(300,true);noViewer.frames(300,true);noMission.frames(300,true);
+  const signature=shown.sandbox.__apoSig();
+  console.log(`  presentation parity: viewer ${signature===noViewer.sandbox.__apoSig()}, mission ${signature===noMission.sandbox.__apoSig()}`);
+  if(signature!==noViewer.sandbox.__apoSig()||signature!==noMission.sandbox.__apoSig())
+    fail('viewer-story presentation or either ablation changed the exact simulation');
+
+  const bank=shown.sandbox.__apoStoryBankFixture(),snapshots=[bank.before,bank.one,bank.two,bank.installed];
+  console.log(`  habitat bank: ${snapshots.map(x=>`${x.story.installedSlots}:${x.story.socketParts}/${x.story.socketCount}+${x.story.queuedParts}`).join(' -> ')}`);
+  if(!bank.d1||!bank.d2||bank.built!==1)fail(`story bank fixture did not use honest docks/install: ${JSON.stringify(bank)}`);
+  const expected=[{segments:4,bank:0,fill:0},{segments:4,bank:1,fill:1},{segments:4,bank:2,fill:2},{segments:5,bank:0,fill:0}];
+  snapshots.forEach((x,i)=>{const e=expected[i],s=x.story,p=x.probe;
+    if(s.label!==`BUILD RING ${p.segments}/12`||s.partsText!==`USED ${p.partsSpent}/20  DEPOT ${p.buildParts-p.partsSpent}`||
+      s.installedSlots!==p.segments||s.emptySlots!==12-p.segments||
+      s.bankedParts!==p.buildParts-p.partsSpent||s.socketParts!==e.fill||s.bankedParts!==e.bank||p.segments!==e.segments)
+      fail(`story snapshot ${i} does not tell exact ledger truth: ${JSON.stringify({story:s,probe:p,expected:e})}`);
+  });
+  if(bank.installed.probe.buildParts!==6||bank.installed.probe.partsSpent!==6)
+    fail(`story installation broke six-part conservation: ${JSON.stringify(bank.installed.probe)}`);
+
+  const guided=bootGame('apogee',{seed:0xa032,footer:FOOTER}),verbs=new Set();let correspondence=true,oneFocus=true;
+  for(let f=0;f<7200;f+=10){guided.frames(10,false);const p=guided.sandbox.__apogeeProbe(),s=guided.sandbox.__apoStory();
+    const expectedVerb=p.ignited?'RING ONLINE':p.cargo?(s.socketDistance<24?'PLACE PART':'TOW TO DOCK'):'GET SCRAP';verbs.add(s.verb);
+    correspondence&&=s.label===`BUILD RING ${p.segments}/12`&&s.partsText===`USED ${p.partsSpent}/20  DEPOT ${p.buildParts-p.partsSpent}`&&
+      s.verb===expectedVerb&&s.installedSlots===p.segments&&
+      s.emptySlots===12-p.segments&&s.bankedParts===p.buildParts-p.partsSpent&&s.socketParts===Math.min(s.bankedParts,s.socketCount)&&
+      s.queuedParts===Math.max(0,s.bankedParts-s.socketCount);
+    oneFocus&&=s.dominantTargets===1&&s.focusId>0;
+  }
+  console.log(`  story loop: ${[...verbs].join(' -> ')}; one dominant target ${oneFocus}`);
+  if(!correspondence||!oneFocus||!['GET SCRAP','TOW TO DOCK','PLACE PART'].every(v=>verbs.has(v)))
+    fail(`viewer story/probe correspondence failed: ${JSON.stringify({correspondence,oneFocus,verbs:[...verbs]})}`);
+}
 
 console.log('3) capture, dock-relative velocity, honest parts, fragment recovery, and real refuel');
 game=bootGame('apogee',{seed:0xa003,footer:FOOTER});const mechanics=game.sandbox.__apoMechanicsFixture();
@@ -293,10 +345,13 @@ console.log('10) twenty-seed Max arc: honest staged construction, bounded ending
   for(const seed of ARC_SEEDS){
     const g=bootGame('apogee',{seed,footer:FOOTER});g.frames(18000,false);const five=g.sandbox.__apogeeProbe();
     g.frames(18000,false);const ten=g.sandbox.__apogeeProbe();g.frames(9000,false);const twelve=g.sandbox.__apogeeProbe();
-    g.frames(9000,false);const end=g.sandbox.__apogeeProbe(),show=g.sandbox.__apoShow(),admire={...g.sandbox.__apoAdmire},s=end.stats;
-    arcs.push({seed,g,five,ten,twelve,end,show,admire});
+    const arrival=advanceUntil(g,p=>p.ignited,3600,10);g.frames(120,false);
+    const end=g.sandbox.__apogeeProbe(),show=g.sandbox.__apoShow(),admire={...g.sandbox.__apoAdmire},s=end.stats,
+      elapsed=45000+arrival.used+120,signature=g.sandbox.__apoSig();
+    arcs.push({seed,g,five,ten,twelve,end,show,admire,elapsed,signature});
     console.log(`  ${seed.toString(16)} ${end.persona}: ${five.segments}/${ten.segments}/${twelve.segments} segments, `+
-      `${end.partsSpent}/${end.buildParts} parts, ${s.captures} captures/${s.docks} docks/${s.collisions} hits -> ignition ${end.ignited}`);
+      `${end.partsSpent}/${end.buildParts} parts, ${s.captures} captures/${s.docks} docks/${s.collisions} hits, `+
+      `${s.fragmentRecoveries} recycled/${s.lapses} lapses -> ignition ${end.ignited}`);
     if(five.segments<6||five.segments>7||five.ringLevel!==1||five.partsSpent<8||five.partsSpent>10||
       !five.upgrades.tanks||five.upgrades.tractor)
       fail(`seed ${seed.toString(16)}: Relay/Habitat checkpoint unpaced: ${JSON.stringify({segments:five.segments,buildParts:five.buildParts,partsSpent:five.partsSpent,upgrades:five.upgrades})}`);
@@ -306,10 +361,14 @@ console.log('10) twenty-seed Max arc: honest staged construction, bounded ending
       !twelve.upgrades.tanks||!twelve.upgrades.tractor||!twelve.upgrades.shield||!twelve.upgrades.authority)
       fail(`seed ${seed.toString(16)}: Crown checkpoint did not consume 20 honest parts before ignition: ${JSON.stringify({segments:twelve.segments,buildParts:twelve.buildParts,partsSpent:twelve.partsSpent,ignited:twelve.ignited,upgrades:twelve.upgrades})}`);
     if(!end.ignited||s.ignitions!==1||end.segments!==12||end.partsSpent!==20||end.buildParts<20||
-      end.missionFrame<IGNITE_AT||end.missionFrame>MISSION_FRAMES)
-      fail(`seed ${seed.toString(16)}: 15-minute ending missing, forced, or mistimed: ${JSON.stringify({missionFrame:end.missionFrame,ignited:end.ignited,segments:end.segments,buildParts:end.buildParts,partsSpent:end.partsSpent,stats:s})}`);
-    if(s.captures<30||s.captures>70||s.docks<25||s.docks>58||s.collisions<5||s.collisions>22||s.crashes>4||
-      s.fragmentRecoveries<6||s.fragmentRecoveries>30||s.lapses<18||s.lapses>30)
+      end.finalConstructionFrame<0||end.ignitionFrame-end.finalConstructionFrame!==PROMPT_IGNITION_FRAMES)
+      fail(`seed ${seed.toString(16)}: prompt ending missing, forced, or mistimed: ${JSON.stringify({missionFrame:end.missionFrame,finalConstructionFrame:end.finalConstructionFrame,ignitionFrame:end.ignitionFrame,ignited:end.ignited,segments:end.segments,buildParts:end.buildParts,partsSpent:end.partsSpent,stats:s})}`);
+    // Prompt ignition shortens the completed mission from 13:20 to 12:35.
+    // The twenty-seed sweep measured 29..51 captures, 22..45 docks, 5..22
+    // recoveries, and 16..22 lapses; keep measured margin while retaining
+    // every old upper bound.
+    if(s.captures<27||s.captures>70||s.docks<20||s.docks>58||s.collisions<5||s.collisions>22||s.crashes>4||
+      s.fragmentRecoveries<4||s.fragmentRecoveries>30||s.lapses<14||s.lapses>30)
       fail(`seed ${seed.toString(16)}: ending outside measured watchability bands: ${JSON.stringify({captures:s.captures,docks:s.docks,collisions:s.collisions,crashes:s.crashes,recoveries:s.fragmentRecoveries,lapses:s.lapses})}`);
     // After fixing the handed-off-fragment pursuit, this 20-seed set measures
     // 29..64s between real progress events (formerly 167s). Keep only 5s of
@@ -338,9 +397,9 @@ console.log('10) twenty-seed Max arc: honest staged construction, bounded ending
   console.log(`  completed ${arcs.filter(a=>a.end.ignited).length}/${arcs.length}; freshness ${personas.size} personas / ${outcomes.size} distinct outcomes; max recovery share ${(maxRecoveryShare*100).toFixed(1)}%`);
   if(personas.size!==3||outcomes.size<15)fail(`cross-seed freshness collapsed: ${personas.size} personas, ${outcomes.size}/20 distinct outcomes`);
 
-  const canonical=arcs.find(a=>a.seed===0xad01),a=canonical.g,signature=a.sandbox.__apoSig(),
-    b=bootGame('apogee',{seed:canonical.seed,footer:FOOTER});b.sandbox.__NO_PAYOFF_FX=1;b.frames(MISSION_FRAMES,false);const replay=b.sandbox.__apogeeProbe();
-  if(signature!==b.sandbox.__apoSig())fail('__NO_PAYOFF_FX changed the 15-minute simulation or deterministic ending');
+  const canonical=arcs.find(a=>a.seed===0xad01),a=canonical.g,signature=canonical.signature,
+    b=bootGame('apogee',{seed:canonical.seed,footer:FOOTER});b.sandbox.__NO_PAYOFF_FX=1;b.frames(canonical.elapsed,false);const replay=b.sandbox.__apogeeProbe();
+  if(signature!==b.sandbox.__apoSig())fail('__NO_PAYOFF_FX changed the prompt-ending simulation or deterministic ending');
   if(!replay.ignited||replay.stats.ignitions!==1)fail('__NO_PAYOFF_FX replay failed to reach Ring Ignition');
   const admiredAtEnd=a.sandbox.__apoAdmire.commands;a.frames(120,false);const stickyCommands=a.sandbox.__apoAdmire.commands-admiredAtEnd;
   if(stickyCommands!==0||a.sandbox.__apoAdmire.current!==0||a.sandbox.__apogeeProbe().tug.intent.tactic==='ADMIRE')
@@ -350,6 +409,24 @@ console.log('10) twenty-seed Max arc: honest staged construction, bounded ending
   console.log(`  canonical show: held ${canonical.show.heldFrames}, slow ${canonical.show.slowedFrames}, kernel admire ${canonical.show.admireFrames}, executed ${canonical.admire.commands}, sticky ${stickyCommands}, ablated ${noTrace.commands}`);
   if(noTrace.commands!==0||noTrace.current!==0||noProbe.stats.admireCommands!==0||noProbe.tug.intent.tactic==='ADMIRE')
     fail(`__NO_ADMIRE did not gate actual bot pauses: ${JSON.stringify({trace:noTrace,stats:noProbe.stats.admireCommands,tactic:noProbe.tug.intent.tactic})}`);
+
+  const old=bootGame('apogee',{seed:canonical.seed,footer:FOOTER});old.sandbox.__NO_PROMPT_IGNITION=1;old.sandbox.__NO_IGNITION_RESET=1;
+  const oldArrival=advanceUntil(old,p=>p.ignited,MISSION_FRAMES,30),oldEnd=oldArrival.probe,newEnd=canonical.end,endingStory=old.sandbox.__apoStory();
+  console.log(`  prompt A/B: final part ${newEnd.finalConstructionFrame}f; ignition ${oldEnd.ignitionFrame}->${newEnd.ignitionFrame}f; `+
+    `delay ${oldEnd.ignitionFrame-oldEnd.finalConstructionFrame}->${newEnd.ignitionFrame-newEnd.finalConstructionFrame}f`);
+  if(!oldEnd.ignited||oldEnd.ignitionFrame!==IGNITE_AT||oldEnd.finalConstructionFrame!==newEnd.finalConstructionFrame||
+    newEnd.ignitionFrame-newEnd.finalConstructionFrame!==PROMPT_IGNITION_FRAMES||newEnd.ignitionFrame>=oldEnd.ignitionFrame||
+    oldEnd.partsSpent!==20||newEnd.partsSpent!==20||oldEnd.buildParts<20||newEnd.buildParts<20||
+    endingStory.verb!=='RING ONLINE'||endingStory.completionText!=='20 PARTS · 12 SECTIONS · ONLINE')
+    fail(`prompt ignition did not preserve the paired honest 20-part ending: ${JSON.stringify({old:oldEnd,new:newEnd})}`);
+
+  const resets=bootGame('apogee',{seed:canonical.seed,footer:FOOTER}),held=bootGame('apogee',{seed:canonical.seed,footer:FOOTER});held.sandbox.__NO_IGNITION_RESET=1;
+  resets.frames(canonical.elapsed+420,false);held.frames(canonical.elapsed+420,false);
+  const resetProbe=resets.sandbox.__apogeeProbe(),heldProbe=held.sandbox.__apogeeProbe();
+  console.log(`  attract reset: mission ${resetProbe.missions}, ${resetProbe.state}@${resetProbe.missionFrame}f; ablated ${heldProbe.state}@${heldProbe.missionFrame}f`);
+  if(resetProbe.missions!==1||resetProbe.state!=='flight'||resetProbe.ignited||resetProbe.missionFrame>=240||
+    heldProbe.missions!==1||heldProbe.state!=='ignition'||!heldProbe.ignited||heldProbe.stateT!==0)
+    fail(`attract ignition reset or its ablation regressed: ${JSON.stringify({reset:resetProbe,held:heldProbe})}`);
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

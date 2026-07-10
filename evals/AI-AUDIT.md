@@ -320,6 +320,50 @@ rather than the proposed 12f to keep headless and production CPU bounded. These
 cuts follow the council's defender/secondary-system cut order and do not weaken
 the measured watchability, determinism, act, show, or ending contracts.
 
+## Fusion-ultra spectator-story repair (2026-07-10)
+
+Council session:
+`~/.fusion/sessions/2026/07/10/2026-07-10T03-03-13-075Z-293c6b`.
+All six seats completed without quota degradation. The consensus rejected telemetry-first
+polish: the common failure was causal storytelling — the viewer could not reliably see
+one actor, one target, one intended path, a plain verb, persistent progress, and the
+payoff that advanced the ending.
+
+1. **Skyhook — every catch now visibly builds an airship.** The HUD says
+   `BUILD AIRSHIP`, the green catcher is a dominant target, the release forecast says
+   `ON TARGET` / `SHORT` / `LONG`, and the hull is recognizable from frame one.
+   The previously unrendered `placedPieces` now persist as 1/3 -> 2/3 -> locked module.
+   `__NO_VIEWER_STORY` and `__NO_PARTIAL_HULL` restore the old presentation with
+   identical simulation signatures. `__NO_LONG_LAUNCH` restores the 342-frame finale;
+   the shipped ceremony is 982 frames, with identical pre-launch outcomes and exact
+   6/24/48 show budgets. Twenty-seed outcome bands remain 61..73 catches, 3..9 crashes,
+   1..6 salvages, 20..24 modules, and 70..77 releases.
+2. **Tidelatch — the route now explains the city.** A persistent `LIGHT CITY x/4`
+   goal, causal action line, River Crown forecast, cream planned route, one highlighted
+   district, and four distinct district silhouettes replace the engineering dashboard.
+   `__NO_VIEWER_STORY` / `__NO_FLOW_STORY` are simulation-exact. The separately
+   ablated `__NO_EARLY_CITY_ARC` restores 0/150/300/450-second unlocks; the shipped
+   0/75/195/315-second arc won 10/10 same-seed comparisons and raised median deliveries
+   143 -> 161 (+12.6%) while retaining 138 dry/breach failures, including four breaches.
+   Fresh runs stayed inside 152..182 deliveries, 9..21 dry events, and 0..3 breaches;
+   Crown timing remains exact at 6/18/36.
+3. **Apogee — scrap, tug, dock, and ring now form one visible chain.** One enlarged
+   tug and selected salvage dominate the field; all 12 ring slots exist from frame zero;
+   banked parts remain physical at the construction socket; the mission loop reads
+   `GET SCRAP -> TOW TO DOCK -> PLACE PART`. `__NO_VIEWER_STORY` and
+   `__NO_MISSION_STORY` preserve exact simulation parity. `__NO_PROMPT_IGNITION`
+   restores the old 48,000-frame ignition: the shipped ring ignites at frame 45,300,
+   five seconds after honest final construction at 45,000, still spending exactly 20
+   parts. All 20 seeded endings, three personas, 20 distinct outcomes, and exact
+   6/24/60 kernel / 38 executed admire budgets remain intact.
+
+The shared session API now accepts `{viewer:true}`: gallery previews and recordings
+show no play prompt, while direct pages reveal a low-contrast `ENTER · TAKE OVER`
+affordance only after eight seconds. Native 160x360 first-minute and ending renders
+were visually reviewed. Automated checks prove truth, timing, persistence, parity, and
+band preservation; a blinded naive-viewer comprehension/preference study remains the
+honest next evidence layer because counters cannot prove fun.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

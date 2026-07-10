@@ -89,5 +89,18 @@ console.log(`  headless canvas calls ${calls0}; explicit render calls ${calls1}`
 if(calls0!==0)fail('headless frames touched the canvas');
 if(calls1<=0)fail('explicit render did not touch the canvas');
 
+console.log('viewer sessions: the takeover affordance is delayed and absent from previews');
+game=bootGame('rocket',{seed:10,search:'?seed=10'});delete game.sandbox.__NO_UI;game.engine.initSession('viewer-fixture',[],{viewer:true});
+for(let i=0;i<480;i++)game.engine.sessionStep({reset(){}});
+game.counter.calls=0;game.counter.byMethod={};game.engine.drawSession(false);const earlyCalls=game.counter.calls;
+game.engine.sessionStep({reset(){}});game.counter.calls=0;game.counter.byMethod={};game.engine.drawSession(false);const lateCalls=game.counter.calls;
+const viewerProbe=game.engine.sessionProbe();
+const previewGame=bootGame('rocket',{seed:10,search:'?seed=10&preview=1'});delete previewGame.sandbox.__NO_UI;previewGame.engine.initSession('viewer-fixture',[],{viewer:true});
+for(let i=0;i<481;i++)previewGame.engine.sessionStep({reset(){}});
+previewGame.counter.calls=0;previewGame.counter.byMethod={};previewGame.engine.drawSession(false);const previewCalls=previewGame.counter.calls;
+console.log(`  direct early ${earlyCalls} calls, delayed ${lateCalls} calls; preview ${previewCalls} calls`);
+if(!viewerProbe.viewer||viewerProbe.mode!=='attract')fail(`viewer session metadata regressed: ${JSON.stringify(viewerProbe)}`);
+if(earlyCalls!==0||lateCalls<2||previewCalls!==0)fail('viewer takeover affordance was early, missing, or leaked into previews');
+
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);

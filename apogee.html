@@ -25,7 +25,7 @@ const{controllerMux}=AI;
 // planning only copies numeric state and never touches either engine RNG stream.
 const CX=80,CY=187,MU=1.15,PLANET_R=31,SAFE_R=41,WORLD_R=124;
 const TAU=Math.PI*2,THRUST=.00175,TETHER_LEN=9,PLAN_LINE_WIDTH=2.35;
-const MISSION_FRAMES=15*60*60,IGNITE_AT=13*60*60+20*60,SEGMENT_GOAL=12;
+const MISSION_FRAMES=15*60*60,IGNITE_AT=13*60*60+20*60,PROMPT_IGNITION_FRAMES=5*60,SEGMENT_GOAL=12;
 const STAGES=[
   {name:'RELAY',radius:44,parts:1,upgrade:'TANKS +25'},
   {name:'HABITAT',radius:51,parts:2,upgrade:'TRACTOR MK II'},
@@ -39,7 +39,8 @@ let frame=0,showFrame=0,missionFrame=0,state='flight',stateT=0,finishReason='';
 let nextId=1,dockAngle=0,targetId=0,targetSince=0,plan=null,planT=0,burnWas=false,tractorLatched=false;
 let act={kind:'none',phase:'calm',warnAt:0,landAt:0,endAt:0,angle:0,index:0};
 let tug=null,cargo=null,salvage=[],fragments=[],debris=[],texts=[];
-let segments=0,segmentParts=0,buildParts=0,partsSpent=0,reserveParts=0,ringLevel=0,ignited=false,lastProgressFrame=0,lastEventFrame=0;
+let segments=0,segmentParts=0,buildParts=0,partsSpent=0,reserveParts=0,ringLevel=0,ignited=false,
+  finalConstructionFrame=-1,ignitionFrame=-1,lastProgressFrame=0,lastEventFrame=0;
 let persona=null,lapseActive=false;
 const stats={captures:0,docks:0,collisions:0,skims:0,crashes:0,relaunches:0,fragmentsMade:0,
   fragmentRecoveries:0,burns:0,lapses:0,segments:0,ignitions:0,actsWarned:0,actsLanded:0,
@@ -78,6 +79,7 @@ const shieldLimitAt=level=>.38+(level>=3?.09:0),shieldLimit=()=>shieldLimitAt(ri
 const upgradeState=()=>({stage:stageSpec().name,tanks:ringLevel>=1,tractor:ringLevel>=2,
   shield:ringLevel>=3,authority:ringLevel>=3,fuelCap:fuelCap(),tractorRadius:tractorRadius(),
   turnAuthority:turnAuthority(),shieldLimit:shieldLimit()});
+const viewerStoryEnabled=()=>typeof __NO_VIEWER_STORY==='undefined'&&typeof __NO_MISSION_STORY==='undefined';
 const bodyAt=(r,a,clockwise,id,kind)=>{
   const v=circularSpeed(r)*(clockwise===false?-1:1),tx=-Math.sin(a),ty=Math.cos(a);
   return{id:id||nextId++,kind:kind||'salvage',x:CX+Math.cos(a)*r,y:CY+Math.sin(a)*r,
@@ -119,6 +121,26 @@ function nearestDockAt(from,baseAngle,stage){
   return best;
 }
 const nearestDock=from=>nearestDockAt(from,dockAngle,buildStage());
+
+// Render-only mission vocabulary. Every draw helper and the eval probe read this
+// same projection so presentation can never invent progress the simulation did
+// not earn. Neither switch changes simulation state or consumes RNG.
+function missionStory(){
+  const available=salvage.filter(s=>!s.dead&&!s.captured),chosen=available.find(s=>s.id===targetId),
+    focus=cargo||chosen||available[0]||null,banked=Math.max(0,buildParts-partsSpent),need=segments<SEGMENT_GOAL?partsRequired():0,
+    socket=segments<SEGMENT_GOAL?dockState(segments%4,0):null,destination=cargo?nearestDock(cargo):socket,
+    socketDistance=cargo&&destination?Math.hypot(cargo.x-destination.x,cargo.y-destination.y):Infinity,
+    verb=ignited?'RING ONLINE':cargo?(socketDistance<24?'PLACE PART':'TOW TO DOCK'):'GET SCRAP';
+  return{enabled:viewerStoryEnabled(),label:'BUILD RING '+segments+'/'+SEGMENT_GOAL,verb,
+    partsText:'USED '+partsSpent+'/20  DEPOT '+banked,
+    completionText:ignited?'20 PARTS · 12 SECTIONS · ONLINE':'',
+    focusId:focus&&focus.id||0,dominantTargets:focus?1:0,targetRole:cargo?'cargo':focus?'salvage':'none',
+    installedSlots:segments,emptySlots:SEGMENT_GOAL-segments,bankedParts:banked,
+    socketParts:Math.min(banked,need),queuedParts:Math.max(0,banked-need),socketCount:need,
+    socket:socket&&{x:socket.x,y:socket.y,slot:segments%4},destination:destination&&{x:destination.x,y:destination.y},
+    socketDistance:Number.isFinite(socketDistance)?socketDistance:null,
+    fuelWarning:tug&&tug.fuel<30,heatWarning:tug&&tug.heat>55};
+}
 
 function say(s,c,x,y,t){texts.push({s,c:c||PALE,x:x===undefined?80:x,y:y===undefined?58:y,t:t||72});}
 function markEvent(n){lifetime.events+=n||1;lastEventFrame=frame;}
@@ -388,6 +410,7 @@ function advanceConstruction(x,y){
   while(segments<SEGMENT_GOAL&&missionFrame>=INSTALL_AT[segments]){
     const need=partsRequired();if(buildParts-partsSpent<need)break;const oldLevel=ringLevel,finished=stageSpec().name;
     partsSpent+=need;segments++;stats.segments=segments;ringLevel=Math.floor(segments/4);built++;
+    if(segments===SEGMENT_GOAL&&finalConstructionFrame<0)finalConstructionFrame=missionFrame;
     say(finished+' '+((segments-1)%4+1)+'/4',GOLD,x===undefined?80:x,y===undefined?CY-55:y-20,76);markProgress(2);
     if(ringLevel>oldLevel){const unlocked=STAGES[oldLevel].upgrade;say(unlocked,CYAN,80,67,120);offer('upgrade',2,80,CY,unlocked);
       tug.fuel=Math.min(fuelCap(),tug.fuel+15);ring(80,CY,CYAN,2.3,38);fxBurst(80,CY,18,CYAN,2.2);markEvent(3);}
@@ -556,8 +579,10 @@ function aerobrake(){
     if(missionFrame%60===0&&tug.fuel<fuelCap()){tug.fuel=Math.min(fuelCap(),tug.fuel+.35);stats.fuelRecovered+=.35;}}
 }
 function maybeIgnite(){
-  if(!ignited&&segments>=SEGMENT_GOAL&&missionFrame>=IGNITE_AT){
-    ignited=true;state='ignition';stateT=300;stats.ignitions++;lifetime.missions++;finishReason='RING IGNITION';
+  const due=typeof __NO_PROMPT_IGNITION!=='undefined'?IGNITE_AT:
+    finalConstructionFrame>=0?finalConstructionFrame+PROMPT_IGNITION_FRAMES:IGNITE_AT;
+  if(!ignited&&segments>=SEGMENT_GOAL&&missionFrame>=due){
+    ignited=true;ignitionFrame=missionFrame;state='ignition';stateT=300;stats.ignitions++;lifetime.missions++;finishReason='RING IGNITION';
     say('RING IGNITION',GOLD,80,67,180);offer('ignition',3,80,CY,'complete');fxBurst(80,CY,48,GOLD,3.2);shake(9);markEvent(8);markProgress(4);
   }
 }
@@ -565,6 +590,7 @@ function maybeIgnite(){
 function resetMission(){
   missionFrame=0;state='flight';stateT=0;finishReason='';targetId=0;targetSince=0;plan=null;planT=0;burnWas=false;tractorLatched=false;
   act={kind:'none',phase:'calm',warnAt:0,landAt:0,endAt:0,angle:0,index:0};segments=0;segmentParts=0;buildParts=0;partsSpent=0;reserveParts=0;ringLevel=0;ignited=false;
+  finalConstructionFrame=-1;ignitionFrame=-1;
   nextId=1;dockAngle=0;salvage=[];fragments=[];debris=[];texts=[];cargo=null;lapseActive=false;
   for(const k of Object.keys(stats))stats[k]=k==='minFuel'?100:(k==='firstCapture'||k==='lastCapture'?-1:0);
   persona=PERSONAS[RI(0,PERSONAS.length-1)];
@@ -590,7 +616,10 @@ function step(){
       stats.maxProgressLull=Math.max(stats.maxProgressLull,frame-lastProgressFrame);
       if(frame-lastEventFrame>=720){say('STABLE ARC',CYAN,tug.x,tug.y-10,34);offer('orbit',1,tug.x,tug.y);markEvent();}
       if(state==='ignition'&&stateT>0)stateT--;
-      if(playing()&&ignited&&stateT===0)gameOver('RING ONLINE');
+      if(ignited&&stateT===0){
+        if(playing())gameOver('RING ONLINE');
+        else if(typeof __NO_IGNITION_RESET==='undefined')resetMission();
+      }
     }
   }
   stepParts();stepRings();for(const t of texts){t.t--;t.y-=.12;}texts=texts.filter(t=>t.t>0);
@@ -612,6 +641,42 @@ function drawPlanet(){
   rect(CX-3,CY-PLANET_R-7,6,8,'#a4b6cf');rect(CX-6,CY-PLANET_R-3,12,2,GOLD);
 }
 function drawHabitat(){
+  const story=missionStory();
+  if(story.enabled){
+    for(let st=0;st<3;st++){
+      ctx.strokeStyle=ringLevel>st?GOLD:st===buildStage()?CYAN:'#465878';ctx.lineWidth=ringLevel>st?2:1;
+      ctx.globalAlpha=ringLevel>st?.55:st===buildStage()?.34:.22;ctx.beginPath();ctx.arc(CX,CY,STAGES[st].radius,0,TAU);ctx.stroke();ctx.globalAlpha=1;
+    }
+    ctx.lineWidth=1;
+    for(let i=0;i<SEGMENT_GOAL;i++){
+      const st=Math.floor(i/4),slot=i%4,r=STAGES[st].radius,a=dockAngle+st*.12+slot*TAU/4,
+        x=CX+Math.cos(a)*r,y=CY+Math.sin(a)*r,on=i<segments;
+      ctx.save();ctx.translate(x,y);ctx.rotate(a+Math.PI/2);
+      if(on){
+        ctx.fillStyle=ignited?GOLD:CYAN;ctx.fillRect(-6,-4,12,8);ctx.fillStyle=PALE;ctx.fillRect(-2,-5,4,10);
+        ctx.strokeStyle=INK;ctx.lineWidth=1.5;ctx.strokeRect(-6.5,-4.5,13,9);
+      }else{
+        ctx.globalAlpha=.72;ctx.fillStyle='#101b31';ctx.fillRect(-5,-3,10,6);ctx.strokeStyle='#6f82a1';ctx.lineWidth=1.25;ctx.strokeRect(-5.5,-3.5,11,7);ctx.globalAlpha=1;
+      }
+      ctx.restore();
+    }
+    if(story.socket){
+      const s=story.socket,pulse=8.5+Math.sin(frame*.14)*1.2;
+      ctx.globalAlpha=.9;ctx.strokeStyle=GOLD;ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(s.x,s.y,pulse,0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;
+      for(let i=0;i<story.socketCount;i++){
+        const ox=(i-(story.socketCount-1)/2)*5;ctx.fillStyle=i<story.socketParts?GOLD:'#25344c';ctx.beginPath();ctx.arc(s.x+ox,s.y,2.2,0,TAU);ctx.fill();
+        ctx.strokeStyle=GOLD;ctx.stroke();
+      }
+      ctx.font='bold 5px monospace';ctx.fillStyle=GOLD;const part='PART '+story.socketParts+'/'+story.socketCount;
+      ctx.fillText(part,clamp(s.x-part.length*1.5,2,155-part.length*3),s.y<42?s.y+16:s.y-12);
+      if(story.queuedParts){const q='DEPOT '+story.queuedParts;ctx.fillText(q,clamp(s.x-q.length*1.5,2,155-q.length*3),s.y<55?s.y+22:s.y-18);}
+    }
+    if(cargo&&story.destination&&story.socket){
+      const d=story.destination,s=story.socket;ctx.globalAlpha=.8;ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.arc(d.x,d.y,10,0,TAU);ctx.stroke();
+      if(Math.hypot(d.x-s.x,d.y-s.y)>3){ctx.setLineDash([3,2]);ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(s.x,s.y);ctx.stroke();ctx.setLineDash([]);}ctx.lineWidth=1;ctx.globalAlpha=1;
+    }
+    return;
+  }
   for(let st=0;st<3;st++){ctx.strokeStyle=ringLevel>st?GOLD:st===buildStage()?CYAN:'#34445f';ctx.lineWidth=st===buildStage()?2:1;
     ctx.globalAlpha=ringLevel>st?.45:.2;ctx.beginPath();ctx.arc(CX,CY,STAGES[st].radius,0,TAU);ctx.stroke();ctx.globalAlpha=1;}
   ctx.lineWidth=1;
@@ -626,6 +691,20 @@ function drawHabitat(){
     for(const st of STAGES){ctx.beginPath();ctx.arc(CX,CY,st.radius,0,TAU);ctx.stroke();}ctx.lineWidth=1;ctx.globalAlpha=1;}
 }
 function drawPlan(){
+  const story=missionStory();
+  if(story.enabled){
+    ctx.font='bold 8px monospace';ctx.fillStyle=story.verb==='PLACE PART'?GOLD:persona.tint;
+    ctx.fillText(story.verb,80-story.verb.length*2.4,35);
+    if((!plan&&!tug.replanT)||!tug.active||tug.intent&&tug.intent.tactic==='ADMIRE')return;
+    const path=predictTrajectory(42);if(!path.length)return;const p=path[path.length-1];
+    ctx.globalAlpha=.95;ctx.strokeStyle=INK;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(tug.x,tug.y);for(const q of path)ctx.lineTo(q.x,q.y);ctx.stroke();
+    ctx.strokeStyle=persona.tint;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(tug.x,tug.y);for(const q of path)ctx.lineTo(q.x,q.y);ctx.stroke();ctx.lineWidth=1;
+    ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,6,0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;
+    if(tug.burning){ctx.globalAlpha=.32;ctx.fillStyle=persona.tint;ctx.beginPath();ctx.moveTo(tug.x,tug.y);
+      ctx.lineTo(tug.x-Math.cos(tug.angle-.3)*12,tug.y-Math.sin(tug.angle-.3)*12);
+      ctx.lineTo(tug.x-Math.cos(tug.angle+.3)*12,tug.y-Math.sin(tug.angle+.3)*12);ctx.closePath();ctx.fill();ctx.globalAlpha=1;}
+    return;
+  }
   if((!plan&&!tug.replanT)||!tug.active||tug.intent&&tug.intent.tactic==='ADMIRE')return;
   const path=predictTrajectory(42);if(!path.length)return;const p=path[path.length-1];
   ctx.globalAlpha=.62;ctx.strokeStyle=persona.tint;ctx.lineWidth=PLAN_LINE_WIDTH;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(tug.x,tug.y);
@@ -638,20 +717,41 @@ function drawPlan(){
 }
 function drawSalvage(s){
   const x=Math.round(s.x),y=Math.round(s.y);if(x<-10||x>170||y<-10||y>370)return;
-  ctx.save();ctx.translate(x,y);ctx.rotate(frame*(s.spin||0)+s.id);
-  const c=s.kind==='fragment'?GREEN:s.targeted?GOLD:'#b1bdd0';ctx.fillStyle=c;
+  const story=missionStory(),dominant=story.enabled&&s.id===story.focusId;
+  if(story.enabled)ctx.globalAlpha=dominant?1:.16;
+  ctx.save();ctx.translate(x,y);ctx.rotate(frame*(s.spin||0)+s.id);if(dominant)ctx.scale(1.45,1.45);
+  const c=s.kind==='fragment'?GREEN:(dominant||s.targeted)?GOLD:'#b1bdd0';ctx.fillStyle=c;
   if(s.shape===0){ctx.fillRect(-3,-2,6,4);ctx.fillRect(-1,-4,2,8);}
   else if(s.shape===1){ctx.beginPath();ctx.moveTo(0,-4);ctx.lineTo(4,2);ctx.lineTo(-3,3);ctx.closePath();ctx.fill();}
   else{ctx.fillRect(-3,-3,6,6);ctx.fillStyle=INK;ctx.fillRect(-1,-1,2,2);}ctx.restore();
-  if(s.targeted){ctx.globalAlpha=.7;ctx.strokeStyle=GOLD;ctx.strokeRect(x-6.5,y-6.5,13,13);ctx.globalAlpha=1;}
+  if(story.enabled){
+    ctx.globalAlpha=dominant?.98:.16;
+    if(dominant){ctx.strokeStyle=INK;ctx.lineWidth=4;ctx.strokeRect(x-9,y-9,18,18);ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.strokeRect(x-8,y-8,16,16);ctx.lineWidth=1;}
+    ctx.globalAlpha=1;
+  }else if(s.targeted){ctx.globalAlpha=.7;ctx.strokeStyle=GOLD;ctx.strokeRect(x-6.5,y-6.5,13,13);ctx.globalAlpha=1;}
   if(s.surfaceT>0){ctx.globalAlpha=.75;ctx.strokeStyle=GOLD;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+(CX-x)*.18,y+(CY-y)*.18);ctx.stroke();ctx.globalAlpha=1;
     ctx.font='bold 5px monospace';ctx.fillStyle=GOLD;const t='DEPOT '+Math.ceil(s.surfaceT/60);ctx.fillText(t,x-t.length*1.5,y-7);}
+  ctx.globalAlpha=1;
 }
 function drawTug(){
   if(!tug.active){
     ctx.font='bold 7px monospace';ctx.fillStyle=CORAL;const s='RELAUNCH '+Math.ceil(tug.crashT/60);ctx.fillText(s,80-s.length*2.1,CY-48);return;
   }
   const x=Math.round(tug.x),y=Math.round(tug.y);
+  const story=missionStory();
+  if(story.enabled){
+    if(ringLevel>=2){ctx.globalAlpha=.22+.08*Math.sin(frame*.12);ctx.strokeStyle=CYAN;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,tractorRadius(),0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
+    ctx.save();ctx.translate(x,y);ctx.rotate(tug.angle);
+    ctx.fillStyle=INK;ctx.fillRect(-7,-6,14,12);ctx.fillStyle=PALE;ctx.fillRect(-6,-5,12,10);
+    ctx.fillStyle=persona.tint;ctx.fillRect(-4,-6,7,3);ctx.fillStyle='#5d7898';ctx.fillRect(1,-3,7,6);
+    if(ringLevel>=1){ctx.fillStyle=BLUE;ctx.fillRect(-4,-9,7,3);ctx.fillRect(-4,6,7,3);ctx.fillStyle=CYAN;ctx.fillRect(-5,-7,2,14);}
+    if(ringLevel>=2){ctx.fillStyle=CYAN;ctx.fillRect(5,-7,5,2);ctx.fillRect(5,5,5,2);}
+    if(ringLevel>=3){ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,9,0,TAU);ctx.stroke();ctx.lineWidth=1;}
+    if(tug.burning){ctx.fillStyle=CORAL;ctx.beginPath();ctx.moveTo(-7,-4);ctx.lineTo(-14,0);ctx.lineTo(-7,4);ctx.closePath();ctx.fill();ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(-7,-2);ctx.lineTo(-11,0);ctx.lineTo(-7,2);ctx.closePath();ctx.fill();}
+    ctx.restore();
+    if(cargo){ctx.globalAlpha=.9;ctx.strokeStyle=INK;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(tug.x,tug.y);ctx.lineTo(cargo.x,cargo.y);ctx.stroke();ctx.strokeStyle=CYAN;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(tug.x,tug.y);ctx.lineTo(cargo.x,cargo.y);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
+    return;
+  }
   if(ringLevel>=2){ctx.globalAlpha=.08+.035*Math.sin(frame*.12);ctx.strokeStyle=CYAN;ctx.beginPath();ctx.arc(x,y,tractorRadius(),0,TAU);ctx.stroke();ctx.globalAlpha=1;}
   ctx.save();ctx.translate(x,y);ctx.rotate(tug.angle);
   if(ringLevel>=3){ctx.globalAlpha=.42+.14*Math.sin(frame*.16);ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,7,0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
@@ -664,7 +764,7 @@ function drawTug(){
   ctx.globalAlpha=1;ctx.restore();
   if(cargo){ctx.globalAlpha=.65;ctx.strokeStyle=CYAN;ctx.beginPath();ctx.moveTo(tug.x,tug.y);ctx.lineTo(cargo.x,cargo.y);ctx.stroke();ctx.globalAlpha=1;}
 }
-function drawDebris(){for(const d of debris){rect(d.x-2,d.y-1,4,3,CORAL);ctx.globalAlpha=.3;rect(d.x-d.vx*18,d.y-d.vy*18,5,1,CORAL);ctx.globalAlpha=1;}}
+function drawDebris(){for(const d of debris){const a=viewerStoryEnabled()?(act.phase==='live'?.72:.14):1;ctx.globalAlpha=a;rect(d.x-2,d.y-1,4,3,CORAL);ctx.globalAlpha=a*.3;rect(d.x-d.vx*18,d.y-d.vy*18,5,1,CORAL);ctx.globalAlpha=1;}}
 function drawActs(){
   if(act.phase==='calm')return;
   if(act.kind==='flare'){
@@ -677,6 +777,30 @@ function drawActs(){
 }
 function drawTexts(){ctx.font='bold 7px monospace';for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);const w=t.s.length*4.2+6;rect(t.x-w/2,t.y-8,w,10,INK);ctx.fillStyle=t.c;ctx.fillText(t.s,t.x-t.s.length*2.1,t.y);ctx.globalAlpha=1;}}
 function drawHUD(){
+  const story=missionStory();
+  if(story.enabled){
+    ctx.globalAlpha=.94;rect(0,0,W,24,INK);rect(0,334,W,26,INK);ctx.globalAlpha=1;
+    ctx.font='bold 7px monospace';ctx.fillStyle=PALE;ctx.fillText(story.label,5,9);
+    const left=Math.max(0,MISSION_FRAMES-missionFrame),tm=ignited?'COMPLETE':'T-'+Math.floor(left/3600)+':'+String(Math.floor(left/60)%60).padStart(2,'0');
+    ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText(tm,132,9);
+    if(ignited){
+      const done='ORBITAL HABITAT COMPLETE';ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText(done,80-done.length*1.8,19);
+    }else{
+      const words=['GET SCRAP','>','TOW TO DOCK','>','PLACE PART'],active=story.verb==='GET SCRAP'?0:story.verb==='PLACE PART'?4:2;
+      ctx.font='bold 5px monospace';const widths=words.map(w=>ctx.measureText(w).width),gap=3,total=widths.reduce((a,b)=>a+b,0)+gap*(words.length-1),x0=(W-total)/2;let x=x0;
+      for(let i=0;i<words.length;i++){ctx.fillStyle=i===active?GOLD:i%2?'#d0def0':'#8ca0bb';ctx.fillText(words[i],x,19);x+=widths[i]+gap;}
+    }
+    if(ignited){
+      ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText(story.completionText,80-story.completionText.length*1.8,350);
+    }else if(story.fuelWarning||story.heatWarning){
+      const heat=story.heatWarning,label=heat?'HEAT WARNING':'LOW FUEL',value=heat?tug.heat/100:tug.fuel/fuelCap();
+      ctx.font='bold 6px monospace';ctx.fillStyle=CORAL;ctx.fillText(label,5,346);rect(64,340,88,8,'#1e304b');rect(64,340,88*value,8,heat?CORAL:GOLD);
+    }else{
+      ctx.font='bold 6px monospace';ctx.fillStyle='#91a7c3';const s=story.partsText;
+      ctx.fillText(s,80-s.length*1.8,347);ctx.fillStyle=story.bankedParts?GOLD:'#53647e';ctx.fillText(stageSpec().name,80-stageSpec().name.length*1.8,357);
+    }
+    return;
+  }
   ctx.globalAlpha=.9;rect(0,0,W,24,INK);rect(0,334,W,26,INK);ctx.globalAlpha=1;ctx.font='bold 7px monospace';ctx.fillStyle=PALE;ctx.fillText('APOGEE FOUNDRY',5,9);
   const up=upgradeState();ctx.fillStyle=persona.tint;ctx.font='bold 6px monospace';ctx.fillText(persona.name,5,19);ctx.fillStyle=PALE;ctx.fillText('SEG '+segments+'+'+segmentParts+'/'+SEGMENT_GOAL,109,9);
   ctx.fillStyle=ringLevel>=3?GOLD:CYAN;ctx.fillText(stageSpec().name+(up.tanks?' T':'')+(up.tractor?' X':'')+(up.shield?' S':''),80-stageSpec().name.length*1.8,19);
@@ -691,17 +815,19 @@ function draw(){
   for(const s of salvage)drawSalvage(s);for(const f of fragments)if(!salvage.includes(f))drawSalvage(f);drawDebris();drawTug();drawParts();drawRings();drawTexts();postDraw();drawIgnition();drawHUD();drawSession(false);
 }
 
-globalThis.__apogeeProbe=()=>({frame,showFrame,missionFrame,state,finishReason,segments,segmentParts,buildParts,partsSpent,reserveParts,ringLevel,ignited,
+globalThis.__apogeeProbe=()=>({frame,showFrame,missionFrame,state,stateT,finishReason,segments,segmentParts,buildParts,partsSpent,reserveParts,ringLevel,ignited,
+  finalConstructionFrame,ignitionFrame,missions:lifetime.missions,
   targetId,targetSince,plan:plan&&{mode:plan.mode,targetId:plan.targetId,heading:plan.heading,duration:plan.duration,horizon:plan.horizon,created:plan.created,point:plan.point&&{...plan.point}},
   act:{...act},persona:persona&&persona.name,tug:{...tug,intent:tug.intent&&{...tug.intent}},cargo:cargo&&{...cargo},
   salvage:salvage.map(s=>({...s})),fragments:fragments.map(s=>({...s})),debris:debris.map(s=>({...s})),
   upgrades:upgradeState(),overlayWidth:PLAN_LINE_WIDTH,trajectory:predictTrajectory(42).map(p=>({...p,cargo:p.cargo&&{...p.cargo}})),
   stats:{...stats},show:SHOW.probe(),playing:playing(),finite:[tug,cargo,...salvage,...fragments,...debris].filter(Boolean).every(finiteBody)});
+globalThis.__apogeeStoryProbe=()=>missionStory();
 globalThis.__apogeeTrajectory=n=>predictTrajectory(n).map(p=>({...p,cargo:p.cargo&&{...p.cargo}}));
 globalThis.__soakProbe=()=>({sig:Math.round(tug.x*17+tug.y*23+(cargo?cargo.x*11+cargo.y*13:0)),
   events:lifetime.events,progress:lifetime.progress,finite:finiteBody(tug)&&[cargo,...salvage,...fragments,...debris].filter(Boolean).every(finiteBody)});
 
-initSession('apogee',[['LEFT / RIGHT','ROTATE TUG'],['UP','PROGRADE BURN'],['DOWN','RETRO BURN'],['SPACE','TRACTOR / RELEASE']]);
+initSession('apogee',[['LEFT / RIGHT','ROTATE TUG'],['UP','PROGRADE BURN'],['DOWN','RETRO BURN'],['SPACE','TRACTOR / RELEASE']],{viewer:true});
 resetMission();start(()=>step(),()=>draw());
 </script>
 </html>

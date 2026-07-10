@@ -3,14 +3,17 @@
 const{bootGame}=require('./harness');
 
 const FOOTER=`
-globalThis.__skyEval={releases:[],catches:[],crashes:[],launchAt:[],liftAt:[]};
+globalThis.__skyEval={releases:[],catches:[],crashes:[],launchAt:[],liftAt:[],launchEndAt:[],launchOutcomes:[],preLaunchSignatures:[]};
 {const r0=releaseCargo;releaseCargo=reason=>{const before=stats.releases,out=r0(reason);
   if(stats.releases>before)globalThis.__skyEval.releases.push(showFrame);return out;};
  const c0=completeCatch;completeCatch=perfect=>{globalThis.__skyEval.catches.push({perfect,
    miss:Math.abs(cargo.x-target.x),speed:Math.hypot(cargo.vx,cargo.vy),type:cargo.type});return c0(perfect);};
  const x0=crashCargo;crashCargo=reason=>{const before=stats.crashes,out=x0(reason);
    if(stats.crashes>before)globalThis.__skyEval.crashes.push({at:showFrame,reason});return out;};
- const l0=beginLaunch;beginLaunch=()=>{globalThis.__skyEval.launchAt.push(showFrame);return l0();};
+ const l0=beginLaunch;beginLaunch=()=>{globalThis.__skyEval.launchAt.push(showFrame);globalThis.__skyEval.preLaunchSignatures.push(signature());
+   globalThis.__skyEval.launchOutcomes.push({catches:stats.catches,perfects:stats.perfects,crashes:stats.crashes,
+     salvages:stats.salvages,releases:stats.releases,modules:stats.modules,finalEngines:stats.finalEngines});return l0();};
+ const z0=resetCraft;resetCraft=full=>{if(state==='launch')globalThis.__skyEval.launchEndAt.push(showFrame);return z0(full);};
  const p0=physicsStep;physicsStep=()=>{const out=p0();if(state==='launch'&&launchT===90&&
    globalThis.__skyEval.liftAt.at(-1)!==showFrame)globalThis.__skyEval.liftAt.push(showFrame);return out;};}
 globalThis.__skyMotion=()=>{const c=cargo||{x:0,y:0,vx:0,vy:0};return[
@@ -50,6 +53,7 @@ const fail=message=>{console.error('  FAIL:',message);failed=true;};
 const press=(game,code)=>{game.key('keydown',code);game.frames(1,false);game.key('keyup',code);};
 const pct=(a,b)=>b?Math.round((a/b-1)*100):Infinity;
 const median=values=>{const a=[...values].sort((x,y)=>x-y),m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2;};
+let cachedNaturalLaunch=null;
 
 console.log('1) deterministic fixed-step replay: same seed, same complete sim signature');
 {
@@ -239,6 +243,7 @@ console.log('11) 10–15 minute arc + show ladder: final engine, unfold, launch,
   if(admire.directive!==48||admire.admired!==48||admire.sticky!==0||gated.directive!==48||gated.admired!==0||gated.sticky!==0)
     fail(`runtime admire did not exactly follow the directive: ${JSON.stringify({admire,gated})}`);
   if(!p.finite)fail('15-minute airship arc ended non-finite');
+  cachedNaturalLaunch={game,p};
 }
 
 console.log('12) payoff FX parity: confetti stream is a complete same-seed sim no-op');
@@ -298,6 +303,89 @@ console.log('14) twenty-seed ten-minute band: both measured seed families stay i
   };
   console.log(`  ranges: catches ${range('catches')}, crashes ${range('crashes')}, salvage ${range('salvages')}, `+
     `modules ${range('modules')}, releases ${range('releases')}, max gap ${(Math.max(...runs.map(o=>o.gap))/60).toFixed(1)}s`);
+}
+
+console.log('15) viewer story: immediate plain goal, truthful draw receipt, presentation-only A/B');
+{
+  let game=bootGame('skyhook',{seed:0x5aa01,footer:FOOTER});game.frames(1,true);
+  const opening=game.sandbox.__skyhookViewerProbe();
+  console.log(`  opening: "${opening.drawn.hud}" / "${opening.drawn.verb}" / ${opening.drawn.targetLabel}; ghost ${opening.drawn.ghost}`);
+  if(opening.drawn.frame!==game.sandbox.__skyhookProbe().showFrame||!opening.drawn.enabled||
+    opening.drawn.hud!=='BUILD AIRSHIP 00/26'||opening.drawn.hud!==opening.hud||
+    opening.drawn.verb!=='PICK UP CARGO'||opening.drawn.verb!==opening.verb||
+    opening.drawn.targetLabel!=='DROP HERE'||!opening.drawn.ghost||opening.drawn.phase!==opening.phase)
+    fail(`first rendered frame did not plainly explain the show: ${JSON.stringify(opening)}`);
+
+  const a=bootGame('skyhook',{seed:0x5aa02,footer:FOOTER}),b=bootGame('skyhook',{seed:0x5aa02,footer:FOOTER});
+  b.sandbox.__NO_VIEWER_STORY=1;b.sandbox.__NO_PARTIAL_HULL=1;
+  a.frames(7200,true);b.frames(7200,true);
+  const same=a.sandbox.__skyhookSignature()===b.sandbox.__skyhookSignature(),va=a.sandbox.__skyhookViewerProbe(),vb=b.sandbox.__skyhookViewerProbe();
+  console.log(`  2-minute rendered A/B signatures ${same?'identical':'DIFFER'}; story ${va.enabled}/${vb.enabled}, partial ${va.partialHull}/${vb.partialHull}`);
+  if(!same)fail('viewer story or partial-hull rendering changed the same-seed simulation');
+  if(!va.enabled||vb.enabled||!va.partialHull||vb.partialHull)fail('viewer presentation switches did not report their actual state');
+}
+
+console.log('16) visible causality: every credited catch persists and forecast labels tell the truth');
+{
+  let game=bootGame('skyhook',{seed:0x5aa10,footer:FOOTER});
+  const fills=[];
+  for(let catchNo=1;catchNo<=3;catchNo++){
+    game.sandbox.__skyhookCatchFixture();game.frames(1,true);const v=game.sandbox.__skyhookViewerProbe();
+    fills.push(`${v.moduleFill}/3 -> ${v.drawn.visiblePartialCount} visible, hull ${game.sandbox.__skyhookProbe().hull}`);
+    if(v.placedPieces!==v.moduleFill||v.expectedVisiblePartialCount!==v.moduleFill||v.drawn.visiblePartialCount!==v.moduleFill)
+      fail(`catch ${catchNo} vanished instead of persisting: ${JSON.stringify(v)}`);
+    if(v.drawn.hud!==v.hud||v.drawn.phase!==v.phase||!v.drawn.ghost)
+      fail(`catch ${catchNo} draw receipt disagreed with viewer metadata: ${JSON.stringify(v)}`);
+  }
+  console.log(`  catches: ${fills.join('; ')}`);
+  const built=game.sandbox.__skyhookProbe();
+  if(built.hull!==1||built.moduleFill!==0)fail(`three catches did not lock exactly one module: ${JSON.stringify(built)}`);
+
+  game=bootGame('skyhook',{seed:0x5aa11,footer:FOOTER});game.sandbox.__skyhookCatchFixture();
+  game.sandbox.__NO_PARTIAL_HULL=1;game.frames(1,true);const muted=game.sandbox.__skyhookViewerProbe();
+  if(muted.moduleFill!==1||muted.drawn.visiblePartialCount!==0||muted.partialHull)
+    fail(`__NO_PARTIAL_HULL did not cleanly ablate only the credited-part drawing: ${JSON.stringify(muted)}`);
+
+  game=bootGame('skyhook',{seed:0x5aa12,footer:FOOTER});const stages=[];
+  for(const count of[0,6,13,20,26]){
+    game.sandbox.__skyhookSetViewerHull(count);game.frames(1,true);const v=game.sandbox.__skyhookViewerProbe();
+    stages.push(`${count}:${v.drawn.phase}`);
+    const expected=[0,1,2,3,4][stages.length-1];
+    if(v.phaseIndex!==expected||v.drawn.silhouetteStage!==expected||!v.drawn.ghost)
+      fail(`hull milestone ${count} did not visibly advance its silhouette stage: ${JSON.stringify(v)}`);
+  }
+  console.log(`  silhouette stages ${stages.join(' | ')}`);
+
+  game=bootGame('skyhook',{seed:0x5aa13,footer:FOOTER});game.sandbox.__skyhookSetManualSwing();
+  let forecast=null;for(let i=0;i<40&&!forecast;i++){game.frames(1,true);const v=game.sandbox.__skyhookViewerProbe();if(v.trajectory)forecast=v;}
+  if(!forecast)fail('viewer never received a plain-language landing forecast');
+  else{
+    const{trajectory:t,trajectoryDelta:d,trajectoryTolerance:tol}=forecast;
+    const truthful=t==='ON TARGET'?Math.abs(d)<=tol:t==='SHORT'?d< -tol:t==='LONG'?d>tol:false;
+    console.log(`  forecast ${t}: delta ${d===null?'n/a':d.toFixed(2)}, tolerance ${tol}; drawn ${forecast.drawn.trajectory}`);
+    if(!truthful||forecast.drawn.trajectory!==t)fail(`trajectory label was not mathematically truthful: ${JSON.stringify(forecast)}`);
+  }
+}
+
+console.log('17) long launch A/B: identical natural pre-launch run, 15–20 second ceremony, exact show budgets');
+{
+  const longGame=cachedNaturalLaunch.game,legacy=bootGame('skyhook',{seed:0x5a601,footer:FOOTER});
+  legacy.sandbox.__NO_LONG_LAUNCH=1;legacy.frames(54000,false);
+  const le=longGame.sandbox.__skyEval,se=legacy.sandbox.__skyEval,
+    lp=longGame.sandbox.__skyhookProbe(),sp=legacy.sandbox.__skyhookProbe(),
+    longFrames=le.launchEndAt[0]-le.launchAt[0],shortFrames=se.launchEndAt[0]-se.launchAt[0];
+  const preSame=le.launchAt[0]===se.launchAt[0]&&le.liftAt[0]===se.liftAt[0]&&
+    le.preLaunchSignatures[0]===se.preLaunchSignatures[0]&&
+    JSON.stringify(le.launchOutcomes[0])===JSON.stringify(se.launchOutcomes[0]);
+  console.log(`  pre-launch ${preSame?'identical':'DIFFER'} at ${(le.launchAt[0]/3600).toFixed(2)}m; ceremony ${longFrames}f vs legacy ${shortFrames}f`);
+  if(!preSame)fail(`long launch altered a natural pre-launch outcome: ${JSON.stringify({long:le.launchOutcomes[0],legacy:se.launchOutcomes[0]})}`);
+  if(longFrames<900||longFrames>1200||shortFrames>=500||longFrames-shortFrames<500)
+    fail(`launch duration contract failed (${longFrames}f long, ${shortFrames}f legacy)`);
+  for(const[label,p]of[['long',lp],['legacy',sp]]){
+    const s3=p.show.shownByTier[3]||0;
+    if(s3<1||p.show.heldFrames!==6*s3||p.show.slowedFrames!==24*s3||p.show.admireFrames!==48*s3)
+      fail(`${label} launch broke exact show budgets: ${JSON.stringify(p.show)}`);
+  }
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

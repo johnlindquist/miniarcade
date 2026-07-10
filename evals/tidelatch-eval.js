@@ -128,17 +128,66 @@ console.log(`  admire gate: normal ${admire.normal}, directive ${admire.admire},
 if(admire.normal==='ADMIRE'||admire.admire!=='ADMIRE'||admire.after==='ADMIRE'||admire.ablated==='ADMIRE'||admire.ablatedAfter==='ADMIRE')
   fail(`__NO_ADMIRE did not gate the bot-only pause cleanly: ${JSON.stringify(admire)}`);
 
-console.log('6) measured outcomes + paired A/B: 10 same-seed ten-minute cities');
-const smartRuns=[],greedyRuns=[];let wins=0,smartFailures=0,totalBreaches=0;
+console.log('6) viewer story: truthful goal, causal copy, one target, and a connected distinct route');
+game=bootGame('tidelatch',{seed:0x71d050,footer:FOOTER});
+if(!game.engine.sessionProbe().viewer)fail('Tidelatch did not opt into ambient viewer mode');
+const storySamples=[];let previous=0;
+for(const at of[1,4500,11700,18900]){
+  game.frames(at-previous,false);previous=at;const story=game.sandbox.__tlStoryProbe(),state=game.sandbox.__tlProbe();storySamples.push(story);
+  const lit=story.districts.filter(d=>d.lit).length,targets=story.districts.filter(d=>d.target);
+  console.log(`  ${at}f ${story.goalText}; ${story.action}; ${story.crownText}; route [${story.routeEdges}]`);
+  if(story.goalText!==`LIGHT CITY ${lit}/4`||story.lit!==lit)fail(`story goal lied at ${at}f: ${JSON.stringify(story)}`);
+  if(story.hudLines[0]!==story.goalText||story.hudLines[1]!==story.action||story.hudLines[2]!==story.crownText)
+    fail(`HUD lines drifted from the story model at ${at}f`);
+  if(!story.crownText.startsWith('RIVER CROWN')&&!story.crownText.startsWith('CROWN READY'))fail(`Crown forecast disappeared at ${at}f`);
+  if(story.routeColor===story.waterColor||!story.flowEnabled)fail('planned route is not a distinct viewer-story layer');
+  if(story.targetKind==='district'){
+    const target=story.districts.find(d=>d.id===story.targetId);
+    if(targets.length!==1||!target||!target.unlocked||!target.thirsty||!target.target||!story.targetActive||!story.routeTruth||!story.routeEdges.length)
+      fail(`district target/path was not truthful at ${at}f: ${JSON.stringify(story)}`);
+    if(story.action!==`SEND WATER -> ${target.name}`)fail(`causal verb did not name its target at ${at}f: ${story.action}`);
+  }else if(story.targetKind==='outflow'&&(story.targetName!=='OUTFLOW'||!story.targetActive||!story.routeTruth||!story.routeEdges.length))
+    fail(`outflow target/path was not truthful at ${at}f: ${JSON.stringify(story)}`);
+  if(state.districts.some((d,i)=>story.districts[i].unlocked!==d.unlocked||story.districts[i].thirsty!==(d.unlocked&&d.active)))
+    fail(`story district state diverged from simulation at ${at}f`);
+}
+const shapes=new Set(storySamples[0].districts.map(d=>d.shape)),copy=game.sandbox.__tidelatchHooks.eventCopy;
+if(shapes.size!==4)fail(`district silhouettes are not distinct: ${[...shapes]}`);
+if(copy('delivery','MILLS')!=='WATER -> MILLS: LIT'||copy('miss','MILLS')!=='MILLS MISSED: DRY'||
+  copy('repair','W HEAD')!=='DRONE SEALED: W HEAD'||copy('breach','W HEAD')!=='PIPE BREAK: W HEAD')
+  fail('delivery/miss/repair/breach copy lost causal phrasing');
+if(storySamples[0].labels?.join('|')!=='RIVER|OUTFLOW')fail('source/outflow labels disappeared');
+
+console.log('7) viewer-story ablation: same-seed complete simulation remains identical');
+{
+  const a=bootGame('tidelatch',{seed:0x71d051,footer:FOOTER}),b=bootGame('tidelatch',{seed:0x71d051,footer:FOOTER}),
+    c=bootGame('tidelatch',{seed:0x71d051,footer:FOOTER});
+  a.sandbox.__tidelatchHooks.resetCity();b.sandbox.__NO_VIEWER_STORY=1;b.sandbox.__tidelatchHooks.resetCity();
+  c.sandbox.__NO_FLOW_STORY=1;c.sandbox.__tidelatchHooks.resetCity();a.frames(14400,false);b.frames(14400,false);c.frames(14400,false);
+  const sa=a.sandbox.__tlSimSig(),sb=b.sandbox.__tlSimSig(),sc=c.sandbox.__tlSimSig(),pa=a.sandbox.__tlStoryProbe(),
+    pb=b.sandbox.__tlStoryProbe(),pc=c.sandbox.__tlStoryProbe();
+  console.log(`  four-minute signatures ${sa===sb&&sa===sc?'identical':'DIFFERENT'}; viewer ${pa.enabled}/${pb.enabled}/${pc.enabled}; flow ${pa.flowEnabled}/${pb.flowEnabled}/${pc.flowEnabled}`);
+  if(sa!==sb||sa!==sc)fail('__NO_VIEWER_STORY/__NO_FLOW_STORY changed fluid, district, act, drone, or score state');
+  if(!pa.enabled||pb.enabled||!pc.enabled||!pa.flowEnabled||pb.flowEnabled||pc.flowEnabled)
+    fail('viewer-story/flow-story ablation switches did not remain independently live');
+}
+
+console.log('8) measured outcomes + paired planner/early-arc A/B: 10 same-seed ten-minute cities');
+const smartRuns=[],greedyRuns=[],legacyArcRuns=[];let wins=0,arcWins=0,smartFailures=0,totalBreaches=0;
 for(let i=0;i<10;i++){
-  const seed=0x71d100+i,a=bootGame('tidelatch',{seed,footer:FOOTER}),b=bootGame('tidelatch',{seed,footer:FOOTER});
-  b.sandbox.__NO_FLOW_PLAN=1;a.frames(36000,false);b.frames(36000,false);
-  const pa=a.sandbox.__tlProbe(),pb=b.sandbox.__tlProbe();smartRuns.push(pa);greedyRuns.push(pb);
+  const seed=0x71d100+i,a=bootGame('tidelatch',{seed,footer:FOOTER}),b=bootGame('tidelatch',{seed,footer:FOOTER}),
+    c=bootGame('tidelatch',{seed,footer:FOOTER});
+  a.sandbox.__tidelatchHooks.resetCity();b.sandbox.__tidelatchHooks.resetCity();c.sandbox.__NO_EARLY_CITY_ARC=1;c.sandbox.__tidelatchHooks.resetCity();
+  b.sandbox.__NO_FLOW_PLAN=1;a.frames(36000,false);b.frames(36000,false);c.frames(36000,false);
+  const pa=a.sandbox.__tlProbe(),pb=b.sandbox.__tlProbe(),pc=c.sandbox.__tlProbe();smartRuns.push(pa);greedyRuns.push(pb);legacyArcRuns.push(pc);
   const scoreA=pa.stats.deliveries-pa.stats.misses*.7,scoreB=pb.stats.deliveries-pb.stats.misses*.7;if(scoreA>scoreB)wins++;
+  if(pa.stats.deliveries>pc.stats.deliveries)arcWins++;
   smartFailures+=pa.stats.misses+pa.stats.breaches;
   totalBreaches+=pa.stats.breaches;
   console.log(`  seed ${seed.toString(16)} ${pa.persona.padEnd(11)} smart ${pa.stats.deliveries} flow/${pa.stats.misses} dry/${pa.stats.breaches} breach `+
-    `vs greedy ${pb.stats.deliveries}/${pb.stats.misses}/${pb.stats.breaches}; lull ${(pa.stats.maxDry/60).toFixed(1)}s`);
+    `vs greedy ${pb.stats.deliveries}/${pb.stats.misses}/${pb.stats.breaches}, legacy arc ${pc.stats.deliveries}/${pc.stats.misses}/${pc.stats.breaches}; `+
+    `lull ${(pa.stats.maxDry/60).toFixed(1)}s`);
+  if(pa.persona!==pc.persona||pa.cityVariant!==pc.cityVariant)fail(`seed ${seed.toString(16)}: early/legacy arc pairing did not share setup`);
   if(!pa.finite||pa.ledger!==5700||pa.sedLedger!==0)fail(`seed ${seed.toString(16)}: non-finite or non-conservative smart run`);
   if(pa.stats.activations!==4)fail(`seed ${seed.toString(16)}: only ${pa.stats.activations}/4 districts activated`);
   if(pa.stats.deliveries<125||pa.stats.deliveries>190)fail(`seed ${seed.toString(16)}: ${pa.stats.deliveries} deliveries outside measured band 125..190`);
@@ -149,15 +198,23 @@ for(let i=0;i<10;i++){
   if(pa.stats.planSims<250||pb.stats.planSims!==0)fail(`seed ${seed.toString(16)}: planner ablation was not real (${pa.stats.planSims}/${pb.stats.planSims})`);
 }
 const smartDeliveries=smartRuns.map(p=>p.stats.deliveries),greedyDeliveries=greedyRuns.map(p=>p.stats.deliveries),
-  smartMedian=median(smartDeliveries),greedyMedian=median(greedyDeliveries),gain=(smartMedian-greedyMedian)/greedyMedian;
+  legacyDeliveries=legacyArcRuns.map(p=>p.stats.deliveries),smartMedian=median(smartDeliveries),greedyMedian=median(greedyDeliveries),
+  legacyMedian=median(legacyDeliveries),gain=(smartMedian-greedyMedian)/greedyMedian,arcGain=(smartMedian-legacyMedian)/legacyMedian;
 const variants=new Set(smartRuns.map(p=>p.cityVariant)),personas=new Set(smartRuns.map(p=>p.persona)),signatures=new Set(smartRuns.map(p=>p.signature));
 console.log(`  planner wins ${wins}/10; median ${smartMedian} vs ${greedyMedian} (${(gain*100).toFixed(1)}%); retained failures ${smartFailures}; `+
   `diversity ${variants.size} city variants/${personas.size} personas/${signatures.size} endings`);
+console.log(`  early arc wins ${arcWins}/10; median ${smartMedian} vs legacy ${legacyMedian} (${(arcGain*100).toFixed(1)}%); `+
+  `unlocks ${smartRuns[0].districts.map(d=>(d.unlockAt/60).toFixed(0)).join('/')}s`);
 if(wins<8)fail(`flow planner won only ${wins}/10 paired seeds`);
 if(gain<.15)fail(`median fulfilled-demand gain ${(gain*100).toFixed(1)}% is below 15%`);
 if(smartFailures<=0)fail('planner eliminated all breaches/dry districts — play became robotically perfect');
 if(totalBreaches<3)fail(`only ${totalBreaches} honest breaches across 10 seeds — failure spectacle nearly disappeared`);
 if(variants.size<8||personas.size<3||signatures.size<8)fail(`seed freshness too low (${variants.size} variants, ${personas.size} personas, ${signatures.size} endings)`);
+const unlockFrames=smartRuns[0].districts.map(d=>d.unlockAt),unlockGaps=unlockFrames.slice(2).map((n,i)=>(n-unlockFrames[i+1])/60);
+if(unlockFrames[1]<3600||unlockFrames[1]>5400||unlockGaps.some(s=>s<90||s>150))
+  fail(`early city arc missed its measured pacing contract: ${unlockFrames.join('/')}f, gaps ${unlockGaps.join('/')}s`);
+if(legacyArcRuns.some(p=>p.districts.map(d=>d.unlockAt).join(',')!=='0,9000,18000,27000'))fail('__NO_EARLY_CITY_ARC no longer restores the baseline schedule');
+if(arcWins<7||arcGain<.08)fail(`early city arc produced only ${arcWins}/10 delivery wins and ${(arcGain*100).toFixed(1)}% median gain`);
 
 console.log('  fresh band sweep: 10 additional ten-minute cities (20 measured seeds total)');
 {
@@ -178,7 +235,7 @@ console.log('  fresh band sweep: 10 additional ten-minute cities (20 measured se
   console.log(`  fresh ranges: ${Math.min(...delivery)}..${Math.max(...delivery)} deliveries, ${Math.min(...misses)}..${Math.max(...misses)} dry failures, ${Math.min(...breaches)}..${Math.max(...breaches)} breaches`);
 }
 
-console.log('7) city arc + show ladder: River Crown after ten minutes with exact apex budget');
+console.log('9) city arc + show ladder: River Crown after ten minutes with exact apex budget');
 game=bootGame('tidelatch',{seed:0x71d300,footer:FOOTER});game.frames(43200,false);const arc=game.sandbox.__tlProbe(),show=arc.show,
   offered=show.offeredByTier,s3=show.shownByTier[3]||0;
 console.log(`  ${arc.stats.deliveries} deliveries, ${arc.stats.crowns} crown; tiers ${JSON.stringify(offered)}, held ${show.heldFrames}f, slowed ${show.slowedFrames}f, admire ${show.admireFrames}f`);
@@ -189,7 +246,7 @@ if(show.heldFrames!==6*s3)fail(`apex hitstop ${show.heldFrames}f != 6f per crown
 if(show.slowedFrames!==18*s3)fail(`apex slow-mo ${show.slowedFrames}f != 18f per crown`);
 if(show.admireFrames!==36*s3)fail(`bot admire window ${show.admireFrames}f != 36f per crown`);
 
-console.log('8) acts: Cloudburst and Silt Bore telegraph, pair notes, and change the bot before landing');
+console.log('10) acts: Cloudburst and Silt Bore telegraph, pair notes, and change the bot before landing');
 for(const spec of[{kind:'cloudburst',warn:240},{kind:'silt-bore',warn:210}]){
   const seed=spec.kind==='cloudburst'?0x71d401:0x71d402,a=bootGame('tidelatch',{seed,footer:FOOTER}),b=bootGame('tidelatch',{seed,footer:FOOTER});
   a.sandbox.__tlActSetup(spec.kind,600);b.sandbox.__tlActSetup(spec.kind,600);b.sandbox.__NO_ACTS=1;
@@ -202,7 +259,7 @@ for(const spec of[{kind:'cloudburst',warn:240},{kind:'silt-bore',warn:210}]){
   const expected=spec.kind==='cloudburst'?'VENT':'FLUSH';if(divergeTactic!==expected)fail(`${spec.kind} warning divergence was '${divergeTactic}', expected ${expected}`);
 }
 
-console.log('9) payoff FX: same-seed complete simulation signature is identical');
+console.log('11) payoff FX: same-seed complete simulation signature is identical');
 {
   const a=bootGame('tidelatch',{seed:0x71d500,footer:FOOTER}),b=bootGame('tidelatch',{seed:0x71d500,footer:FOOTER});
   b.sandbox.__NO_PAYOFF_FX=1;a.frames(14400,false);b.frames(14400,false);
@@ -210,7 +267,7 @@ console.log('9) payoff FX: same-seed complete simulation signature is identical'
   console.log(`  4-minute signatures ${sa===sb?'identical':'DIFFERENT'}`);if(sa!==sb)fail('__NO_PAYOFF_FX changed fluid, district, act, drone, or score state');
 }
 
-console.log('10) session + manual controls: gate select/toggle and pump select/reverse');
+console.log('12) session + manual controls: gate select/toggle and pump select/reverse');
 game=bootGame('tidelatch',{seed:0x71d600,footer:FOOTER});let m0=game.sandbox.__tlManualState();
 press(game,'Enter');let m1=game.sandbox.__tlManualState();press(game,'Enter');let m2=game.sandbox.__tlManualState();
 game.sandbox.__tlManualUnlock();press(game,'ArrowRight');let m3=game.sandbox.__tlManualState();const target0=m3.gate.gateTarget;press(game,'Space');let m4=game.sandbox.__tlManualState();
@@ -222,7 +279,7 @@ if(m4.gate.gateTarget===target0)fail('manual Space did not toggle the selected g
 if(m5.pumpId===m2.pumpId)fail('manual Down did not select a different pump');
 if(m6.pump.pumpDir!==-dir0)fail('manual X did not reverse the selected pump');
 
-console.log('11) ten-minute soak: water moves, events happen, districts progress');
+console.log('13) ten-minute soak: water moves, events happen, districts progress');
 {
   const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
   const{samples}=runSoak('tidelatch',{seed:0x71d700,footer:FOOTER,minutes:10}),report=analyzeSoak(samples);
@@ -230,7 +287,7 @@ console.log('11) ten-minute soak: water moves, events happen, districts progress
   assertSoak('soak',report,{still:2,quiet:12,stall:30,minEvents:1200,minProgress:120},fail);
 }
 
-console.log('12) browser-first render: network, districts, water, drone, and HUD draw materially');
+console.log('14) browser-first render: network, districts, water, drone, and HUD draw materially');
 game=bootGame('tidelatch',{seed:0x71d800,footer:FOOTER});game.frames(360,false);game.counter.calls=0;game.counter.byMethod={};game.sandbox.draw();
 console.log(`  ${game.counter.calls} canvas calls, ${game.counter.byMethod.fillRect||0} pixel fills, ${game.counter.byMethod.lineTo||0} routed segments`);
 if(game.counter.calls<220||(game.counter.byMethod.fillRect||0)<60||(game.counter.byMethod.lineTo||0)<30)fail('native render lacks material network/route detail');

@@ -15,8 +15,8 @@
   {id:'deadline-deck',title:'DEADLINE DECK',label:'deadline deck',tagline:'throw · grind · beat the press',tone:'dd'},
   {id:'scrapshift',title:'SCRAP SHIFT',label:'scrap shift',tagline:'ram · arm · outlast',tone:'ss'},
   {id:'misregister',title:'MISREGISTER',label:'misregister',tagline:'vault · align · print',tone:'mr'},
-  {id:'skyhook',title:'SKYHOOK YARD',label:'skyhook yard',tagline:'swing · release · launch',tone:'sy'},
-  {id:'apogee',title:'APOGEE FOUNDRY',label:'apogee foundry',tagline:'phase · capture · ignite',tone:'af'},
-  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'route · store · crown the city',tone:'tl'},
+  {id:'skyhook',title:'SKYHOOK YARD',label:'skyhook yard',tagline:'catch parts · build airship · launch',tone:'sy'},
+  {id:'apogee',title:'APOGEE FOUNDRY',label:'apogee foundry',tagline:'tow scrap · build ring · ignite',tone:'af'},
+  {id:'tidelatch',title:'TIDELATCH',label:'tidelatch',tagline:'send water · light four districts',tone:'tl'},
   {id:'crestcrash',title:'CRESTCRASH',label:'crestcrash',tagline:'dive · crest · topple',tone:'cc'}
 ]));
