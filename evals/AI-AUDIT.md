@@ -419,6 +419,62 @@ deterministic schedule. Permanent switches: `__NO_WAVES`, `__NO_LANE_PLAN`,
 `__NO_PLAY_MIX`, `__NO_ACTS`, `__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`,
 `__NO_VIEWER_STORY`.
 
+## Genre-fusion addition: STAR SALVAGE (2026-07-10)
+
+**STAR SALVAGE** crosses Asteroids with Katamari: the tug cuts authored,
+faceted asteroids into material-specific scrap, tethers the pieces into one
+physical train, and has to bring that increasingly ridiculous load through a
+narrow refinery bay. Every extra piece raises value and chain bonus while
+reducing turn/thrust authority, increasing cable stress, and lengthening the
+spring train. Cargo can visibly snap free or be deliberately dropped; there
+is no invisible rescue of the load and the bot carries cargo through act
+warnings instead of deleting the dilemma.
+
+- **Copied-state greed planning** (`__NO_GREED_PLAN` restores the measured
+  fixed-three-piece return policy) rolls candidate detours and the route home
+  through the exact ship integrator. It judges value, mass, projected danger,
+  cable stress, and arrival time, and physically reels toward a swinging tail
+  when the chain needs slack. Across eight permanent paired ten-minute seeds,
+  it wins banked value 7/8 times, 4,204 vs 3,291 aggregate (+27.7%), while
+  raising the visible maximum train from three to five or six pieces.
+- **Human-flavored control.** Three salvager personas change precision, risk,
+  and greed; `AI.skillProfile` supplies reaction delay and short hesitation
+  lapses behind `__NO_LAPSE`. Human and bot emit the same game-owned intent
+  object through `AI.controllerMux`, and every intent reaches one
+  `applyIntent`/physics path.
+- **Acts.** A magnetic squall telegraphs for 240 frames and a meteor front for
+  210. With cargo attached, the tug visibly turns for home during the warning;
+  without cargo, it takes shelter. Paired same-seed fixtures first diverge
+  physically during warning (frames 80 and 78), before either act lands, and
+  reset cancels pending land events. `__NO_ACTS` remains the permanent
+  ablation.
+- **Homecoming show.** The refinery catches each fragment sequentially with
+  animated clamp beams; dockhands raise their arms; a bay-wide pulse expands
+  on milestone hauls; the Star Ark permanently changes construction at 80,
+  180, and 260 value, then launches at the exact 15-minute ending. Tier order
+  is strict, and tier-three cues consume exactly 6 hold / 24 slow / 48 admire
+  frames. `__NO_ADMIRE` gates only the bot pause and `__NO_PAYOFF_FX` is a
+  perfect same-seed simulation no-op.
+- **Watchability calibration.** Thirty fixed ten-minute seeds
+  (`0x5c000 + i*233`) banked 379..714 value and 72..112 pieces in 21..36
+  homecomings; maximum train was 4..6, snaps 12..31, lost cargo 16..37,
+  deliberate drops 0..7, apexes 3..4, events 245..337, and progress marks
+  141..198. All were finite with zero impacts/rescues; the longest visible
+  event lull was 721 frames and the worst story-progress lull was 2,190.
+  The shared ten-minute soak records zero still seconds, an 11-second quiet
+  run, a 23-second progress stall, 336 events, and 190 progress marks.
+- **Authored world and visual proof.** Planet-limb, orbital-ring, and ship-
+  graveyard sectors change composition as the Ark grows. The wedge tug has
+  articulated booms, cockpit/pilot, recoil, thrust, damage, and strain poses;
+  material language, layered depth, warning fronts, train cables, the built
+  refinery, and the staged Ark remain legible at 160x360. The discovered
+  real-pixel visual eval captures opening, normal, overloaded, later, danger,
+  and apex fixtures beside MACHINE HUNT and BLOCK MINE and requires a fresh
+  hash-bound six-category review receipt.
+
+Permanent switches: `__NO_GREED_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
+`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

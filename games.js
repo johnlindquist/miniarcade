@@ -18,5 +18,6 @@
   {id:'ghost-shift',title:'GHOST SHIFT',label:'ghost shift',tagline:'loot · unlock · evade',tone:'gs'},
   {id:'wingrush',title:'WINGRUSH',label:'wingrush',tagline:'dive · soar · shatter',tone:'wr'},
   {id:'grave-garden',title:'GRAVE GARDEN',label:'grave garden',tagline:'plant · fortify · survive',tone:'gg'},
-  {id:'swarm-keeper',title:'SWARM KEEPER',label:'swarm keeper',tagline:'lead · build · bring them home',tone:'sk'}
+  {id:'swarm-keeper',title:'SWARM KEEPER',label:'swarm keeper',tagline:'lead · build · bring them home',tone:'sk'},
+  {id:'star-salvage',title:'STAR SALVAGE',label:'star salvage',tagline:'break · tether · haul it home',tone:'sv'}
 ]));

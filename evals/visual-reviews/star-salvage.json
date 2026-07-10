@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "game": "star-salvage",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "59fce4d3bb6e739621de75909c71b6e49015f2843dd4457e6add619d3c348fb0",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "seed": "0x5a1a6e",
+  "checkpoints": [
+    "opening@12",
+    "normal@12",
+    "overloaded@12",
+    "later@12",
+    "danger@12",
+    "apex@24"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native 160x360 the tug reads as a piloted industrial character: wedge hull, twin booms, cyan cockpit and pilot, antenna, asymmetric flame, recoil, damage marks, facing, and strain motion form a stronger silhouette and pose vocabulary than a token, meeting both references."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The world remains a built salvage yard with the HUD ignored: layered star motion, planet limb and rings, orbital machinery, graveyard hulls, material-specific rocks, cargo lanes, foreground refinery, crane, bay jaws, workers, and staged Ark match the density and depth separation of both references."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The sheet shows three compositionally distinct sectors rather than recolors: planet-and-ring space, an orbital rim, and an aurora-lit ship graveyard. The refinery and Star Ark also acquire new structural silhouettes at each value threshold, making progression as legible as the reference worlds."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Ship crops show thrust and body motion, warning fronts move across a retained cargo train, and the inspected apex sequence has sequential fragment intake, descending clamp beams, raised dockhand arms, expanding bay rings and rays, plus the haul banner. The payoff has anticipation and follow-through comparable to both references."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The cream-and-cyan tug, dark-underlaid luminous tether, faceted cargo, warning wash, gold home bay, plain tactic verb, load count, Ark goal, tension bar, and hull state remain distinguishable at native size. Rich backgrounds preserve a clear focal hierarchy at least as well as both references."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Industrial steel construction, faceted salvage shapes, cyan navigation language, gold reward language, coral danger language, repeated beacon geometry, and the evolving Ark tie every sector and payoff together with the deliberate material grammar visible in MACHINE HUNT and BLOCK MINE."
+    }
+  }
+}

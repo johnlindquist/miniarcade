@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STAR SALVAGE</title>
+<style>
+  html,body{margin:0;height:100%;background:#03050d}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#050816}
+  canvas:focus-visible{outline:2px solid #69e5ee;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Star Salvage. An autonomous tug breaks asteroids, tethers a dangerous salvage train, and drags it home to build the Star Ark."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,R,RI,hash,clamp,rect,spawn,burst,dust,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,manual,initSession,sessionStep,drawSession,playing,addScore,gameOver,
+  createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// STAR SALVAGE — Asteroids x Katamari. The fixed arena keeps the whole causal
+// story on screen: crack a rock, hook its valuable pieces, choose whether to
+// add one more, then wrestle the increasingly awful train into the lit home bay.
+// Runtime and the later greed planner share advanceShip; the integrator is pure
+// math on copied numeric state and never reads either engine RNG stream.
+const TAU=Math.PI*2,TOP=30,BOTTOM=329,LEFT=9,RIGHT=151,HOME_X=80,HOME_Y=311;
+const SHIFT_FRAMES=15*60*60,ARK_GOAL=260,SHIP_R=6,SHOT_SPEED=3.7;
+const VOID='#050816',VOID2='#0b1230',INK='#07101f',STEEL='#31475f',STEEL2='#172238',
+  CREAM='#f4e8c1',PALE='#d7e4ef',CYAN='#69e5ee',BLUE='#5b86e5',GOLD='#ffd166',
+  CORAL='#ff6f61',MINT='#5ee6bd',ROCK='#566173',ROCKHI='#929bac',VIOLET='#ad8cff';
+const MATERIALS={
+  iron:{name:'IRON',base:ROCK,hi:ROCKHI,dark:'#343e4f',value:3,mass:1.1},
+  crystal:{name:'STARGLASS',base:'#315b68',hi:MINT,dark:'#17323b',value:6,mass:.75},
+  gold:{name:'SUNCORE',base:'#7a6232',hi:GOLD,dark:'#3d311b',value:9,mass:1.35},
+  ice:{name:'COMET ICE',base:'#456987',hi:'#b8e9ff',dark:'#24384e',value:4,mass:.85}
+};
+const PERSONAS=[
+  {name:'MARA',label:'MARA · HAULER',risk:.58,greed:.72,precision:.86,tint:GOLD},
+  {name:'JAX',label:'JAX · HOTSHOT',risk:.78,greed:.84,precision:.78,tint:CORAL},
+  {name:'SOL',label:'SOL · SKIPPER',risk:.38,greed:.56,precision:.91,tint:CYAN}
+];
+
+let showFrame=0,runFrame=0,shiftNo=0,state='run',resultT=0,outcome='';
+let ship=null,asteroids=[],fragments=[],shots=[],texts=[],bankGhosts=[],nextId=1,fieldVariant=0;
+let dockCelebration=0,dockApex=false;
+let targetId=0,targetKind='',persona=PERSONAS[0],profile=null,profileSeed=1,lastLapsed=false;
+let greedCache={at:-1e9,bank:false,targetId:0,drop:false,forecast:'SCAN',utility:0,homeEta:-1};
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let act={kind:'squall',phase:'calm',warnAt:3600,landAt:3840,endAt:4740,count:0,dir:1};
+let actNotes=[],bankedValue=0,bankedPieces=0,arkStage=0,eventSerial=0,progressSerial=0;
+let lastEventFrame=0,lastProgressFrame=0,lastDirectorFrame=-1e9,banner={s:'',c:PALE,t:0},visualBeat='';
+const stats={shots:0,hits:0,rocksBroken:0,fragmentsMade:0,tethers:0,bankTrips:0,
+  bankedPieces:0,bankedValue:0,haulBonus:0,maxTrain:0,overloadHomes:0,voluntaryDrops:0,snaps:0,cargoLost:0,
+  impacts:0,rescues:0,lapses:0,actsWarned:0,actsLanded:0,apexes:0,events:0,progress:0,
+  maxEventLull:0,maxProgressLull:0,replans:0,plannerCalls:0,plannerSteps:0,appliedIntents:0,
+  admireIntents:0,endings:0,wins:0,maxStress:0};
+
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12,minGap:8},
+  2:{frames:48,minGap:100},
+  3:{frames:90,minGap:720,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+const angleWrap=a=>{a=(a+Math.PI)%TAU;if(a<0)a+=TAU;return a-Math.PI;};
+const finiteBody=b=>b&&['x','y','vx','vy'].every(k=>Number.isFinite(b[k]));
+const speed=b=>Math.hypot(b.vx,b.vy);
+const train=()=>fragments.filter(f=>f.tethered&&!f.dead).sort((a,b)=>a.order-b.order);
+const loose=()=>fragments.filter(f=>!f.tethered&&!f.dead);
+const loadValue=()=>train().reduce((n,f)=>n+f.value,0);
+const loadMass=()=>train().reduce((n,f)=>n+f.mass,0);
+const sector=()=>bankedValue>=180?2:bankedValue>=80?1:0;
+const allFinite=()=>finiteBody(ship)&&asteroids.every(finiteBody)&&fragments.every(finiteBody)&&shots.every(finiteBody);
+const homeDistance=b=>Math.hypot(b.x-HOME_X,b.y-HOME_Y);
+const inBay=b=>b.y>297&&Math.abs(b.x-HOME_X)<21;
+const asteroidById=id=>asteroids.find(a=>a.id===id&&!a.dead);
+const fragmentById=id=>fragments.find(f=>f.id===id&&!f.dead);
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
+function say(s,c,t){banner={s,c:c||PALE,t:t||70};texts.push({s,c:c||PALE,x:ship?ship.x:80,y:ship?ship.y-13:150,t:t||70});}
+function offer(id,tier,x,y,tag){SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function noteAct(e){actNotes.push({kind:e.kind,id:e.id,at:e.at,tag:e.tag,landsAt:e.landsAt});SHOW.note(e);}
+
+function materialFor(level,roll){
+  if(level>=2&&roll>.78)return'gold';
+  if(level>=1&&roll>.62)return'crystal';
+  if(level>=2&&roll<.22)return'ice';
+  return'iron';
+}
+function makeAsteroid(x,y,r,kind,vx,vy){
+  const m=MATERIALS[kind],id=nextId++;
+  return{id,x,y,vx:vx===undefined?R(-.16,.16):vx,vy:vy===undefined?R(-.12,.15):vy,
+    r,kind,hp:Math.max(2,Math.ceil(r/5)),maxHp:Math.max(2,Math.ceil(r/5)),spin:R(-.018,.018),rot:R(0,TAU),
+    shape:RI(0,2),dead:false,hitT:0,mass:r*.22+m.mass};
+}
+function spawnAsteroid(edge){
+  const lvl=sector(),kind=materialFor(lvl,R(0,1)),r=RI(8+lvl,13+lvl*2);
+  let x=R(22,138),y=R(52,252),vx=R(-.13,.13),vy=R(-.1,.15);
+  if(edge==='meteor'){
+    x=R(18,142);y=TOP-r-4;vx=R(-.12,.12);vy=R(.72,1.08);
+  }
+  asteroids.push(makeAsteroid(x,y,r,kind,vx,vy));
+}
+function spawnField(){for(let i=0;i<7;i++)spawnAsteroid();}
+function createFragment(x,y,kind,value,mass,vx,vy){
+  const m=MATERIALS[kind],id=nextId++,a=hash(id,31)*TAU;
+  const f={id,x,y,vx:vx||0,vy:vy||0,kind,value:value===undefined?m.value:value,
+    mass:mass===undefined?m.mass:mass,r:kind==='gold'?4.2:kind==='crystal'?3.5:3.8,
+    rot:a,spin:(hash(id,17)-.5)*.09,shape:id%3,tethered:false,order:0,dead:false,flash:0};
+  fragments.push(f);return f;
+}
+function breakAsteroid(a){
+  if(a.dead)return;a.dead=true;stats.rocksBroken++;markEvent(16);markProgress();
+  const m=MATERIALS[a.kind],n=a.r>=12?4:3;stats.fragmentsMade+=n;
+  for(let i=0;i<n;i++){
+    const ang=i*TAU/n+a.rot,sp=.28+hash(a.id,i)*.35;
+    createFragment(a.x+Math.cos(ang)*3,a.y+Math.sin(ang)*3,a.kind,m.value,m.mass,
+      a.vx+Math.cos(ang)*sp,a.vy+Math.sin(ang)*sp);
+  }
+  offer('break',1,a.x,a.y,m.name);fxDust(a.x,a.y,10,m.hi);burst(a.x,a.y,12,m.dark,1.4);ring(a.x,a.y,m.hi,1.5,18);shake(a.r>12?3:2);
+  say(m.name+' SHATTERS',m.hi,42);
+}
+function fireShot(){
+  if(ship.fireCd>0||ship.rescueT>0)return;
+  ship.fireCd=12;ship.recoil=5;stats.shots++;markEvent();
+  shots.push({x:ship.x+Math.cos(ship.a)*8,y:ship.y+Math.sin(ship.a)*8,
+    vx:ship.vx+Math.cos(ship.a)*SHOT_SPEED,vy:ship.vy+Math.sin(ship.a)*SHOT_SPEED,life:54,dead:false});
+}
+
+// Pure ship integrator. Load is a plain {mass,count}; env is plain numeric
+// act state. The runtime and planner may both use this without side effects.
+function advanceShip(b,intent,load,env){
+  load=load||{mass:0,count:0};env=env||{wind:0};
+  const burden=1+load.mass*.085+load.count*.055,turnRate=.069/(1+load.mass*.052+load.count*.045);
+  b.a=angleWrap(b.a+clamp(intent.turn||0,-1,1)*turnRate);
+  if(intent.thrust){const p=.074/burden;b.vx+=Math.cos(b.a)*p;b.vy+=Math.sin(b.a)*p;}
+  if(intent.brake){b.vx*=.92;b.vy*=.92;}
+  b.vx+=(env.wind||0)*.0045;b.vx*=.988;b.vy*=.988;
+  const max=1.65/(1+load.mass*.025+load.count*.018),sp=Math.hypot(b.vx,b.vy);
+  if(sp>max){b.vx*=max/sp;b.vy*=max/sp;}
+  b.x+=b.vx;b.y+=b.vy;
+  if(b.x<LEFT){b.x=LEFT;b.vx=Math.abs(b.vx)*.45;}
+  if(b.x>RIGHT){b.x=RIGHT;b.vx=-Math.abs(b.vx)*.45;}
+  if(b.y<TOP+5){b.y=TOP+5;b.vy=Math.abs(b.vy)*.45;}
+  if(b.y>BOTTOM){b.y=BOTTOM;b.vy=-Math.abs(b.vy)*.45;}
+  return b;
+}
+
+function tetherFragment(f){
+  if(!f||f.dead||f.tethered||train().length>=9)return false;
+  // The grappler mounts the new prize directly behind the tug and the older
+  // train falls back one link. Appending a ship-near pickup to the far tail
+  // creates a fake instant cable; front insertion keeps every link honest.
+  const t=train();for(const old of t)old.order++;f.tethered=true;f.order=0;f.flash=12;stats.tethers++;stats.maxTrain=Math.max(stats.maxTrain,t.length+1);
+  markEvent(8);markProgress();offer('hook',1,f.x,f.y,'HOOK');ring(f.x,f.y,CYAN,1,15);fxDust(f.x,f.y,7,CYAN);
+  say(t.length>=3?'ONE MORE ON THE LINE':'TETHER LOCK',t.length>=3?GOLD:CYAN,48);return true;
+}
+function releaseTail(count,voluntary,reason){
+  const t=train();count=clamp(count||1,1,t.length);const gone=t.slice(t.length-count);
+  for(const f of gone){f.tethered=false;f.order=0;f.vx+=Math.cos(ship.a+Math.PI)*.3;f.vy+=Math.sin(ship.a+Math.PI)*.3;}
+  if(voluntary)stats.voluntaryDrops+=gone.length;else stats.snaps++;
+  stats.cargoLost+=gone.length;markEvent();say(reason||'CUT THE TAIL',voluntary?GOLD:CORAL,70);shake(3);
+  ship.dropCd=90;
+  offer(voluntary?'drop':'snap',2,ship.x,ship.y,reason||'TAIL LOST');
+}
+function stepTethers(){
+  const t=train();let worst=0,worstIndex=-1;
+  for(let pass=0;pass<2;pass++)for(let i=0;i<t.length;i++){
+    const f=t[i],p=i?t[i-1]:ship,dx=f.x-p.x,dy=f.y-p.y,d=Math.hypot(dx,dy)||1,rest=10+Math.min(2.5,f.mass);
+    const nx=dx/d,ny=dy/d,rv=(f.vx-p.vx)*nx+(f.vy-p.vy)*ny;
+    if(d>rest){const pull=clamp((d-rest)*.024+Math.max(0,rv)*.035,0,.17);
+      f.vx-=nx*pull/Math.max(.7,f.mass);f.vy-=ny*pull/Math.max(.7,f.mass);
+      const give=p===ship?.2:.32;p.vx+=nx*pull*give;p.vy+=ny*pull*give;
+    }
+    const ratio=d/rest;if(ratio>worst){worst=ratio;worstIndex=i;}
+  }
+  ship.stress=worst;stats.maxStress=Math.max(stats.maxStress,worst);
+  if(worst>5.8&&worstIndex>=0)releaseTail(t.length-worstIndex,false,'TETHER SNAP');
+}
+function stepFragments(){
+  const wind=act.phase==='live'&&act.kind==='squall'?act.dir*.004:0;
+  for(const f of fragments){if(f.dead)continue;if(f.flash>0)f.flash--;f.rot+=f.spin;
+    f.vx+=wind;f.vx*=f.tethered?.994:.997;f.vy*=f.tethered?.994:.997;f.x+=f.vx;f.y+=f.vy;
+    if(f.x<LEFT){f.x=LEFT;f.vx=Math.abs(f.vx)*.55;}if(f.x>RIGHT){f.x=RIGHT;f.vx=-Math.abs(f.vx)*.55;}
+    if(f.y<TOP+3){f.y=TOP+3;f.vy=Math.abs(f.vy)*.55;}if(f.y>BOTTOM){f.y=BOTTOM;f.vy=-Math.abs(f.vy)*.55;}
+  }
+  // Cargo catches and wraps around rocks. A hard hit can peel off the tail;
+  // otherwise the physical deflection creates the on-screen tangle.
+  const t=train();for(let i=0;i<t.length;i++){const f=t[i];for(const a of asteroids){if(a.dead)continue;
+    const dx=f.x-a.x,dy=f.y-a.y,d=Math.hypot(dx,dy)||1,min=f.r+a.r;
+    if(d<min){const nx=dx/d,ny=dy/d,rv=(f.vx-a.vx)*nx+(f.vy-a.vy)*ny;
+      f.x=a.x+nx*min;f.y=a.y+ny*min;f.vx-=nx*rv*1.35;f.vy-=ny*rv*1.35;a.vx+=nx*rv*.08;a.vy+=ny*rv*.08;
+      if(Math.abs(rv)>2.15&&i>=2){releaseTail(t.length-i,false,'CARGO RIPPED FREE');return;}
+    }
+  }}
+}
+function stepAsteroids(){
+  for(const a of asteroids){if(a.dead)continue;if(a.hitT>0)a.hitT--;a.rot+=a.spin;a.x+=a.vx;a.y+=a.vy;
+    if(a.x<a.r+LEFT){a.x=a.r+LEFT;a.vx=Math.abs(a.vx);}
+    if(a.x>RIGHT-a.r){a.x=RIGHT-a.r;a.vx=-Math.abs(a.vx);}
+    if(a.y<TOP+a.r){a.y=TOP+a.r;a.vy=Math.abs(a.vy);}
+    if(a.y>BOTTOM-a.r){a.y=BOTTOM-a.r;a.vy=-Math.abs(a.vy)*.7;}
+    if(a.shipCd>0)a.shipCd--;
+    if(ship.rescueT<=0&&ship.inv<=0&&a.shipCd<=0){const dx=ship.x-a.x,dy=ship.y-a.y,d=Math.hypot(dx,dy)||1,min=SHIP_R+a.r;
+      if(d<min){const nx=dx/d,ny=dy/d,rv=(ship.vx-a.vx)*nx+(ship.vy-a.vy)*ny;
+        ship.x=a.x+nx*min;ship.y=a.y+ny*min;ship.vx-=nx*rv*1.6;ship.vy-=ny*rv*1.6;
+        a.vx+=nx*rv*.12;a.vy+=ny*rv*.12;ship.inv=70;a.shipCd=110;ship.damage++;stats.impacts++;markEvent();
+        say('HULL IMPACT',CORAL,55);burst(ship.x,ship.y,8,CORAL,1.6);shake(4);
+        if(train().length>3)releaseTail(1,false,'IMPACT SHEDS CARGO');
+        if(ship.damage>=4)startRescue();
+      }
+    }
+  }
+  asteroids=asteroids.filter(a=>!a.dead);
+  while(asteroids.length<6+sector())spawnAsteroid();
+}
+function stepShots(){
+  for(const s of shots){if(s.dead)continue;s.x+=s.vx;s.y+=s.vy;s.life--;
+    if(s.life<=0||s.x<0||s.x>W||s.y<TOP||s.y>BOTTOM){s.dead=true;continue;}
+    for(const a of asteroids){if(a.dead)continue;if(Math.hypot(s.x-a.x,s.y-a.y)<a.r+1){s.dead=true;a.hp--;a.hitT=5;stats.hits++;burst(s.x,s.y,4,MATERIALS[a.kind].hi,1);if(a.hp<=0)breakAsteroid(a);break;}}
+  }
+  shots=shots.filter(s=>!s.dead);
+}
+function startRescue(){
+  if(ship.rescueT>0)return;ship.rescueT=150;ship.rescueFromX=ship.x;ship.rescueFromY=ship.y;
+  if(train().length)releaseTail(train().length,false,'EMERGENCY CUT');stats.rescues++;markEvent();offer('rescue',2,ship.x,ship.y,'RESCUE TUG');say('RESCUE TUG INBOUND',CORAL,100);
+}
+function stepRescue(){
+  ship.rescueT--;const q=1-ship.rescueT/150,e=q*q*(3-2*q);ship.x=ship.rescueFromX+(HOME_X-ship.rescueFromX)*e;ship.y=ship.rescueFromY+(HOME_Y-ship.rescueFromY)*e;
+  ship.vx=ship.vy=0;ship.a=-Math.PI/2;if(ship.rescueT===0){ship.damage=0;ship.inv=120;say('BACK ON THE LINE',CYAN,55);markProgress();}
+}
+function directorNudge(){
+  if(showFrame-lastProgressFrame<=1200||showFrame-lastDirectorFrame<=1200)return;
+  lastDirectorFrame=showFrame;stats.replans++;const dir=hash(shiftNo*97+stats.replans,runFrame)>0.5?1:-1,
+    x=clamp(ship.x+dir*28,18,142),y=clamp(ship.y-32,TOP+12,BOTTOM-24),kind=sector()>=1?'crystal':'iron',
+    f=createFragment(x,y,kind,8,undefined,-dir*.18,.12);f.beacon=1;targetId=f.id;targetKind='fragment';greedCache.at=-1e9;
+  say('SALVAGE BEACON PING',MINT,75);offer('beacon',1,x,y,'CACHE');ring(x,y,MINT,1.7,28);markEvent();
+}
+
+function bankHaul(){
+  const t=train();if(!t.length)return false;const n=t.length,raw=t.reduce((sum,f)=>sum+f.value,0),
+    value=Math.round(raw*(1+Math.max(0,n-2)*.18)),bonus=value-raw,before=arkStage;
+  t.forEach((f,i)=>bankGhosts.push({x:f.x,y:f.y,fromX:f.x,fromY:f.y,kind:f.kind,index:i,count:n,delay:i*5,t:52+i*5}));
+  for(const f of t)f.dead=true;fragments=fragments.filter(f=>!f.dead);
+  bankedPieces+=n;bankedValue+=value;stats.bankTrips++;stats.bankedPieces+=n;stats.bankedValue+=value;stats.haulBonus+=bonus;
+  if(n>=5)stats.overloadHomes++;markEvent(60+value);markProgress(3);ship.damage=Math.max(0,ship.damage-1);ship.stress=0;
+  arkStage=bankedValue>=ARK_GOAL?3:bankedValue>=180?2:bankedValue>=80?1:0;
+  const apex=arkStage>before||n>=5&&stats.overloadHomes%4===0;
+  dockCelebration=apex?96:56;dockApex=apex;
+  if(apex){stats.apexes++;offer('homecoming-'+stats.bankTrips,3,HOME_X,HOME_Y,n+' PIECE HAUL');fxBurst(HOME_X,HOME_Y,30,GOLD,2.7,.02);shake(7);ring(HOME_X,HOME_Y,GOLD,2.2,28);}
+  else{offer('bank',2,HOME_X,HOME_Y,value);fxBurst(HOME_X,HOME_Y,15,CYAN,1.9,.02);shake(3);}
+  say(n>=5?'MONSTER HAUL +'+value:n>=3?'CHAIN BONUS +'+value:'SALVAGE BANKED +'+value,n>=5?GOLD:CYAN,90);
+  return true;
+}
+
+function resetAct(){act={kind:'squall',phase:'calm',warnAt:3600,landAt:3840,endAt:4740,count:0,dir:1};actNotes=[];}
+function scheduleNextAct(){
+  act.count++;act.kind=act.count%2?'meteor':'squall';act.phase='calm';act.warnAt=runFrame+3000;
+  const warning=act.kind==='squall'?240:210;act.landAt=act.warnAt+warning;act.endAt=act.landAt+900;
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
+  if(act.phase==='calm'&&runFrame>=act.warnAt){
+    act.phase='warn';act.dir=hash(shiftNo*17+act.count,41)>.5?1:-1;targetId=0;
+    const warning=act.kind==='squall'?240:210;stats.actsWarned++;
+    noteAct({kind:'act-warning',id:act.kind,at:showFrame,tag:runFrame,landsAt:showFrame+warning});
+    say(act.kind==='squall'?'MAGNETIC SQUALL INBOUND':'METEOR FRONT INBOUND',act.kind==='squall'?VIOLET:CORAL,95);
+  }else if(act.phase==='warn'&&runFrame>=act.landAt){
+    act.phase='live';stats.actsLanded++;noteAct({kind:'act-land',id:act.kind,at:showFrame,tag:runFrame});markEvent();
+    if(act.kind==='meteor')for(let i=0;i<4;i++)spawnAsteroid('meteor');
+    say(act.kind==='squall'?'THE FIELD PULLS SIDEWAYS':'METEORS BREAK OVERHEAD',CREAM,72);shake(4);
+  }else if(act.phase==='live'&&runFrame>=act.endAt){
+    offer('act-clear',2,ship.x,ship.y,act.kind);say(act.kind==='squall'?'FIELD STABILIZED':'FRONT PASSED',MINT,55);scheduleNextAct();
+  }
+}
+
+function aimIntent(tx,ty,tactic,options){
+  options=options||{};const dx=tx-ship.x,dy=ty-ship.y,d=Math.hypot(dx,dy)||1,want=Math.atan2(dy,dx),err=angleWrap(want-ship.a);
+  const stop=options.stop||0,brake=!!options.brake||d<stop&&speed(ship)>.45;
+  const intent={turn:clamp(err/.62,-1,1),thrust:!brake&&Math.abs(err)<1.02&&d>(options.arrive||4),brake,
+    fire:!!options.fire&&Math.abs(err)<.22&&d<110,tether:!!options.tether&&d<14,
+    dropTail:!!options.dropTail,tactic,targetId:options.targetId||0};
+  // Shared reactive seamanship, deliberately not part of the greed feature:
+  // project nearby rocks forward, show a tangent turn, and keep firing only
+  // when the obstructing rock is the selected target.
+  let threat=null,margin=Infinity;
+  for(const a of asteroids){
+    const lead=18,px=a.x+a.vx*lead,py=a.y+a.vy*lead,sx=ship.x+ship.vx*lead,sy=ship.y+ship.vy*lead,
+      gap=Math.hypot(px-sx,py-sy)-a.r;
+    if(gap<margin&&Math.hypot(a.x-ship.x,a.y-ship.y)<a.r+34+train().length*2){margin=gap;threat=a;}
+  }
+  if(threat&&margin<12){
+    const away=Math.atan2(ship.y-threat.y,ship.x-threat.x),side=angleWrap(want-away)>=0?1:-1,
+      evade=away+side*1.05,e2=angleWrap(evade-ship.a),close=Math.hypot(threat.x-ship.x,threat.y-ship.y)<threat.r+13;
+    intent.turn=clamp(e2/.48,-1,1);intent.thrust=Math.abs(e2)<.9;intent.brake=close&&speed(ship)>.8;
+    intent.fire=intent.fire&&threat.id===intent.targetId;intent.tactic=close?'DODGE THE ROCK':'THREAD THE GAP';
+  }
+  return intent;
+}
+function pickLoose(preferValue){
+  let best=null,bestScore=Infinity;for(const f of loose()){
+    const d=Math.hypot(f.x-ship.x,f.y-ship.y),home=homeDistance(f),danger=asteroids.reduce((n,a)=>n+(Math.hypot(f.x-a.x,f.y-a.y)<a.r+18?18:0),0);
+    const score=d+home*.08+danger-f.value*(preferValue?8.5:3.2);if(score<bestScore){bestScore=score;best=f;}
+  }return best;
+}
+function pickRock(preferValue){
+  let best=null,bestScore=Infinity;for(const a of asteroids){
+    const d=Math.hypot(a.x-ship.x,a.y-ship.y),score=d-a.r*1.8-MATERIALS[a.kind].value*(preferValue?9:2);
+    if(score<bestScore){bestScore=score;best=a;}
+  }return best;
+}
+
+// Copied-state greed lookahead. Each candidate rolls the exact ship integrator
+// toward the prize and then toward home. Asteroids are projected with pure
+// linear math; the planner reads no RNG and mutates no runtime state. The
+// ablated policy never calls this function, so __NO_GREED_PLAN restores the
+// original fixed three-piece rule in full.
+function copyIntent(b,tx,ty,brakeAt){
+  const dx=tx-b.x,dy=ty-b.y,d=Math.hypot(dx,dy)||1,want=Math.atan2(dy,dx),err=angleWrap(want-b.a),brake=d<brakeAt&&Math.hypot(b.vx,b.vy)>.5;
+  return{turn:clamp(err/.62,-1,1),thrust:!brake&&Math.abs(err)<1.02&&d>5,brake};
+}
+function simulateGreedRoute(candidate){
+  const b={x:ship.x,y:ship.y,vx:ship.vx,vy:ship.vy,a:ship.a},base=train(),
+    extra=candidate?candidate.mass:0,count=base.length+(candidate?1:0),mass=loadMass()+extra;
+  let got=!candidate,homeEta=-1,minClearance=999,danger=0,closestPrize=999,steps=0;
+  for(let f=0;f<270;f++){
+    const tx=got?HOME_X:candidate.x+candidate.vx*f,ty=got?HOME_Y:candidate.y+candidate.vy*f,
+      intent=copyIntent(b,tx,ty,got?24:10),wind=act.phase==='live'&&act.kind==='squall'?act.dir:0;
+    advanceShip(b,intent,{mass,count:got?count:base.length},{wind});steps++;
+    if(!got){closestPrize=Math.min(closestPrize,Math.hypot(b.x-tx,b.y-ty));if(Math.hypot(b.x-tx,b.y-ty)<13)got=true;}
+    for(const a of asteroids){
+      const ax=a.x+a.vx*f,ay=a.y+a.vy*f,clear=Math.hypot(b.x-ax,b.y-ay)-a.r;
+      minClearance=Math.min(minClearance,clear);if(clear<15)danger+=(15-clear)/15;
+    }
+    if(got&&homeDistance(b)<22&&Math.hypot(b.vx,b.vy)<.78){homeEta=f;break;}
+  }
+  return{got,homeEta,minClearance,danger,closestPrize,finishDistance:homeDistance(b),finishSpeed:Math.hypot(b.vx,b.vy),steps};
+}
+function greedPlan(){
+  const locked=fragmentById(greedCache.targetId);
+  if(locked&&!locked.tethered&&runFrame-greedCache.at<240)return greedCache;
+  if(runFrame-greedCache.at<54)return greedCache;
+  stats.plannerCalls++;
+  const t=train(),home=simulateGreedRoute(null),cap=persona.name==='SOL'?5:6,stress=ship.stress||0;
+  stats.plannerSteps+=home.steps;
+  let best=null,bestUtility=-Infinity;
+  for(const f of loose()){
+    const r=simulateGreedRoute(f),detour=Math.hypot(f.x-ship.x,f.y-ship.y),
+      valueReward=f.value*(5.5+persona.greed*5),riskCost=r.danger*(1.2-persona.risk)*3.6,
+      massCost=(t.length+1)*(t.length+1)*(1.05-persona.greed)*1.2,
+      timeCost=detour*.075+(r.homeEta<0?18:Math.max(0,r.homeEta-150)*.035),
+      utility=valueReward-riskCost-massCost-timeCost-(r.got?0:12+r.closestPrize*.22);
+    stats.plannerSteps+=r.steps;
+    if(utility>bestUtility){bestUtility=utility;best={f,r,utility};}
+  }
+  const hardHome=t.length>=cap||stress>1.9&&t.length>=3||home.danger>24&&t.length>=4,
+    worthwhile=best&&best.utility>(t.length?5.5-persona.greed*2:-12),
+    bank=t.length>0&&(hardHome||!best&&t.length>=cap-1||!worthwhile&&t.length>=4),
+    drop=bank&&stress>2.45&&t.length>3;
+  greedCache={at:runFrame,bank,targetId:bank||!best?0:best.f.id,drop,
+    forecast:bank?(drop?'DROP ONE · HOME':'BANK THIS HAUL'):t.length>=3?'RISK ONE MORE':'HOOK THE VALUE',
+    utility:best?best.utility:0,homeEta:home.homeEta};
+  return greedCache;
+}
+function warningIntent(){
+  if(act.phase!=='warn')return null;
+  if(train().length)return aimIntent(HOME_X,HOME_Y,'BEAT THE FRONT',{stop:23,brake:homeDistance(ship)<30,dropTail:ship.stress>1.9});
+  const shelterX=act.kind==='squall'?(act.dir>0?35:125):HOME_X;
+  return aimIntent(shelterX,act.kind==='squall'?266:HOME_Y,'TAKE SHELTER',{stop:9,brake:true});
+}
+function rawBotIntent(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){
+    stats.admireIntents++;return{turn:0,thrust:false,brake:true,fire:false,tether:false,dropTail:false,tactic:'ADMIRE',targetId:0};
+  }
+  if(ship.rescueT>0)return{turn:0,thrust:false,brake:true,fire:false,tether:false,dropTail:false,tactic:'RESCUE',targetId:0};
+  const warned=warningIntent();if(warned)return warned;
+  const t=train(),stress=ship.stress||0;
+  // The feature is not only "take more": a good salvager knows when to fly
+  // back into the cable, let the tail catch up, and make the ridiculous load
+  // controllable again. The maneuver is physical and obvious on screen.
+  if(typeof globalThis.__NO_GREED_PLAN==='undefined'&&t.length>=3&&stress>1.52){
+    const tail=t.at(-1),reel=aimIntent(tail.x,tail.y,'REEL IN THE TRAIN',{arrive:3,brake:false});
+    reel.thrust=Math.abs(angleWrap(Math.atan2(tail.y-ship.y,tail.x-ship.x)-ship.a))<.85;
+    reel.fire=false;reel.tether=false;reel.dropTail=stress>3.5&&t.length>4;return reel;
+  }
+  // Honest baseline policy: three pieces is enough. It was measured before
+  // the planner existed and remains a complete permanent ablation.
+  const smart=typeof globalThis.__NO_GREED_PLAN==='undefined',g=smart?greedPlan():null,
+    bank=smart?g.bank:(t.length>=3||loadValue()>=22||stress>1.82);
+  if(bank){
+    const drop=smart?g.drop:stress>2.35&&t.length>2;
+    return aimIntent(HOME_X,HOME_Y,drop?'DROP AND RUN':'BRING IT HOME',{stop:24,brake:homeDistance(ship)<35,dropTail:drop});
+  }
+  let f=fragmentById(smart&&g.targetId?g.targetId:targetId);if(!f||f.tethered){f=pickLoose(smart);targetId=f?f.id:0;targetKind=f?'fragment':'';}
+  if(f){targetId=f.id;targetKind='fragment';return aimIntent(f.x,f.y,smart?g.forecast:(t.length?'HOOK ONE MORE':'HOOK THE SCRAP'),{arrive:6,brake:Math.hypot(f.x-ship.x,f.y-ship.y)<19,tether:true,targetId:f.id});}
+  let a=asteroidById(targetId);if(!a){a=pickRock(smart);targetId=a?a.id:0;targetKind=a?'asteroid':'';}
+  if(a)return aimIntent(a.x,a.y,'BREAK THAT ROCK',{arrive:34,brake:Math.hypot(a.x-ship.x,a.y-ship.y)<30,fire:true,targetId:a.id});
+  return aimIntent(HOME_X,210,'SCAN THE FIELD',{arrive:8});
+}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return rawBotIntent();
+  const was=profile.isLapsed(runFrame),intent=profile.decide(runFrame,null,()=>rawBotIntent(),(_,last)=>({
+    turn:last&&last.turn||0,thrust:false,brake:false,fire:false,tether:false,dropTail:false,tactic:'HESITATE',targetId:last&&last.targetId||0
+  })),now=profile.isLapsed(runFrame);
+  if(now&&!was&&!lastLapsed){stats.lapses++;markEvent();say('SECOND THOUGHTS...',persona.tint,36);}
+  lastLapsed=now;return intent||rawBotIntent();
+}
+function humanIntent(){
+  return{turn:(keys.right?1:0)-(keys.left?1:0),thrust:!!keys.up,brake:!!keys.down,
+    fire:!!keys.b,tether:!!keys.a,dropTail:!!keys.c,tactic:'MANUAL',targetId:0};
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+function applyIntent(intent){
+  ship.intent=intent;stats.appliedIntents++;
+  if(intent.fire)fireShot();
+  if(intent.tether){const f=fragmentById(intent.targetId)||loose().find(q=>Math.hypot(q.x-ship.x,q.y-ship.y)<13);if(f&&Math.hypot(f.x-ship.x,f.y-ship.y)<14)tetherFragment(f);}
+  if(intent.dropTail&&train().length&&ship.dropCd<=0)releaseTail(1,true,'DROPS THE TAIL');
+  return intent;
+}
+
+function finishShift(){
+  if(state==='ending')return;state='ending';resultT=360;stats.endings++;const won=bankedValue>=ARK_GOAL;
+  outcome=won?'STAR ARK LAUNCHED':'QUOTA MISSED';if(won){stats.wins++;offer('ark-launch',3,HOME_X,HOME_Y,'STAR ARK');fxBurst(HOME_X,HOME_Y,48,GOLD,3.2,.02);markEvent(600);markProgress(5);}else{offer('shift-end',2,HOME_X,HOME_Y,'QUOTA MISSED');markEvent();}
+  say(outcome,won?GOLD:CORAL,240);shake(won?9:4);
+}
+function resetShift(){
+  shiftNo++;runFrame=0;state='run';resultT=0;outcome='';bankedValue=0;bankedPieces=0;arkStage=0;
+  nextId=1;asteroids=[];fragments=[];shots=[];texts=[];bankGhosts=[];dockCelebration=0;dockApex=false;targetId=0;targetKind='';fieldVariant=RI(0,2);visualBeat='';greedCache={at:-1e9,bank:false,targetId:0,drop:false,forecast:'SCAN',utility:0,homeEta:-1};
+  for(const k of Object.keys(stats))stats[k]=0;
+  persona=PERSONAS[RI(0,PERSONAS.length-1)];profileSeed=RI(1,0x7fffffff);
+  profile=skillProfile({skill:.82,precision:persona.precision,risk:persona.risk,reactionFrames:[3,6],
+    lapseChance:.00048,lapseFrames:[20,42],rng:createRng(profileSeed)});lastLapsed=false;
+  ship={x:HOME_X,y:HOME_Y-8,vx:0,vy:0,a:-Math.PI/2,fireCd:0,recoil:0,inv:90,damage:0,
+    rescueT:0,rescueFromX:HOME_X,rescueFromY:HOME_Y,stress:0,dropCd:0,intent:{tactic:'SCAN THE FIELD'}};
+  resetAct();spawnField();lastEventFrame=lastProgressFrame=showFrame;lastDirectorFrame=-1e9;SHOW.reset(showFrame);
+}
+function stepWorld(){
+  runFrame++;stepActs();if(runFrame>=SHIFT_FRAMES){finishShift();return;}
+  if(ship.fireCd>0)ship.fireCd--;if(ship.recoil>0)ship.recoil--;if(ship.inv>0)ship.inv--;if(ship.dropCd>0)ship.dropCd--;
+  if(ship.rescueT>0)stepRescue();else{
+    const intent=applyIntent(controller()),wind=act.phase==='live'&&act.kind==='squall'?act.dir:0;
+    advanceShip(ship,intent,{mass:loadMass(),count:train().length},{wind});
+  }
+  stepTethers();stepFragments();stepAsteroids();stepShots();
+  if(ship.rescueT<=0&&inBay(ship)&&speed(ship)<.62&&train().length)bankHaul();
+  directorNudge();
+  stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
+  stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+  if(showFrame-lastEventFrame>720){markEvent();offer('drift',1,ship.x,ship.y,'CLOSE CALL');say('THREADING THE FIELD',CYAN,34);}
+}
+function step(){
+  showFrame++;sessionStep({reset:resetShift});pres=SHOW.step(showFrame);
+  if(state==='run'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  }else{
+    resultT--;if(resultT<=0){if(playing())gameOver(outcome+' · '+bankedValue);resetShift();}
+  }
+  stepParts();stepRings();for(const t of texts){t.t--;t.y-=.08;}texts=texts.filter(t=>t.t>0);
+  for(const g of bankGhosts)g.t--;bankGhosts=bankGhosts.filter(g=>g.t>0);
+  if(dockCelebration>0)dockCelebration--;
+  if(banner.t>0)banner.t--;
+}
+
+// ---- authored rendering --------------------------------------------------------
+function mixColor(a,b,t){
+  t=clamp(t,0,1);const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),ch=s=>Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t).toString(16).padStart(2,'0');
+  return'#'+ch(16)+ch(8)+ch(0);
+}
+function drawSpace(){
+  const s=sector(),tops=['#050816','#071021','#0a0b20'],bots=['#111a38','#10283a','#24143c'];
+  for(let i=0;i<6;i++)rect(0,i*H/6,W,H/6+1,mixColor(tops[s],bots[s],i/5));
+  // Background dust lanes and a giant planet limb establish depth before any HUD.
+  if(s===0){
+    ctx.globalAlpha=.18;ctx.fillStyle='#5468a5';ctx.beginPath();ctx.arc(154,92,72,0,TAU);ctx.fill();ctx.globalAlpha=.28;ctx.fillStyle='#d5925e';ctx.beginPath();ctx.arc(159,92,56,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    ctx.strokeStyle='#7884bd';ctx.globalAlpha=.22;ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(151,94,82,18,-.28,0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;
+  }else if(s===1){
+    ctx.globalAlpha=.2;ctx.strokeStyle='#6685aa';ctx.lineWidth=7;ctx.beginPath();ctx.arc(28,129,67,-1.5,1.3);ctx.stroke();ctx.lineWidth=2;ctx.strokeStyle='#b3d7e8';ctx.beginPath();ctx.arc(28,129,67,-1.1,-.25);ctx.stroke();ctx.globalAlpha=1;ctx.lineWidth=1;
+    for(let i=0;i<5;i++){const a=-1.3+i*.48,x=28+Math.cos(a)*67,y=129+Math.sin(a)*67;rect(x-3,y-2,7,4,'#384b65');rect(x-1,y-3,3,6,'#6f829a');}
+  }else{
+    ctx.globalAlpha=.16;ctx.fillStyle=VIOLET;ctx.beginPath();ctx.ellipse(86,142,76,128,.22,0,TAU);ctx.fill();ctx.globalAlpha=.18;ctx.fillStyle=MINT;ctx.beginPath();ctx.ellipse(60,125,44,116,-.25,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    // Ship graveyard: distinct silhouettes, not a palette-swapped background.
+    ctx.save();ctx.translate(22,95);ctx.rotate(-.35);rect(-20,-3,40,6,'#27334b');rect(-6,-10,12,20,'#3a4a64');rect(-27,-1,8,2,'#7890aa');ctx.restore();
+    ctx.save();ctx.translate(137,202);ctx.rotate(.55);rect(-16,-2,32,4,'#27334b');rect(-3,-7,6,14,'#465875');ctx.restore();
+  }
+  for(let layer=0;layer<3;layer++)for(let i=0;i<28;i++){
+    const x=(hash(i+layer*83,13)*W+showFrame*(.006+layer*.005)*(i%2?1:-1)+W)%W,
+      y=TOP+hash(i*11+layer,29)*(BOTTOM-TOP),tw=.45+.55*Math.sin(showFrame*(.018+layer*.005)+i);
+    ctx.globalAlpha=.18+tw*(.22+layer*.13);rect(x,y,layer===2&&i%9===0?2:1,layer===2&&i%11===0?2:1,layer===0?'#7380a4':layer===1?PALE:CYAN);
+  }ctx.globalAlpha=1;
+  // Midground cargo lanes and beacons give the arena scale and motion.
+  ctx.globalAlpha=.24;for(let i=0;i<4;i++){
+    const y=75+i*62,off=(showFrame*.025+i*37)%42;for(let x=-20;x<W+20;x+=42){rect(x+off,y,9,1,'#5f7190');rect(x+off+2,y-1,2,3,'#2f405a');}
+  }ctx.globalAlpha=1;
+}
+function drawStation(){
+  // Foreground refinery: layered apron, bay jaws, crane, windows, and the ark
+  // built from every haul. It permanently changes silhouette at each stage.
+  rect(0,318,W,42,'#080d17');rect(0,326,W,34,STEEL2);rect(0,333,W,27,'#111a28');
+  for(let x=0;x<W;x+=16){rect(x,331,12,2,'#41536b');rect(x+2,352,8,2,'#0a1019');}
+  rect(48,300,64,31,'#101b2b');rect(52,303,56,26,STEEL2);rect(57,307,46,18,'#0a1522');
+  rect(48,300,8,21,STEEL);rect(104,300,8,21,STEEL);rect(44,297,16,5,'#61758c');rect(100,297,16,5,'#61758c');
+  if(dockCelebration>0){
+    const age=(dockApex?96:56)-dockCelebration,reach=Math.min(18,age*.9),jawY=297-reach;
+    rect(47,jawY,6,reach+5,'#71869c');rect(107,jawY,6,reach+5,'#71869c');
+    rect(48,jawY-3,13,4,GOLD);rect(99,jawY-3,13,4,GOLD);rect(57,jawY-1,4,7,'#a9bed0');rect(99,jawY-1,4,7,'#a9bed0');
+    ctx.globalAlpha=.18+.12*Math.sin(showFrame*.28);ctx.fillStyle=GOLD;ctx.beginPath();ctx.moveTo(59,jawY+2);ctx.lineTo(101,jawY+2);ctx.lineTo(92,323);ctx.lineTo(68,323);ctx.fill();ctx.globalAlpha=1;
+  }
+  const pulse=.55+.35*Math.sin(showFrame*.12);ctx.globalAlpha=pulse;rect(50,303,4,12,CYAN);rect(106,303,4,12,CYAN);ctx.globalAlpha=1;
+  for(let i=0;i<5;i++){rect(61+i*8,321,5,3,i<Math.min(5,train().length)?GOLD:'#243348');}
+  // Loading crane and two animated dockhands react to the approaching train.
+  rect(119,303,5,25,'#536780');rect(122,303,23,4,'#6e8298');rect(141,307,2,13,'#8799aa');rect(137,318,10,3,'#3a4d64');
+  for(let i=0;i<2;i++){const x=35+i*91,y=324,busy=dockCelebration>0||inBay(ship)||banner.s.includes('BANKED'),step2=(showFrame>>3+i)&1;
+    rect(x-2,y+4+(busy&&step2?1:0),2,4,'#27354a');rect(x,y+4+(busy&&!step2?1:0),2,4,'#27354a');rect(x-3,y,6,5,busy?GOLD:'#6a8098');rect(x-2,y-3,4,3,CREAM);rect(x+(i?2:-3),y-2,1,1,CYAN);
+    if(busy){const arm=(showFrame>>2)&1;rect(x+(i?-5:4),y-1-arm,4,2,GOLD);rect(x+(i?-6:7),y-4+arm,2,4,CREAM);}
+  }
+  drawArk();
+}
+function drawDockPayoff(){
+  if(dockCelebration<=0)return;const total=dockApex?96:56,age=total-dockCelebration,q=clamp(age/total,0,1),radius=12+q*72;
+  ctx.globalAlpha=(dockApex?.16:.09)*(1-q*.55);rect(0,235,W,94,dockApex?GOLD:CYAN);
+  ctx.strokeStyle=dockApex?GOLD:CYAN;
+  for(let i=0;i<4;i++){ctx.globalAlpha=(.65-i*.12)*(1-q*.5);ctx.lineWidth=i?1:2;ctx.beginPath();ctx.arc(HOME_X,HOME_Y,Math.max(4,radius-i*12),Math.PI,TAU);ctx.stroke();}
+  if(dockApex){for(let i=0;i<9;i++){const a=Math.PI+TAU*i/18,len=24+q*68;ctx.globalAlpha=.34*(1-q*.45);ctx.beginPath();ctx.moveTo(HOME_X+Math.cos(a)*8,HOME_Y+Math.sin(a)*8);ctx.lineTo(HOME_X+Math.cos(a)*len,HOME_Y+Math.sin(a)*len);ctx.stroke();}}
+  ctx.lineWidth=1;ctx.globalAlpha=1;
+}
+function drawBankGhosts(){
+  for(const g of bankGhosts){
+    const age=52+g.index*5-g.t;if(age<g.delay)continue;const q=clamp((age-g.delay)/42,0,1),e=q*q*(3-2*q),
+      tx=HOME_X+(g.index-(g.count-1)/2)*5,ty=324,x=g.fromX+(tx-g.fromX)*e,y=g.fromY+(ty-g.fromY)*e,m=MATERIALS[g.kind];
+    ctx.globalAlpha=1-q*.45;ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(g.fromX,g.fromY);ctx.lineTo(x,y);ctx.stroke();ctx.lineWidth=1;
+    ctx.fillStyle=m.dark;ctx.beginPath();ctx.moveTo(x-4,y);ctx.lineTo(x,y-4);ctx.lineTo(x+4,y);ctx.lineTo(x,y+4);ctx.fill();rect(x-1,y-2,3,3,m.hi);ctx.globalAlpha=1;
+  }
+}
+function drawArk(){
+  const q=clamp(bankedValue/ARK_GOAL,0,1),launch=state==='ending'&&outcome==='STAR ARK LAUNCHED',lift=launch?Math.min(118,(360-resultT)*.45):0;
+  ctx.save();ctx.translate(20,310-lift);
+  // Stage 0 scaffold is visible from frame one; every threshold adds a truly
+  // different hull silhouette rather than recoloring the same icon.
+  rect(-15,13,32,3,'#26354b');rect(-12,-1,3,16,'#53657a');rect(12,-1,3,16,'#53657a');
+  ctx.globalAlpha=.38;ctx.strokeStyle='#637992';ctx.beginPath();ctx.moveTo(-12,1);ctx.lineTo(12,13);ctx.moveTo(12,1);ctx.lineTo(-12,13);ctx.stroke();ctx.globalAlpha=1;
+  if(q>.05){rect(-8,4,17,8,'#5a687a');rect(-5,1,11,4,'#8a96a5');rect(-3,-2,7,4,CREAM);rect(-1,-1,3,2,CYAN);}
+  if(arkStage>=1){rect(-14,8,6,4,'#8a96a5');rect(9,8,6,4,'#8a96a5');rect(-16,5,4,8,'#3c536b');rect(14,5,4,8,'#3c536b');rect(-11,12,5,4,CORAL);rect(7,12,5,4,CORAL);}
+  if(arkStage>=2){ctx.fillStyle='#65778d';ctx.beginPath();ctx.moveTo(-8,4);ctx.lineTo(0,-9);ctx.lineTo(9,4);ctx.fill();rect(-2,-8,5,6,CREAM);rect(-1,-7,3,3,CYAN);rect(-21,3,7,2,'#91a4b8');rect(15,3,7,2,'#91a4b8');}
+  if(arkStage>=3){ctx.globalAlpha=.28+.18*Math.sin(showFrame*.13);rect(-15,14,9,8,GOLD);rect(7,14,9,8,GOLD);ctx.globalAlpha=1;rect(-22,1,8,2,GOLD);rect(15,1,8,2,GOLD);}
+  ctx.restore();
+}
+function drawAsteroid(a){
+  const m=MATERIALS[a.kind],x=a.x,y=a.y,wob=a.hitT?Math.sin(showFrame*1.7)*1.2:0;
+  ctx.save();ctx.translate(Math.round(x+wob),Math.round(y));ctx.rotate(a.rot);
+  const n=a.shape===0?8:a.shape===1?7:9;ctx.fillStyle=a.hitT?CREAM:m.dark;ctx.beginPath();
+  for(let i=0;i<n;i++){const ang=i*TAU/n,rr=a.r*(.78+hash(a.id,i)*.25);ctx.lineTo(Math.cos(ang)*rr,Math.sin(ang)*rr);}ctx.closePath();ctx.fill();
+  ctx.fillStyle=m.base;ctx.beginPath();for(let i=0;i<n;i++){const ang=i*TAU/n,rr=a.r*(.63+hash(a.id+9,i)*.22);ctx.lineTo(Math.cos(ang)*rr,Math.sin(ang)*rr);}ctx.closePath();ctx.fill();
+  ctx.fillStyle=m.hi;ctx.globalAlpha=.75;ctx.beginPath();ctx.arc(-a.r*.25,-a.r*.22,Math.max(2,a.r*.23),0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.fillStyle=m.dark;ctx.beginPath();ctx.arc(a.r*.28,a.r*.18,Math.max(1.5,a.r*.18),0,TAU);ctx.fill();
+  if(a.hp<a.maxHp){ctx.strokeStyle=CORAL;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-a.r*.2,-a.r*.6);ctx.lineTo(0,-1);ctx.lineTo(a.r*.45,a.r*.42);ctx.stroke();ctx.lineWidth=1;}
+  ctx.restore();
+  if(a.id===targetId&&targetKind==='asteroid')drawBracket(x,y,a.r+4,MATERIALS[a.kind].hi);
+}
+function drawFragment(f){
+  const m=MATERIALS[f.kind],x=f.x,y=f.y,r=f.r;ctx.save();ctx.translate(Math.round(x),Math.round(y));ctx.rotate(f.rot);
+  ctx.fillStyle=f.flash?CREAM:m.dark;ctx.beginPath();ctx.moveTo(-r,-r*.25);ctx.lineTo(-r*.15,-r);ctx.lineTo(r,r*.05);ctx.lineTo(r*.15,r);ctx.lineTo(-r*.75,r*.45);ctx.fill();
+  rect(-r*.35,-r*.35,r*.8,r*.55,m.base);rect(-r*.05,-r*.55,r*.45,r*.35,m.hi);ctx.restore();
+  if(f.beacon){ctx.globalAlpha=.32+.2*Math.sin(showFrame*.18);ctx.strokeStyle=MINT;ctx.beginPath();ctx.arc(x,y,r+5+Math.sin(showFrame*.12)*2,0,TAU);ctx.stroke();ctx.globalAlpha=1;}
+  if(f.id===targetId&&targetKind==='fragment')drawBracket(x,y,r+3,CYAN);
+}
+function drawBracket(x,y,r,c){ctx.strokeStyle=c;ctx.globalAlpha=.8;const q=3;
+  for(const[sx,sy]of[[-1,-1],[1,-1],[-1,1],[1,1]]){ctx.beginPath();ctx.moveTo(x+sx*r,y+sy*(r-q));ctx.lineTo(x+sx*r,y+sy*r);ctx.lineTo(x+sx*(r-q),y+sy*r);ctx.stroke();}ctx.globalAlpha=1;}
+function tetherColor(stress){return stress>2.15?CORAL:stress>1.55?GOLD:CYAN;}
+function drawTethers(){
+  const t=train();if(!t.length)return;const c=tetherColor(ship.stress||0);let p=ship;
+  for(let i=0;i<t.length;i++){const f=t[i];ctx.globalAlpha=.92;ctx.strokeStyle=INK;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(p.x,p.y);const mx=(p.x+f.x)/2+Math.sin(showFrame*.11+i)*Math.min(3,ship.stress*1.2);ctx.quadraticCurveTo(mx,(p.y+f.y)/2,f.x,f.y);ctx.stroke();ctx.strokeStyle=c;ctx.lineWidth=1.4;ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;p=f;}
+}
+function drawShip(){
+  const x=ship.x,y=ship.y,a=ship.a,recoil=ship.recoil?2:0,strain=clamp((ship.stress-1)*1.6,0,3),thrust=ship.intent&&ship.intent.thrust;
+  if(ship.rescueT>0){ctx.globalAlpha=.35+.25*Math.sin(showFrame*.25);ctx.strokeStyle=CYAN;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(HOME_X,HOME_Y);ctx.lineTo(x,y);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
+  ctx.save();ctx.translate(Math.round(x),Math.round(y));ctx.rotate(a+Math.PI/2+Math.sin(showFrame*.18)*strain*.025);
+  if(ship.inv>0&&ship.inv%8<4)ctx.globalAlpha=.55;
+  if(thrust&&ship.rescueT<=0){const flame=4+((showFrame>>2)&1)*2;ctx.fillStyle=CORAL;ctx.beginPath();ctx.moveTo(-3,7);ctx.lineTo(-1,7+flame);ctx.lineTo(1,7);ctx.fill();ctx.fillStyle=CYAN;ctx.beginPath();ctx.moveTo(2,7);ctx.lineTo(4,7+flame-1);ctx.lineTo(5,7);ctx.fill();}
+  // Industrial wedge tug: articulated booms, hull, cockpit, pilot, antenna,
+  // recoil and damage marks remain legible under rotation at 160x360.
+  rect(-7,-1,3,8,STEEL);rect(4,-1,3,8,STEEL);rect(-8,4,4,3,'#1c293b');rect(4,4,4,3,'#1c293b');
+  ctx.fillStyle=ship.damage>2?CORAL:CREAM;ctx.beginPath();ctx.moveTo(0,-9-recoil);ctx.lineTo(6,-1);ctx.lineTo(5,6);ctx.lineTo(-5,6);ctx.lineTo(-6,-1);ctx.fill();
+  rect(-3,-4-recoil,6,5,BLUE);rect(-2,-3-recoil,4,3,CYAN);rect(-1,-3-recoil,2,2,'#d8ffff');
+  rect(-1,-11-recoil,2,4,STEEL);rect(1,-12-recoil,2,2,GOLD);rect(-5,3,3,2,'#6f8297');rect(3,3,3,2,'#6f8297');
+  if(ship.damage){for(let i=0;i<ship.damage;i++)rect(-4+i*3,1+(i&1)*2,2,1,CORAL);}
+  ctx.globalAlpha=1;ctx.restore();
+  if(ship.stress>1.55){ctx.fillStyle=tetherColor(ship.stress);ctx.font='bold 7px monospace';ctx.fillText('!',x-2,y-13);}
+}
+function drawShots(){for(const s of shots){ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(s.x-s.vx*1.7,s.y-s.vy*1.7);ctx.stroke();ctx.lineWidth=1;}}
+function drawActs(){
+  if(act.phase==='warn'){
+    const c=act.kind==='squall'?VIOLET:CORAL;ctx.globalAlpha=.12+.06*Math.sin(showFrame*.18);rect(0,TOP,W,BOTTOM-TOP,c);ctx.globalAlpha=.7;ctx.strokeStyle=c;
+    if(act.kind==='squall')for(let i=0;i<7;i++){const y=54+i*38,x=act.dir>0?16:144;ctx.beginPath();ctx.moveTo(x-act.dir*8,y-4);ctx.lineTo(x,y);ctx.lineTo(x-act.dir*8,y+4);ctx.stroke();}
+    else for(let i=0;i<5;i++){const x=22+i*29,y=TOP+((showFrame*.5+i*47)%82);ctx.beginPath();ctx.moveTo(x-5,y-10);ctx.lineTo(x,y);ctx.lineTo(x+5,y-10);ctx.stroke();}
+    ctx.globalAlpha=1;
+  }else if(act.phase==='live'&&act.kind==='squall'){
+    ctx.globalAlpha=.36;for(let i=0;i<26;i++){const x=(hash(i,19)*W+showFrame*act.dir*1.8+W*20)%W,y=TOP+hash(i,23)*(BOTTOM-TOP);rect(x,y,act.dir*7,1,VIOLET);}ctx.globalAlpha=1;
+  }
+}
+let viewerDraw={frame:-1,hud:'',verb:'',load:'',goal:'',targetVisible:false,shipBox:null,sector:0};
+function viewerVerb(){const t=ship.intent&&ship.intent.tactic||'SCAN';return t==='ADMIRE'?'SOAK IT IN':t==='HESITATE'?'GREED OR HOME?':t;}
+function drawHud(){
+  const verb=viewerVerb(),load=train().length+' PCS · '+loadValue()+' VALUE',goal='BUILD STAR ARK '+String(Math.min(999,bankedValue)).padStart(3,'0')+'/'+ARK_GOAL;
+  viewerDraw={frame:showFrame,hud:'STAR SALVAGE',verb,load,goal,targetVisible:!!targetId,shipBox:{x:ship.x-9,y:ship.y-13,width:18,height:24},sector:sector()};
+  ctx.globalAlpha=.94;rect(0,0,W,TOP,INK);rect(0,334,W,26,INK);ctx.globalAlpha=1;
+  ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('STAR SALVAGE',4,10);
+  const tm=Math.max(0,SHIFT_FRAMES-runFrame),time='T-'+Math.floor(tm/3600)+':'+String(Math.floor(tm/60)%60).padStart(2,'0');ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText(time,128,10);
+  ctx.fillStyle=persona.tint;ctx.fillText(verb.slice(0,24),4,21);ctx.fillStyle=PALE;ctx.fillText(load,95,21);
+  ctx.fillStyle=PALE;ctx.fillText(goal,4,344);rect(4,349,119,4,'#233149');rect(4,349,119*clamp(bankedValue/ARK_GOAL,0,1),4,GOLD);
+  const st=clamp((ship.stress-1)/1.45,0,1);ctx.fillStyle='#8393aa';ctx.fillText('TENSION',4,359);rect(39,355,52,4,'#233149');rect(39,355,52*st,4,tetherColor(ship.stress));
+  ctx.fillStyle=ship.damage>2?CORAL:CYAN;ctx.fillText('HULL '+(4-ship.damage)+'/4',112,359);
+  if(banner.t>0){const a=Math.min(1,banner.t/14),w=Math.min(150,banner.s.length*4.2+12);ctx.globalAlpha=.84*a;rect(80-w/2,37,w,15,INK);ctx.globalAlpha=a;ctx.strokeStyle=banner.c;ctx.strokeRect(80-w/2+.5,37.5,w-1,14);ctx.fillStyle=banner.c;ctx.font='bold 7px monospace';ctx.fillText(banner.s,80-banner.s.length*2.1,47);ctx.globalAlpha=1;}
+  if(targetId){const o=targetKind==='fragment'?fragmentById(targetId):asteroidById(targetId);if(o){const a=Math.atan2(o.y-ship.y,o.x-ship.x),x=80+Math.cos(a)*69,y=181+Math.sin(a)*142;if(o.x<0||o.x>W||o.y<TOP||o.y>BOTTOM){ctx.fillStyle=targetKind==='fragment'?CYAN:GOLD;ctx.beginPath();ctx.moveTo(x+Math.cos(a)*4,y+Math.sin(a)*4);ctx.lineTo(x+Math.cos(a+2.5)*5,y+Math.sin(a+2.5)*5);ctx.lineTo(x+Math.cos(a-2.5)*5,y+Math.sin(a-2.5)*5);ctx.fill();}}}
+  drawSession(false);
+}
+function drawTexts(){for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);ctx.font='bold 6px monospace';const w=t.s.length*3.6+5;rect(clamp(t.x-w/2,2,W-w-2),t.y-7,w,9,INK);ctx.fillStyle=t.c;ctx.fillText(t.s,clamp(t.x-t.s.length*1.8,4,W-t.s.length*3.6-4),t.y);ctx.globalAlpha=1;}}
+function drawEnding(){if(state!=='ending')return;ctx.globalAlpha=.88;rect(10,126,140,84,INK);ctx.globalAlpha=1;ctx.strokeStyle=outcome==='STAR ARK LAUNCHED'?GOLD:CORAL;ctx.strokeRect(10.5,126.5,139,83);ctx.fillStyle=outcome==='STAR ARK LAUNCHED'?GOLD:CORAL;ctx.font='bold 11px monospace';ctx.fillText(outcome,outcome==='STAR ARK LAUNCHED'?20:35,157);ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(bankedPieces+' PIECES · '+bankedValue+' VALUE',42,177);ctx.fillStyle=PALE;ctx.fillText(stats.bankTrips+' HOMECOMINGS',53,193);}
+function render(){
+  drawSpace();drawActs();preDraw();
+  for(const a of asteroids)drawAsteroid(a);drawTethers();for(const f of fragments)drawFragment(f);drawShots();drawShip();drawParts();drawRings();drawTexts();drawDockPayoff();drawBankGhosts();drawStation();
+  postDraw();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.13;rect(0,TOP,W,BOTTOM-TOP,GOLD);ctx.globalAlpha=1;}drawEnding();drawHud();
+}
+
+// ---- probes / deterministic fixtures -----------------------------------------
+function probe(){return{showFrame,runFrame,shiftNo,state,resultT,outcome,persona:persona.name,profileSeed,fieldVariant,bankedValue,bankedPieces,arkStage,
+  ship:{x:ship.x,y:ship.y,vx:ship.vx,vy:ship.vy,a:ship.a,damage:ship.damage,rescueT:ship.rescueT,stress:ship.stress,intent:ship.intent&&{...ship.intent}},
+  train:train().map(f=>({id:f.id,x:f.x,y:f.y,vx:f.vx,vy:f.vy,value:f.value,mass:f.mass,kind:f.kind,order:f.order})),
+  loose:loose().length,asteroids:asteroids.length,stats:{...stats},events:eventSerial,progress:progressSerial,
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  act:{...act,notes:actNotes.slice()},show:SHOW.probe(),finite:allFinite(),playing:playing()};}
+function signature(){return JSON.stringify({runFrame,shiftNo,state,resultT,outcome,persona:persona.name,profileSeed,fieldVariant,bankedValue,bankedPieces,arkStage,targetId,targetKind,
+  ship:[ship.x,ship.y,ship.vx,ship.vy,ship.a,ship.damage,ship.rescueT,ship.stress,ship.fireCd,ship.inv].map(v=>Math.round(v*1e5)),
+  asteroids:asteroids.map(a=>[a.id,a.kind,Math.round(a.x*1e4),Math.round(a.y*1e4),Math.round(a.vx*1e4),Math.round(a.vy*1e4),a.r,a.hp,a.hitT,a.shipCd||0]),
+  fragments:fragments.map(f=>[f.id,f.kind,Math.round(f.x*1e4),Math.round(f.y*1e4),Math.round(f.vx*1e4),Math.round(f.vy*1e4),f.value,f.tethered,f.order]),
+  shots:shots.map(s=>[Math.round(s.x*1e4),Math.round(s.y*1e4),Math.round(s.vx*1e4),Math.round(s.vy*1e4),s.life]),
+  act:[act.kind,act.phase,act.warnAt,act.landAt,act.endAt,act.count,act.dir],stats:{...stats},events:eventSerial,progress:progressSerial});}
+function motionSignature(){return[ship.x,ship.y,ship.vx,ship.vy,ship.a,ship.stress,train().length,ship.intent&&ship.intent.turn,ship.intent&&ship.intent.thrust,ship.intent&&ship.intent.brake].map(v=>typeof v==='number'?Math.round(v*1e4):v).join('|');}
+globalThis.__starSalvageProbe=probe;globalThis.__starSalvageSignature=signature;globalThis.__starSalvageMotion=motionSignature;
+globalThis.__starSalvageViewerProbe=()=>({enabled:true,hud:'STAR SALVAGE',verb:viewerVerb(),load:train().length+' PCS · '+loadValue()+' VALUE',goal:'BUILD STAR ARK '+String(Math.min(999,bankedValue)).padStart(3,'0')+'/'+ARK_GOAL,drawn:{...viewerDraw}});
+globalThis.__soakProbe=()=>({sig:[Math.round(ship.x*10),Math.round(ship.y*10),Math.round(ship.vx*100),Math.round(ship.vy*100),train().length,asteroids.reduce((n,a)=>n+Math.round(a.x+a.y),0)].join('|'),events:eventSerial,progress:progressSerial,finite:allFinite()});
+globalThis.__starSalvageActState=()=>({runFrame,kind:act.kind,phase:act.phase,tactic:ship.intent&&ship.intent.tactic});
+globalThis.__starSalvageSetAct=kind=>{resetShift();act={kind,phase:'calm',warnAt:60,landAt:60+(kind==='squall'?240:210),endAt:60+(kind==='squall'?1140:1110),count:0,dir:1};actNotes=[];ship.x=80;ship.y=175;ship.a=0;
+  for(let i=0;i<2;i++){const f=createFragment(ship.x-11-i*10,ship.y+2+i*2,i?'crystal':'iron');f.tethered=true;f.order=i;}return globalThis.__starSalvageActState();};
+globalThis.__starSalvageAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired:a.tactic,gated:b.tactic};};
+globalThis.__starSalvagePhysicsFixture=()=>{const b={x:80,y:180,vx:.3,vy:-.2,a:-1},intent={turn:.4,thrust:true,brake:false},load={mass:5,count:4},env={wind:1},before=signature();for(let i=0;i<90;i++)advanceShip(b,intent,load,env);const after=signature();return{body:b,pure:before===after,finite:finiteBody(b)};};
+globalThis.__starSalvagePlannerFixture=()=>{resetShift();const f=createFragment(95,170,'gold',9,1.35,.05,.02),before=signature(),a=simulateGreedRoute(f),middle=signature(),b=simulateGreedRoute(f),after=signature();return{pure:before===middle&&middle===after,repeat:JSON.stringify(a)===JSON.stringify(b),route:a,finite:allFinite()};};
+globalThis.__starSalvageNearApex=()=>{resetShift();bankedValue=ARK_GOAL-1;arkStage=2;const f=createFragment(HOME_X,HOME_Y-12,'gold',9,1);f.tethered=true;f.order=0;ship.x=HOME_X;ship.y=HOME_Y;ship.vx=ship.vy=0;bankHaul();return probe();};
+globalThis.__starSalvageSetVisualBeat=name=>{
+  resetShift();visualBeat=name;asteroids=[];fragments=[];shots=[];bankGhosts=[];texts=[];targetId=0;targetKind='';
+  const addTrain=(n,kind)=>{for(let i=0;i<n;i++){const a=.25+i*.18,f=createFragment(ship.x-Math.sin(a)*(12+i*10),ship.y+Math.cos(a)*(12+i*10),i===n-1?'gold':kind||'iron');f.tethered=true;f.order=i;f.vx=ship.vx;f.vy=ship.vy;}};
+  if(name==='opening'){
+    bankedValue=0;arkStage=0;ship.x=80;ship.y=270;ship.a=-Math.PI/2;ship.intent={turn:0,thrust:true,tactic:'BREAK THAT ROCK'};
+    asteroids.push(makeAsteroid(48,105,13,'iron',.05,.04),makeAsteroid(117,150,10,'crystal',-.04,.03),makeAsteroid(35,225,8,'iron',.03,-.02));
+  }else if(name==='normal'){
+    bankedValue=62;arkStage=0;ship.x=73;ship.y=188;ship.a=-1.25;ship.vx=.22;ship.vy=-.38;addTrain(2,'iron');ship.intent={turn:.2,thrust:true,tactic:'HOOK THE VALUE'};
+    asteroids.push(makeAsteroid(116,104,14,'crystal',-.04,.04),makeAsteroid(33,132,10,'iron',.05,.02),makeAsteroid(128,245,9,'iron',-.03,-.02));
+  }else if(name==='overloaded'){
+    bankedValue=125;arkStage=1;ship.x=108;ship.y=178;ship.a=2.05;ship.vx=-.34;ship.vy=.24;addTrain(6,'crystal');ship.stress=1.86;ship.intent={turn:-.5,thrust:true,tactic:'REEL IN THE TRAIN'};
+    asteroids.push(makeAsteroid(51,112,14,'gold',.04,.03),makeAsteroid(125,258,12,'iron',-.03,-.04));
+  }else if(name==='later'){
+    bankedValue=215;arkStage=2;ship.x=52;ship.y=145;ship.a=.3;ship.vx=.4;ship.vy=.12;addTrain(4,'gold');ship.stress=1.35;ship.intent={turn:.2,thrust:true,tactic:'RISK ONE MORE'};
+    asteroids.push(makeAsteroid(118,82,15,'ice',-.05,.08),makeAsteroid(91,238,13,'gold',.04,-.02),makeAsteroid(28,255,9,'crystal',.03,-.02));
+  }else if(name==='danger'){
+    bankedValue=145;arkStage=1;ship.x=92;ship.y=170;ship.a=1.7;ship.vx=.18;ship.vy=.25;addTrain(5,'iron');ship.stress=1.65;ship.intent={turn:.8,thrust:true,tactic:'BEAT THE FRONT'};
+    act={kind:'meteor',phase:'warn',warnAt:0,landAt:210,endAt:1110,count:0,dir:-1};banner={s:'METEOR FRONT INBOUND',c:CORAL,t:120};
+    asteroids.push(makeAsteroid(28,69,12,'ice',.15,.85),makeAsteroid(132,91,11,'iron',-.12,.78),makeAsteroid(49,260,13,'iron',.02,-.03));
+  }else if(name==='apex'){
+    bankedValue=ARK_GOAL-28;arkStage=2;ship.x=HOME_X;ship.y=HOME_Y;ship.a=-Math.PI/2;ship.vx=ship.vy=0;addTrain(5,'gold');ship.stress=1.72;ship.intent={turn:0,thrust:false,brake:true,tactic:'BRING IT HOME'};
+    bankHaul();banner={s:'MONSTER HAUL HOME!',c:GOLD,t:140};
+  }
+  lastEventFrame=lastProgressFrame=showFrame;return globalThis.__starSalvageVisualProbe();
+};
+globalThis.__starSalvageVisualProbe=()=>({beat:visualBeat,sector:sector(),arkStage,act:act.phase,train:train().length,bankGhosts:bankGhosts.length,stress:ship.stress,
+  dockCelebration,dockApex,ghosts:bankGhosts.map(g=>({index:g.index,delay:g.delay,t:g.t,x:g.x,y:g.y})),
+  shipBox:{x:ship.x-9,y:ship.y-13,width:18,height:24},tactic:ship.intent&&ship.intent.tactic,finite:allFinite()});
+
+initSession('star-salvage',[['LEFT / RIGHT','ROTATE TUG'],['UP / DOWN','THRUST / BRAKE'],['X','PLASMA CUTTER'],['SPACE','TETHER'],['SHIFT','DROP TAIL']],{viewer:true});
+resetShift();start(()=>step(),()=>render());
+</script>
+</html>
