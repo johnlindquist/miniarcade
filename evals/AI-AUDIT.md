@@ -455,7 +455,8 @@ not fielded — goal-line stands are a dense box, not a wall — and the plane
 scores first: a rusher crossing the goal is untouchable even if a defender
 reaches him the same frame. The rival's off-screen offense scores on a fixed
 broadcast schedule and the match ends, win or lose, exactly at run frame
-54,000.
+54,000. The end zone is the end of the world — ten yards of TITLE paint, the
+back line, and the uprights; nothing spawns or rides past it.
 
 Core contracts, all in `motobowl-eval.js`:
 
@@ -468,13 +469,28 @@ Core contracts, all in `motobowl-eval.js`:
   distinct layout shapes).
 - **Wave defense** (`__NO_WAVES` restores the legacy converge-at-the-snap
   swarm): the aggravation metric is point-blank first contact — a defender
-  reaching the rusher inside 4 yards of the snap. Waves 11.9% vs swarm 18.6%
-  mean over six paired ten-minute seeds (5/6 wins) while keeping the drama
-  balance the swarm had (50 TDs / 54 turnovers across the six runs). A keyed
-  play fires the front wave off the ball at the snap, so the coordinator's
-  read is visible as behavior; a dodged read prints CAUGHT 'EM LEANING. The
-  camera leads the run (presentation-only) and the huddle draws the called
-  play as a gold ghost route on the grass.
+  reaching the rusher inside 4 yards of the snap. Waves 6.1% vs swarm 19.3%
+  mean over six paired ten-minute seeds (6/6 wins) while keeping the drama
+  balance (65 TDs / 30 turnovers across the six runs). A keyed play fires
+  the front wave off the ball at the snap, so the coordinator's read is
+  visible as behavior; a dodged read prints CAUGHT 'EM LEANING. The camera
+  leads the run (presentation-only) and the huddle draws the called play as
+  a gold ghost route on the grass.
+- **Field goals.** On 4th and long inside nineteen yards the tee ramp comes
+  out: the kicking unit lines up on a groomed strip (rolling start, mud and
+  oil cleared) and launches through uprights standing on the goal line —
+  good if it clears the bar between the posts, wide or short if not, blocked
+  if the rush gets home first, and a grounded crossing is six (the fake).
+  The deterministic fixture proves an isolated kick lands exactly three;
+  the calibration measures 0..4 attempts per ten minutes with roughly six of
+  ten landing.
+- **Boost pads and the fullback.** Two or three boost pads per drive give a
+  free heat-less speed burst the lane planner detours for on its own (it
+  rolls the exact integrator, so pads simply score better); ramps carry
+  pulsing up-chevrons so airborne intent telegraphs. A third blocker — the
+  lead fullback — answers the third-pursuer cleanup tackle, paid for with a
+  hotter front seven (line 1.07, backers 1.26) so blocks win moments, not
+  the whole field.
 - **Copied-state lane planning** (`__NO_LANE_PLAN` restores widest-gap
   reactive running): candidate lanes x turbo policies roll the exact
   integrator and the exact defender pursuit 90 frames ahead. Won yards per
@@ -509,25 +525,25 @@ Core contracts, all in `motobowl-eval.js`:
   eval re-derives every sampled label from simulation truth.
 
 Thirty fixed ten-minute seeds (0xd000 + i*233), re-calibrated after the
-wave-defense redesign, were all finite: 141..155 plays, 5..14 TDs, 40..50
-first downs, 131..149 tackles, 1..28 broken tackles, 2..20 hurdles, 80..127
-jukes, 192..222 blocks, 14..35 ramp launches, 0..6 overheats, 5..17 tumbles,
-5..13 turnovers, 13..42 keyed plays, 754..872 events, 182..204 progress
-marks; worst story lull 851f, worst visible-event lull 413f, and home-TD
-droughts measured 6507..16371f (the rival schedule plus downs drama carry
-the scoreboard between home scores; the eval caps the drought at 19000f).
-A 20-seed 15-minute panel scored 63..147; the rival schedule is pinned at 63
-(the panel's 10th percentile, nine off-screen touchdowns), giving 17/20
-titles won — many by a single score — and three flattest matches lost on the
-63-63 tiebreak. Football's own rules are the anti-stall layer: the play
-clock, the forward-progress whistle, and turnover on downs bound every
-possible wedge, and the shipping soak records 1s still / 4s quiet / 11s
-stall over ten minutes with zero rescues of any kind.
+field-goal / boost-pad / third-blocker batch, were all finite: 135..151
+plays, 8..17 TDs, 42..54 first downs, 118..142 tackles, 2..30 broken
+tackles, 1..21 hurdles, 80..128 jukes, 270..301 blocks, 11..33 ramp
+launches, 0..4 overheats, 5..16 tumbles, 1..8 turnovers, 10..27 keyed
+plays, 2..11 boost hits, 0..4 field-goal attempts, 833..935 events,
+181..199 progress marks; worst story lull 762f and a constant 262f
+visible-event lull. A 20-seed 15-minute panel scored 94..171; the rival
+schedule is pinned at 101 (the panel's 10th percentile — fourteen
+off-screen touchdowns plus one rival field goal), giving 17/20 titles won,
+many by a score or two, with the three flattest runs losing. Football's own
+rules are the anti-stall layer: the play clock, the forward-progress
+whistle, and turnover on downs bound every possible wedge, and the shipping
+soak stays within its still/quiet/stall budgets over ten minutes with zero
+rescues of any kind.
 
-Deliberate cuts, recorded rather than hidden: no passing game, no special
-teams (a failed 4th down is always a turnover), no player-controlled defensive
-possessions, and the rival plays entirely off-screen on a deterministic
-schedule. Permanent switches: `__NO_WAVES`, `__NO_LANE_PLAN`,
+Deliberate cuts, recorded rather than hidden: no passing game, no punts (a
+4th down out of kicking range is always a go), no player-controlled
+defensive possessions, and the rival plays entirely off-screen on a
+deterministic schedule. Permanent switches: `__NO_WAVES`, `__NO_LANE_PLAN`,
 `__NO_PLAY_MIX`, `__NO_ACTS`, `__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`,
 `__NO_VIEWER_STORY`.
 

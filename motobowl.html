@@ -28,6 +28,12 @@ const{controllerMux,generateValidated}=AI;
 // generated and validated per drive, and the title match ends — win or lose —
 // at frame 54,000 against a rival that scores on a fixed broadcast clock.
 const TAU=Math.PI*2,PPY=7,GOAL=100*PPY,LEFT=12,RIGHT=148,MATCH_FRAMES=54000;
+// The end zone is the end of the world: ten yards of paint, then the back
+// line and the goal posts. Nothing spawns or rides past FIELD_END.
+const ENDZONE=10*PPY,FIELD_END=GOAL+ENDZONE;
+// Retro rules: the uprights stand on the goal line. A field goal is an
+// Excitebike kick — launch off the tee ramp and fly between the posts.
+const FG_POST_L=66,FG_POST_R=94,FG_BAR_Z=2;
 const TURF='#0e2f1c',TURF2='#123723',INK='#07120b',CHALK='#cfe0d2',GOLD='#ffd166',
   ORANGE='#ff8a2a',CORAL='#ff6f6b',MINT='#68e0c1',BLUE='#7f9dff',MUDC='#6b4a2a',
   RAMPC='#c9a05a',OILC='#141a26',CREAM='#fff0c9';
@@ -45,15 +51,17 @@ const PERSONAS=[
 // deterministic pressure beats on the scoreboard. Fourteen touchdowns sit at
 // the 2026-07-10 calibration's 10th-percentile final score: most matches are
 // close wins, and a flat match genuinely loses the title.
-// Nine rival touchdowns = 63 points, the 10th percentile of the 20-seed
-// wave-defense ending panel: the flattest title runs genuinely lose.
-const RIVAL_SCHEDULE=[[3000,7],[9000,7],[15000,7],[21000,7],[27000,7],
-  [33000,7],[39000,7],[45000,7],[51000,7]];
+// Fourteen rival touchdowns plus one rival field goal = 101 points, the
+// 10th percentile of the 20-seed ending panel after the field-goal /
+// boost-pad / third-blocker batch: the flattest title runs genuinely lose.
+const RIVAL_SCHEDULE=[[2800,7],[6300,7],[9800,7],[13300,7],[16800,7],
+  [20300,7],[23800,7],[27300,3],[30800,7],[34300,7],[37800,7],[41300,7],
+  [44800,7],[48300,7],[51800,7]];
 
 let showFrame=0,runFrame=0,matchNo=0,state='huddle',stateT=0,resultT=0,outcome='',camY=0;
 let rusher=null,defenders=[],blockers=[],terrain=null,texts=[],plan=null,planAt=-1e9,defSerial=0;
 let persona=PERSONAS[0],personaIndex=0,lastLapse=false;
-let down=1,scrimmage=20*PPY,toGain=30*PPY,driveNo=0,playNo=0,wave=0,dodgedCall=false;
+let down=1,scrimmage=20*PPY,toGain=30*PPY,driveNo=0,playNo=0,wave=0,dodgedCall=false,fgAttempt=false,fgRolling=false;
 // Waved chains: the front wave sits 9-13 yards deep, so a 10-yard first down
 // would be free grass. The chains move to match the geometry.
 function chainYd(){return typeof globalThis.__NO_WAVES==='undefined'?15:10;}
@@ -65,6 +73,7 @@ let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0;
 const stats={plays:0,drives:0,yards:0,tds:0,firstDowns:0,fourthDownConversions:0,tackles:0,
   brokenTackles:0,hurdles:0,jukes:0,blocks:0,launches:0,landings:0,overheats:0,tumbles:0,whistles:0,
   turnovers:0,keyedPlays:0,readsDodged:0,rivalPoints:0,lapses:0,endings:0,wins:0,
+  boosts:0,fgAttempts:0,fgMade:0,
   events:0,progress:0,maxEventLull:0,maxProgressLull:0,appliedIntents:0,admireIntents:0};
 
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
@@ -96,7 +105,7 @@ function allFinite(){return finiteObject(rusher)&&defenders.every(finiteObject)&
 // riding corridor survives every 25-yard window. generateValidated re-rolls
 // pathological layouts instead of shipping them.
 function buildTerrain(fromY){
-  const ramps=[],muds=[],oils=[],whoops=[];
+  const ramps=[],muds=[],oils=[],whoops=[],boosts=[];
   for(let y=fromY+8*PPY;y<GOAL-4*PPY;y+=12*PPY){
     if(hash(y,matchNo*17+driveNo)>0.45)ramps.push({x:RI(30,130),y:y+RI(-14,14),w:26});
   }
@@ -105,7 +114,13 @@ function buildTerrain(fromY){
   const whoopN=1+(wave>=2?1:0);
   for(let i=0;i<whoopN;i++)whoops.push({y:fromY+RI(14,80)*PPY,len:RI(40,64)});
   if(wave>=2)for(let i=0;i<wave-1&&i<3;i++)oils.push({x:RI(28,132),y:fromY+RI(10,86)*PPY,w:RI(20,30),len:RI(18,30)});
-  return{ramps,muds,oils,whoops};
+  // Boost pads: a line the rusher can gamble for — free speed, no heat.
+  for(let i=0;i<2+(wave>=3?1:0);i++)boosts.push({x:RI(26,134),y:fromY+RI(10,84)*PPY,w:18,len:16});
+  // The field ends at the end zone; nothing may spawn at or past the paint.
+  const fits=e=>e.y+(e.len||0)<GOAL-2*PPY;
+  return{ramps:ramps.filter(fits),muds:muds.filter(fits),oils:oils.filter(fits),
+    whoops:whoops.filter(fits),
+    boosts:boosts.filter(b=>fits(b)&&!muds.some(m=>Math.abs(m.x-b.x)<m.w/2+10&&m.y<b.y+b.len&&m.y+m.len>b.y))};
 }
 function corridorClear(t,x,y0,y1){
   for(const m of t.muds)if(Math.abs(m.x-x)<m.w/2+8&&m.y<y1&&m.y+m.len>y0)return false;
@@ -128,6 +143,7 @@ function genTerrain(fromY){
 function mudAt(x,y){for(const m of terrain.muds)if(Math.abs(m.x-x)<m.w/2&&y>=m.y&&y<=m.y+m.len)return m;return null;}
 function oilAt(x,y){for(const o of terrain.oils)if(Math.abs(o.x-x)<o.w/2&&y>=o.y&&y<=o.y+o.len)return o;return null;}
 function whoopAt(y){for(const s of terrain.whoops)if(y>=s.y&&y<=s.y+s.len)return s;return null;}
+function boostAt(x,y){for(const p of terrain.boosts)if(Math.abs(p.x-x)<p.w/2&&y>=p.y&&y<=p.y+p.len)return p;return null;}
 function rampAt(x,y0,y1){for(const r of terrain.ramps)if(Math.abs(r.x-x)<r.w/2&&r.y>y0&&r.y<=y1)return r;return null;}
 
 // ---- one bike, one physics path -----------------------------------------------
@@ -136,12 +152,12 @@ function rampAt(x,y0,y1){for(const r of terrain.ramps)if(Math.abs(r.x-x)<r.w/2&&
 // Pure math on the state it is handed plus the terrain and the wet flag — no
 // RNG, no presentation reads.
 function makeRusher(x,y){
-  return{x,y,vx:0,v:.9,z:0,vz:0,heat:18,wobble:0,stallT:0,tumbleT:0,jukeT:0,hopCd:0,
+  return{x,y,vx:0,v:.9,z:0,vz:0,heat:18,wobble:0,stallT:0,tumbleT:0,jukeT:0,hopCd:0,boostT:0,boostCd:0,
     breakCd:0,breakaway:false,wheelie:0,intent:null,lastX:x,lastY:y};
 }
 function stormLive(){return storm.phase==='live';}
 function advanceBike(b,intent,env){
-  const out={launched:false,landed:false,overheated:false,tumbled:false,juked:false,hopped:false};
+  const out={launched:false,landed:false,overheated:false,tumbled:false,juked:false,hopped:false,boosted:false};
   if(b.jukeT>0)b.jukeT--;if(b.hopCd>0)b.hopCd--;if(b.breakCd>0)b.breakCd--;
   if(b.tumbleT>0){
     b.tumbleT--;b.v=Math.max(.25,b.v*.965);b.vx*=.9;
@@ -158,14 +174,18 @@ function advanceBike(b,intent,env){
   if(b.z<=0){
     b.vx+=clamp(intent.steer||0,-1,1)*.11*grip;b.vx*=.86;
     if(oilAt(b.x,b.y)){b.vx*=1.05;b.vx+=clamp(intent.steer||0,-1,1)*-.06;}
+    if(b.boostT>0)b.boostT--;if(b.boostCd>0)b.boostCd--;
+    if(b.boostCd<=0&&boostAt(b.x,b.y)){b.boostT=48;b.boostCd=120;out.boosted=true;}
     let target=intent.brake?.5:intent.turbo?(env.wet?1.5:1.7):1.32;
+    if(b.boostT>0&&!intent.brake)target=Math.max(target,2.05); // pad burst, no heat
     if(mudAt(b.x,b.y)){target=Math.min(target,.62);b.v*=.95;}
     if(whoopAt(b.y)){target=Math.min(target,1.28);if(b.v>1.2)b.wobble+=intent.turbo?1.7:1.1;}
     b.v+=(target-b.v)*.05;
     if(intent.turbo&&!intent.brake)b.heat=Math.min(102,b.heat+.85);
     else b.heat=Math.max(0,b.heat-.45);
     if(b.heat>=100){b.stallT=100;b.heat=26;out.overheated=true;}
-    if(rampAt(b.x,b.y,b.y+b.v)&&b.v>.85){b.vz=.62+b.v*.42;b.z=.01;out.launched=true;}
+    const rp=rampAt(b.x,b.y,b.y+b.v);
+    if(rp&&b.v>.85){b.vz=(rp.fg?.95:.62)+b.v*(rp.fg?.5:.42);b.z=.01;out.launched=true;}
     else if(intent.jump&&b.hopCd<=0){b.vz=.5;b.z=.01;b.hopCd=48;out.hopped=true;}
     if((intent.juke===1||intent.juke===-1)&&b.jukeT<=0){b.vx+=intent.juke*1.7;b.jukeT=58;b.wobble+=7;out.juked=true;}
     b.wobble=Math.max(0,b.wobble-.55);
@@ -191,7 +211,9 @@ function advanceBike(b,intent,env){
 // formation you read in the huddle is the formation that fires at the snap;
 // a read play gets a burst of pursuit speed, never a teleport.
 function defSpeed(d){
-  const base=d.role==='line'?1.02:d.role==='backer'?1.22:d.role==='corner'?1.45:1.5;
+  // The third blocker (the fullback) is paid for with a slightly hotter
+  // front seven — blocks win moments, not the whole field.
+  const base=d.role==='line'?1.07:d.role==='backer'?1.26:d.role==='corner'?1.45:1.5;
   return(base+Math.min(5,wave)*.045)*(stormLive()?.94:1)*(d.boostT>0?1.16:1);
 }
 function makeDefender(role,x,y){
@@ -310,9 +332,11 @@ function stepDefender(d,r){
 }
 // Blockers: two escort riders who hunt the most dangerous unblocked defender
 // and lock him up on contact — Tecmo's follow-your-blocks, on dirt bikes.
-function makeBlocker(x,y){return{id:defSerial++,x,y,vx:0,vy:0,engageT:0,blockCd:0};}
+function makeBlocker(x,y,slot){return{id:defSerial++,slot,x,y,vx:0,vy:0,engageT:0,blockCd:0};}
 function spawnBlockers(){
-  blockers=[makeBlocker(rusher.x-15,scrimmage+PPY),makeBlocker(rusher.x+15,scrimmage+PPY)];
+  blockers=[makeBlocker(rusher.x-15,scrimmage+PPY,-1),
+    makeBlocker(rusher.x+15,scrimmage+PPY,1),
+    makeBlocker(rusher.x,scrimmage+3*PPY,0)]; // lead blocker: the fullback
 }
 function stepBlocker(bk,r,ds){
   if(bk.blockCd>0)bk.blockCd--;
@@ -326,7 +350,7 @@ function stepBlocker(bk,r,ds){
   }
   let ax,ay;
   if(best){ax=best.x;ay=best.y;}
-  else{ax=r.x+(bk.id%2?16:-16);ay=r.y+36;} // escort formation when no threat
+  else{ax=r.x+bk.slot*16;ay=r.y+(bk.slot===0?52:36);} // escort formation when no threat
   const adx=ax-bk.x,ady=ay-bk.y,ad=Math.hypot(adx,ady)||1,sp=1.12;
   bk.vx+=(adx/ad*sp-bk.vx)*.08;bk.vy+=(ady/ad*sp-bk.vy)*.08;
   if(mudAt(bk.x,bk.y)){bk.vx*=.94;bk.vy*=.94;}
@@ -360,8 +384,24 @@ function newDrive(reason){
 function startHuddle(){
   state='huddle';stateT=90;playNo++;
   rusher.x=clamp(rusher.x,40,120);rusher.y=scrimmage-3*PPY;rusher.v=.9;rusher.vx=0;rusher.z=0;rusher.vz=0;
-  rusher.stallT=0;rusher.tumbleT=0;rusher.wobble=0;rusher.breakaway=false;
+  rusher.stallT=0;rusher.tumbleT=0;rusher.wobble=0;rusher.breakaway=false;rusher.boostT=0;
   pickIndex=1;keyed=false;plan=null;planAt=-1e9;
+  terrain.ramps=terrain.ramps.filter(r=>!r.fg);
+  // 4th and long in kicking range: the tee ramp comes out and the play is a
+  // launch through the uprights. Goal-to-go stays a run — go for six.
+  fgAttempt=down===4&&toGain-scrimmage>3.5*PPY&&
+    GOAL-scrimmage>=6*PPY&&GOAL-scrimmage<=19*PPY;
+  if(fgAttempt){
+    // The kicking unit lines up on the lane and the crew grooms the strip:
+    // no mud or oil on the approach, tee dead center.
+    rusher.x=80;
+    const strip=e=>Math.abs(e.x-80)<e.w/2+16&&e.y<scrimmage+7*PPY&&e.y+e.len>scrimmage-6*PPY;
+    terrain.muds=terrain.muds.filter(m=>!strip(m));
+    terrain.oils=terrain.oils.filter(o=>!strip(o));
+    terrain.ramps.push({x:80,y:scrimmage+4*PPY,w:34,fg:true});
+    sayAt('FIELD GOAL UNIT ON',GOLD,scrimmage+8*PPY,80);
+  }
+  fgRolling=fgAttempt;
   defKey=predictKey();
   spawnDefense();spawnBlockers();
 }
@@ -377,6 +417,11 @@ function snap(){
   state='play';stateT=0;stats.plays++;
   playStartY=rusher.y;playMaxY=rusher.y;playMaxYFrame=runFrame;
   pickHistory.push(pickIndex);if(pickHistory.length>8)pickHistory.shift();
+  if(fgAttempt){stats.fgAttempts++;
+    // Rolling start: the kicking unit is already revving when the gate
+    // drops — the launch has to beat the rush, not outslug it.
+    if(fgRolling){rusher.v=1.42;fgRolling=false;}
+  }
   keyed=pickIndex===defKey;
   if(keyed){stats.keyedPlays++;
     // A read play fires the front wave off the ball at the snap — the
@@ -418,13 +463,30 @@ function endPlay(reason,tier1Id){
 }
 function touchdown(){
   if(state!=='play')return;
+  const faked=fgAttempt;fgAttempt=false;
   state='td';stateT=150;
   homeScore+=7;stats.tds++;stats.yards+=yd(Math.max(0,GOAL-playStartY));
   markEvent(300);markProgress(3);
   offer('touchdown',3,rusher.x,rusher.y,stats.tds);
   fxBurst(rusher.x,sy(rusher.y),34,GOLD,2.8,.02);fxDust(rusher.x,sy(rusher.y)+4,10,ORANGE);
   shake(7);ring(rusher.x,sy(rusher.y),GOLD,2.4,30);
-  sayAt('TOUCHDOWN!',GOLD,rusher.y+26,110);
+  sayAt(faked?'FAKES THE KICK — TAKES IT IN!':'TOUCHDOWN!',GOLD,rusher.y+26,110);
+}
+function fieldGoalGood(){
+  if(state!=='play')return;
+  fgAttempt=false;stats.fgMade++;homeScore+=3;
+  markEvent(200);markProgress(2);
+  offer('field-goal',2,rusher.x,rusher.y,stats.fgMade);
+  fxBurst(rusher.x,sy(rusher.y),18,GOLD,2.2,.02);ring(rusher.x,sy(rusher.y),GOLD,2,24);
+  sayAt('FIELD GOAL — GOOD! +3',GOLD,rusher.y+22,100);
+  pendingTurnover=true;state='dead';stateT=110; // kickoff after the points
+}
+function fieldGoalMiss(reason){
+  if(state!=='play')return;
+  fgAttempt=false;stats.turnovers++;
+  markEvent(40);offer('fg-miss',2,rusher.x,rusher.y,reason);
+  sayAt(reason,CORAL,rusher.y+22,90);
+  pendingTurnover=true;state='dead';stateT=90;
 }
 function rivalStep(){
   if(rivalNext>=RIVAL_SCHEDULE.length)return;
@@ -580,6 +642,11 @@ function botController(){
     return{steer:0,turbo:false,brake:false,jump:false,juke:0,pick:pickIndex,
       tactic:state==='td'?'CELEBRATE':'RESET'};
   }
+  if(fgAttempt){
+    // Kicking unit: square up on the tee, full throttle, fly it through.
+    return{steer:clamp((80-rusher.x)*.14,-1,1),turbo:rusher.heat<98,brake:false,
+      jump:false,juke:0,pick:pickIndex,tactic:'FG ATTEMPT'};
+  }
   if(!plan||runFrame-planAt>=30){plan=buildPlan();planAt=runFrame;}
   const lapse=lapseActive();
   const fuzz=(hash(playNo*31+personaIndex,Math.floor(runFrame/24))-.5)*persona.fuzz*2;
@@ -649,6 +716,8 @@ function stepWorld(){
     const ev=advanceBike(rusher,intent,{wet:stormLive()});
     if(ev.launched){stats.launches++;markEvent(15);offer('launch',1,rusher.x,rusher.y,'ramp');fxDust(rusher.x,sy(rusher.y),6,RAMPC);}
     if(ev.landed){stats.landings++;markEvent();offer('landing',1,rusher.x,rusher.y,'land');}
+    if(ev.boosted){stats.boosts++;markEvent(12);offer('boost',1,rusher.x,rusher.y,'pad');
+      sayAt('BOOST!',MINT,rusher.y+14,48);fxDust(rusher.x,sy(rusher.y),7,MINT);}
     if(ev.hopped)markEvent();
     if(ev.juked){stats.jukes++;markEvent(8);}
     if(ev.overheated){stats.overheats++;markEvent();offer('overheat',1,rusher.x,rusher.y,'stall');
@@ -684,7 +753,14 @@ function stepWorld(){
       if(rusher.y>playMaxY){playMaxY=rusher.y;playMaxYFrame=runFrame;
         if(playMaxY-playStartY>=20*PPY&&!rusher.breakaway){rusher.breakaway=true;
           offer('breakaway',2,rusher.x,rusher.y,playNo);sayAt('BREAKAWAY!',GOLD,rusher.y+18,66);markEvent(30);}}
-      if(rusher.y>=GOAL)touchdown();
+      if(rusher.y>=GOAL){
+        if(fgAttempt&&rusher.z>0){
+          // Airborne over the plane on the kicking play: good if it clears
+          // the bar between the posts, no good wide or low.
+          if(rusher.z>=FG_BAR_Z&&rusher.x>FG_POST_L&&rusher.x<FG_POST_R)fieldGoalGood();
+          else fieldGoalMiss(rusher.x<=FG_POST_L||rusher.x>=FG_POST_R?'WIDE — NO GOOD':'SHORT — NO GOOD');
+        }else touchdown(); // grounded across the plane is six — even on a fake
+      }
       // Forward progress: the whistle is football's honest anti-stall rule.
       else if(runFrame-playMaxYFrame>300){stats.whistles++;endPlay('WHISTLE — PROGRESS STOPPED','whistle');}
       else if(++stateT>1500){stats.whistles++;endPlay('WHISTLE','whistle');}
@@ -696,13 +772,14 @@ function stepWorld(){
       else startHuddle();
     }
   }else if(state==='td'){
-    stateT--;rusher.wheelie=Math.min(12,rusher.wheelie+1);rusher.y+=Math.max(.4,rusher.v*.98);rusher.v*=.985;
+    stateT--;rusher.wheelie=Math.min(12,rusher.wheelie+1);
+    rusher.y=Math.min(rusher.y+Math.max(.4,rusher.v*.98),FIELD_END-2*PPY);rusher.v*=.985;
     if(stateT<=0){rusher.wheelie=0;newDrive('KICKOFF — FRESH DEFENSE');}
   }
   // Camera leads the run so the viewer sees the next wave before the bot
   // commits to a line. Presentation only: the sim signature excludes camY.
   const lookAhead=state==='play'?Math.min(64,rusher.v*36):0;
-  camY+=(rusher.y+lookAhead-camY)*.12;
+  camY+=(Math.min(rusher.y+lookAhead,GOAL-160)-camY)*.12;
 }
 function step(){
   showFrame++;
@@ -724,7 +801,7 @@ const viewerStoryOn=()=>typeof globalThis.__NO_VIEWER_STORY==='undefined';
 let viewerDraw={frame:-1,enabled:false,hud:'',verb:'',downLine:'',forecast:'',chainDrawn:false};
 const VERB_MAP={'HUDDLE UP':'CALL THE PLAY','FIND THE GAP':'FIND THE GAP','TURBO BURST':'TURBO BURST',
   'CUT TURBO':'CUT THE TURBO','SPREAD WIDE':'BEAT THE BLITZ',REDLINE:'REDLINE THE ENGINE',HURDLE:'HURDLE!',JUKE:'JUKE!',
-  'ENGINE STALL':'ENGINE STALL',RECOVER:'PICK IT BACK UP',CELEBRATE:'CELEBRATE',ADMIRE:'SOAK IT IN',
+  'FG ATTEMPT':'LAUNCH THE FIELD GOAL','ENGINE STALL':'ENGINE STALL',RECOVER:'PICK IT BACK UP',CELEBRATE:'CELEBRATE',ADMIRE:'SOAK IT IN',
   LAPSE:'LOSES FOCUS',RESET:'LINE IT UP',MANUAL:'MANUAL CONTROL'};
 function viewerVerb(){return VERB_MAP[(rusher.intent&&rusher.intent.tactic)||'']||'RIDE';}
 function downLabel(){
@@ -759,12 +836,22 @@ function drawField(){
     const py=sy(wy);
     if(py>-4&&py<H+4){rect(1+hash(i,3)*4,py,2,2,'#2b3b4e');rect(W-8+hash(i,5)*5,py,2,2,'#2b3b4e');}
   }
-  const gy=sy(GOAL);
-  if(gy>-70&&gy<H+70){
-    rect(LEFT-4,gy-8*PPY,RIGHT-LEFT+8,8*PPY,'#27406b');
-    for(let x=LEFT;x<RIGHT;x+=16)rect(x,gy-8*PPY+((x/16)%2?10:26),10,4,'#31527f');
-    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('T I T L E',56,gy-24);
+  const gy=sy(GOAL),ey=sy(FIELD_END);
+  if(gy>-140&&ey<H+140){
+    // The end zone IS the end: paint from the goal line to the back line,
+    // then nothing but the void and the uprights.
+    rect(LEFT-4,ey,RIGHT-LEFT+8,ENDZONE,'#27406b');
+    for(let x=LEFT;x<RIGHT;x+=16)rect(x,ey+((x/16)%2?14:40),10,4,'#31527f');
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('T I T L E',56,ey+ENDZONE/2+3);
     rect(LEFT-4,gy,RIGHT-LEFT+8,2,CREAM);
+    rect(LEFT-6,ey-3,RIGHT-LEFT+12,3,CHALK); // the back line
+    rect(0,0,W,Math.max(0,ey-3),INK);        // the world ends here
+    // Goal posts on the goal line, drawn rising off the field plane.
+    ctx.globalAlpha=.9;
+    rect(FG_POST_L-1,gy-26,2,26,'#ffd86b');rect(FG_POST_R-1,gy-26,2,26,'#ffd86b');
+    rect(FG_POST_L-1,gy-14,FG_POST_R-FG_POST_L+1,2,'#ffd86b'); // crossbar
+    rect(79,gy-4,2,6,'#c9a84e');                               // the stem
+    ctx.globalAlpha=1;
   }
 }
 function drawTerrainBits(){
@@ -784,10 +871,29 @@ function drawTerrainBits(){
     for(let yy=0;yy<ph;yy+=8)rect(LEFT+2,py+yy,RIGHT-LEFT-4,2,'#7a5c33');
     ctx.globalAlpha=1;
   }
+  for(const p of terrain.boosts){const py=sy(p.y+p.len),ph=p.len;
+    if(py>H+30||py+ph<-30)continue;
+    rect(p.x-p.w/2,py,p.w,ph,'#123b33');
+    const pulse=(showFrame>>3)%3; // render-only shimmer
+    for(let i=0;i<3;i++){
+      ctx.globalAlpha=i===pulse?.95:.4;
+      const cy=py+ph-4-i*5;
+      rect(p.x-4,cy,3,2,MINT);rect(p.x+1,cy,3,2,MINT);rect(p.x-1,cy-1,2,2,MINT);
+    }
+    ctx.globalAlpha=1;
+  }
   for(const r of terrain.ramps){const py=sy(r.y);
     if(py>H+20||py<-20)continue;
-    rect(r.x-r.w/2,py-3,r.w,8,RAMPC);
-    rect(r.x-r.w/2,py-5,r.w,2,'#eccf96');
+    rect(r.x-r.w/2,py-3,r.w,8,r.fg?'#8a6b2f':RAMPC);
+    rect(r.x-r.w/2,py-5,r.w,2,r.fg?GOLD:'#eccf96');
+    // Up chevrons: this is a ramp, it sends you airborne.
+    const pulse=(showFrame>>3)%2; // render-only shimmer
+    for(let i=0;i<2;i++){
+      ctx.globalAlpha=i===pulse?.95:.45;
+      const cy=py+2-i*4;
+      rect(r.x-5,cy,3,2,'#fff3cf');rect(r.x+2,cy,3,2,'#fff3cf');rect(r.x-1,cy-1,2,2,'#fff3cf');
+    }
+    ctx.globalAlpha=1;
   }
 }
 function drawChains(){
@@ -822,6 +928,16 @@ function drawDefender(d){
 }
 function drawHuddleCards(){
   if(state!=='huddle')return;
+  if(fgAttempt){
+    const baseY=H-58;
+    ctx.globalAlpha=.92;rect(12,baseY,W-24,26,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle='#4a3b12';ctx.strokeRect(12.5,baseY+.5,W-25,25);
+    ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;
+    ctx.fillText('FIELD GOAL',56,baseY+11);
+    ctx.font='bold 5px monospace';ctx.fillStyle='#8c7a4c';
+    ctx.fillText('HIT THE TEE · CLEAR THE BAR',36,baseY+20);
+    return;
+  }
   // Ghost route: the selected play drawn on the grass, so the viewer sees the
   // called lane and can watch it work (or get keyed) after the snap.
   if(viewerStoryOn()){
@@ -990,7 +1106,7 @@ globalThis.__motobowlRampFixture=()=>{
   const saved=terrain;
   const results=[];
   for(const v of[1.0,1.3,1.6,1.85]){
-    terrain={ramps:[{x:80,y:206,w:26}],muds:[],oils:[],whoops:[]};
+    terrain={ramps:[{x:80,y:206,w:26}],muds:[],oils:[],whoops:[],boosts:[]};
     const b=makeRusher(80,200);b.v=v;
     let air=0,launched=false;
     for(let f=0;f<200;f++){
@@ -1004,10 +1120,50 @@ globalThis.__motobowlRampFixture=()=>{
   terrain=saved;
   return results;
 };
+globalThis.__motobowlBoostFixture=()=>{
+  resetMatch(true);
+  const saved=terrain;
+  terrain={ramps:[],muds:[],oils:[],whoops:[],boosts:[{x:80,y:220,w:18,len:16}]};
+  const b=makeRusher(80,200);b.v=1.32;
+  let boostedAt=-1,peak=0;
+  for(let f=0;f<140;f++){
+    const ev=advanceBike(b,{steer:0,turbo:false,brake:false,jump:false,juke:0},{wet:false});
+    if(ev.boosted&&boostedAt<0)boostedAt=f;
+    peak=Math.max(peak,b.v);
+  }
+  const heat=b.heat;
+  terrain=saved;
+  return{boostedAt,peak,heat,boostCd:b.boostCd,finite:finiteObject(b)};
+};
+globalThis.__motobowlFgFixture=()=>{
+  // Deterministic kicking play: 4th and long from ten yards out. Proves the
+  // tee spawns, the launch beats the bar, and three points land honestly.
+  resetMatch(true);
+  defenders=[];blockers=[]; // isolate the kick itself
+  scrimmage=GOAL-10*PPY;toGain=scrimmage+chainYd()*PPY;down=4;
+  rusher.y=scrimmage-3*PPY;
+  startHuddle();
+  defenders=[];blockers=[];
+  const attempted=fgAttempt,tee=terrain.ramps.find(r=>r.fg)||null;
+  const before={home:homeScore,fgMade:stats.fgMade,fgAttempts:stats.fgAttempts};
+  stateT=1;
+  let peakZ=0,crossedZ=-1;
+  for(let f=0;f<600&&state!=='ending';f++){
+    const wasPlay=state==='play',py=wasPlay?rusher.y:0;
+    stepWorld();
+    if(wasPlay){peakZ=Math.max(peakZ,rusher.z);
+      if(crossedZ<0&&py<GOAL&&rusher.y>=GOAL)crossedZ=rusher.z;}
+    if(stats.fgMade>before.fgMade&&state==='dead')break;
+  }
+  return{attempted,tee:!!tee,teeY:tee?Math.round((tee.y-scrimmage)/PPY):-1,
+    made:stats.fgMade-before.fgMade,attempts:stats.fgAttempts-before.fgAttempts,
+    points:homeScore-before.home,peakZ:Math.round(peakZ*10)/10,
+    crossedZ:Math.round(crossedZ*10)/10,state,finite:finiteObject(rusher)};
+};
 globalThis.__motobowlOverheatFixture=()=>{
   resetMatch(true);
   const saved=terrain;
-  terrain={ramps:[],muds:[],oils:[],whoops:[]};
+  terrain={ramps:[],muds:[],oils:[],whoops:[],boosts:[]};
   const b=makeRusher(80,200);b.heat=99.5;
   const ev=advanceBike(b,{steer:0,turbo:true,brake:false,jump:false,juke:0},{wet:false});
   const stallAt={stallT:b.stallT,heat:b.heat,overheated:ev.overheated,v:b.v};
@@ -1023,7 +1179,7 @@ globalThis.__motobowlGenFixture=n=>{
     driveNo++;wave=Math.min(6,i%7);
     const t=genTerrain(20*PPY);
     out.push({valid:validTerrain(t,20*PPY),ramps:t.ramps.length,muds:t.muds.length,
-      oils:t.oils.length,whoops:t.whoops.length});
+      oils:t.oils.length,whoops:t.whoops.length,boosts:t.boosts.length});
   }
   return out;
 };
