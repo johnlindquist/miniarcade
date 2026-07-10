@@ -1,8 +1,8 @@
 # SIDE/QUEST Bot Intelligence Audit
 
 Audit of the AI in the original eleven self-playing games, plus the three-game
-fusion-max expansion, their eval coverage, and a plan for consolidating bot
-infrastructure and building evals that measure what actually matters:
+fusion-max expansion and proven-improvement log for later additions, and a plan
+for evals that measure what actually matters:
 **fun to watch, sometimes creative, never stuck**.
 
 Date: 2026-07-09. Sources: every game's inline bot code, `autoplay.js`, `engine.js`,
@@ -199,6 +199,33 @@ being accepted; the proof is wired into the evals so it re-runs forever.
    - Horizon's Aloy legitimately holds a stealth hide for ~28s while machines prowl;
      the soak tracks world motion, not just the avatar.
 
+6. **Misregister — three physical parallax planes with measured route planning.**
+   A clockwork proofreader now moves continuously between independently projected
+   yellow plate, cyan blanket, and magenta stock surfaces; every plane owns its
+   phase, acceleration/braking, collision restitution, seams, hazards, and marks.
+   Transfers have a 12f cancelable wind-up, immutable commit, continuous depth
+   travel, and frame-48 footprint/relative-speed validation; failures tumble or
+   ride a visible 72f paper-return chute instead of teleporting. The copied-state
+   register planner is permanently ablated by `__NO_REGISTER_LOOKAHEAD`: across
+   12 paired ten-minute seeds it won 12/12, printed 299 vs 256 posters (+16.8%),
+   stayed inside the 0..2 chute band (2 vs 0), and kept both policies above .99 normalized
+   plane-occupancy entropy. A golden-ratio-spaced 30-seed calibration measured
+   20..28 posters, 87..122 transfers, 92.0..95.1% clean landings, 8..11 smudges,
+   0..1 chutes, and 28.6..38.1% occupancy per plane. PAPER JAM and SOLVENT WASH
+   first change applied physical intent and actor motion during their exact
+   240f/210f warnings, never merely a tactic label. The shipping soak records
+   0s frozen, 8s quiet, 17s without story progress, balanced 36.5/32.2/31.3%
+   plane dwell, both transfer edges 52/53 times, and zero hard
+   rescues; poster apexes spend exactly 6 held + 18 slowed + 42 admire frames.
+   2026-07-09 the game shipped a presentation-only genre realign to **PRESS RUN**:
+   the cream letterpress diorama became a dark press-hall of three conveyor
+   belts (family palette, rect-stack pressman, chunky stamp pickups, floating
+   pop text, an always-visible page-under-construction in the station strip),
+   with "misregister" demoted to the smudge failure state. The realign was
+   proven a perfect sim no-op — 10-minute signatures on three seeds match the
+   pre-change build byte-for-byte — so every band, A/B, and calibration above
+   still holds unchanged.
+
 Iteration lessons worth keeping: measure before believing (two of four "improvements"
 initially failed their own bands or instruments); paired same-seed A/B via a
 `__NO_<FEATURE>` switch is cheap and makes the proof permanent; watchability bands
@@ -218,7 +245,21 @@ ladder"). Per-game acts, each proven by a warn-phase A/B divergence against
 - **Word Fall** — rune storm on a death-persistent clock; closed the 174s
   story-cadence gap (stall band tightened 240→120s). **Block Mine** — existing
   day/night/Babel acts; kernel adopted as telemetry+ladder only (30-minute
-  no-stall contract; heldFrames pinned to 0).
+  no-stall contract; heldFrames pinned to 0). Later the same day the sky
+  itself became an act: full sky rewrite (sun/moon arcs in the HUD-free band,
+  hash-field stars, dawn/dusk palette, weather-driven cloud decks, rain) plus
+  a rolling STORM FRONT — 240f telegraph then a 15s storm, hash-scheduled
+  with zero RNG draws, deterministic lightning columns biased toward Babel
+  (the crown absorbs bolts as a lightning rod; camp columns are spared so the
+  tent is a true shelter). The surface bot breaks off grove/tower work at the
+  first warn frame and waits it out at camp, stamping progressFrame so the
+  30-minute no-stall contract holds. Proven: telegraph pairing via footer
+  note collector (4 storms/10min, 240f each, ≥4 strikes per storm) and a
+  forced-front tower-fixture A/B that must first diverge inside the warn
+  window (diverges 7f in; the naive fixture time diverged 213f in because
+  the shelter route and ore route shared the tower-spine ladder — pick A/B
+  moments where the reaction is physically visible). 10-seed sweep: goals
+  38.7 vs 39.8 baseline, deaths 0.0 vs 0.2, depth +11m, stalls unchanged.
 - **Web Slam** — GALE act; wall-open slow-mo. **Deadline Deck** — ROADWORK lane
   closure; courier reroutes from the warning; FRONT PAGE hitstop.
   **Surfers** — EXPRESS wave surges live trains inside the corridor guarantee;
@@ -277,49 +318,6 @@ act telegraphs with physical warning-phase divergence, common human/bot intent
 paths, three native-resolution 60-second render probes, and deterministic
 15-minute ending renders.
 
-## Fusion-ultra addition: CRESTCRASH (2026-07-09)
-
-Council session:
-`~/.fusion/sessions/2026/07/10/2026-07-10T00-19-37-808Z-244d24`.
-All six seats completed successfully. Five seats and the finalizer selected the
-one-body design: terrain stores the launch energy and the ridge runner itself is
-the projectile. One seat proposed a detachable bolt; that mode split was rejected.
-
-**CRESTCRASH** implements the council's irreducible core: deterministic generated
-ridges, one shared human/bot intent and physics path, physical support-graph tower
-collapses, a copied-state arc planner, honest misses and shell repairs, Headwind and
-Plating acts, a strict three-tier show ladder, and an earned frame-54,000 ending.
-The maximum-speed terrain sweep uses bounded deterministic chord sampling and a
-refined first-contact time, so neither runtime nor planner can tunnel through a
-crest. The exposed-joint recovery is also physical: the joint lowers visibly over
-36 frames and the bot replans; `__NO_EXPOSED_RECOVERY` restores the old geometry.
-
-Thirty fixed ten-minute seeds on game SHA-256 `232b6f19...` were all finite and
-reset-free. Measured p05..p95: 111..126 launches, 108..122 landings, 108..120
-impacts, 90..99 joint breaks, 13..15 core breaks, 21..30 misses, 14..22 tumbles,
-3..4 repairs, 6..9 recoveries, and 3..5 coil recoveries. Every run produced four
-warnings, lands, and real structural changes for each scheduled act. The maximum
-viewer-time break gap was 1,193f against the hard 1,200f contract; maximum story
-lull was 985f and maximum one-step capsule motion was 4.604px.
-
-The planned arc policy won payoff rate 12/12 same-seed five-minute pairs: 78.6%
-versus 39.9% (+38.7 percentage points), with 82 versus 59 cores and median maximum
-payoff lull 780f versus 1,082.5f. Across thirty additional paired ten-minute runs,
-visible exposed-joint recovery reduced mean/median maximum break gaps from
-977/876.5f to 831/795.5f, eliminated five hard-gap breaches (5 -> 0), and improved
-aggregate breaks 2,836 -> 2,856, cores 414 -> 422, misses 803 -> 776, and progress
-5,857 -> 5,894. Permanent switches are `__NO_ARC_PLAN`,
-`__NO_EXPOSED_RECOVERY`, `__NO_ACTS`, `__NO_ADMIRE`, and `__NO_PAYOFF_FX`.
-
-Deliberate council cuts are recorded rather than hidden: the narrow-strip release
-omits defender NPCs, slag rollers, shutters, wardens, branching upgrades,
-secondary-joint variants, and the proposed three-tower Crown staging. It keeps
-time-gated deterministic upgrades, escalating target mass/support geometry, two
-measured acts, and a single earned Crown target. The planner replans every 60f
-rather than the proposed 12f to keep headless and production CPU bounded. These
-cuts follow the council's defender/secondary-system cut order and do not weaken
-the measured watchability, determinism, act, show, or ending contracts.
-
 ## Fusion-ultra spectator-story repair (2026-07-10)
 
 Council session:
@@ -363,6 +361,154 @@ affordance only after eight seconds. Native 160x360 first-minute and ending rend
 were visually reviewed. Automated checks prove truth, timing, persistence, parity, and
 band preservation; a blinded naive-viewer comprehension/preference study remains the
 honest next evidence layer because counters cannot prove fun.
+
+
+## Fusion-ultra addition: CRESTCRASH (2026-07-09)
+
+Council session:
+`~/.fusion/sessions/2026/07/10/2026-07-10T00-19-37-808Z-244d24`.
+All six seats completed successfully. Five seats and the finalizer selected the
+one-body design: terrain stores the launch energy and the ridge runner itself is
+the projectile. One seat proposed a detachable bolt; that mode split was rejected.
+
+**CRESTCRASH** implements the council's irreducible core: deterministic generated
+ridges, one shared human/bot intent and physics path, physical support-graph tower
+collapses, a copied-state arc planner, honest misses and shell repairs, Headwind and
+Plating acts, a strict three-tier show ladder, and an earned frame-54,000 ending.
+The maximum-speed terrain sweep uses bounded deterministic chord sampling and a
+refined first-contact time, so neither runtime nor planner can tunnel through a
+crest. The exposed-joint recovery is also physical: the joint lowers visibly over
+36 frames and the bot replans; `__NO_EXPOSED_RECOVERY` restores the old geometry.
+
+Thirty fixed ten-minute seeds on game SHA-256 `232b6f19...` were all finite and
+reset-free. Measured p05..p95: 111..126 launches, 108..122 landings, 108..120
+impacts, 90..99 joint breaks, 13..15 core breaks, 21..30 misses, 14..22 tumbles,
+3..4 repairs, 6..9 recoveries, and 3..5 coil recoveries. Every run produced four
+warnings, lands, and real structural changes for each scheduled act. The maximum
+viewer-time break gap was 1,193f against the hard 1,200f contract; maximum story
+lull was 985f and maximum one-step capsule motion was 4.604px.
+
+The planned arc policy won payoff rate 12/12 same-seed five-minute pairs: 78.6%
+versus 39.9% (+38.7 percentage points), with 82 versus 59 cores and median maximum
+payoff lull 780f versus 1,082.5f. Across thirty additional paired ten-minute runs,
+visible exposed-joint recovery reduced mean/median maximum break gaps from
+977/876.5f to 831/795.5f, eliminated five hard-gap breaches (5 -> 0), and improved
+aggregate breaks 2,836 -> 2,856, cores 414 -> 422, misses 803 -> 776, and progress
+5,857 -> 5,894. Permanent switches are `__NO_ARC_PLAN`,
+`__NO_EXPOSED_RECOVERY`, `__NO_ACTS`, `__NO_ADMIRE`, and `__NO_PAYOFF_FX`.
+
+Deliberate council cuts are recorded rather than hidden: the narrow-strip release
+omits defender NPCs, slag rollers, shutters, wardens, branching upgrades,
+secondary-joint variants, and the proposed three-tower Crown staging. It keeps
+time-gated deterministic upgrades, escalating target mass/support geometry, two
+measured acts, and a single earned Crown target. The planner replans every 60f
+rather than the proposed 12f to keep headless and production CPU bounded. These
+cuts follow the council's defender/secondary-system cut order and do not weaken
+the measured watchability, determinism, act, show, or ending contracts.
+
+## Northstar: CRESTCRASH joins the viewer-story contract (2026-07-09)
+
+Picked as the northstar because crestcrash shipped from its own council and was
+the only new simulation left outside the fusion-ultra causal-story consensus
+(one actor, one target, a plain verb, persistent progress, payoffs that visibly
+advance the ending). Its ending contract — 80 relays, 10 cores, and the Crown
+Array by frame 54,000 — was computed but never shown: the HUD gave a raw relay
+count with no quota, the tactic line spoke bot jargon, and a viewer had no way
+to forecast whether the current flight would connect. That is exactly the
+prediction-payoff gap VISION.md names as the core psychology.
+
+The presentation-only layer (gated by `__NO_VIEWER_STORY`, like skyhook,
+tidelatch, and apogee):
+
+- **Persistent goal HUD.** `TOPPLE RANGE xx/80` with a relay progress bar, ten
+  core pips, and a crown chip that pulses while the Crown Array is targeted and
+  lights when it breaks — the whole 15-minute contract visible from frame one.
+- **Plain-verb line.** DIVE FOR SPEED, CLIMB TO CREST, BRACE TO STRIKE, CUT THE
+  HEADWIND — replacing the engineering tactic strings.
+- **Truthful flight forecast.** Every airborne frame projects the body through
+  the exact runtime integrator (copied state, no RNG) against the live joint and
+  labels the arc ON LINE / SHORT / LONG.
+- **Target callout.** STRIKE HERE over the live joint; a RELAY AHEAD edge chip
+  when the joint is off screen.
+
+Eval section 12 proves the frame-one HUD reads `TOPPLE RANGE 00/80`, the drawn
+receipts match simulation truth after two minutes of play, each forecast label
+matches its own projection's miss distance and sign, the 2-minute rendered A/B
+signature against `__NO_VIEWER_STORY` is identical, and the next engine RNG draw
+is untouched. A blinded naive-viewer comprehension study remains the honest next
+evidence layer here too.
+
+## Genre-fusion addition: MOTO BOWL (2026-07-10)
+
+**MOTO BOWL** crosses Tecmo Bowl with Excitebike: downs, play calling, and
+coordinator reads give the drama its grammar; throttle heat, ramps, whoops,
+mud, and oil give every snap its physics. One rusher (with two escort
+blockers) runs a 15-minute title match against a role-disciplined defense —
+linemen fire off the ball, backers mirror and fill, corners backpedal to cut
+breakaway angles, safeties keep depth — while the rival's off-screen offense
+scores on a fixed broadcast schedule. The match ends, win or lose, exactly at
+run frame 54,000.
+
+Core contracts, all in `motobowl-eval.js`:
+
+- **One physics path.** Human, bot, and every planner rollout pass through the
+  same `advanceBike`; the planner fixture proves purity, repeatability, exact
+  replay (error 0), and zero engine-RNG consumption.
+- **Level gen is proven, not vibed.** Each drive's ramps/mud/whoops/oil come
+  from sim RNG through `AI.generateValidated`, with a corridor validator over
+  every 25-yard window; the eval generates 100 drives (100/100 valid, 23
+  distinct layout shapes).
+- **Copied-state lane planning** (`__NO_LANE_PLAN` restores widest-gap
+  reactive running): candidate lanes x turbo policies roll the exact
+  integrator and the exact defender pursuit 90 frames ahead. Won yards per
+  play 10/10 paired five-minute seeds, 12.83 vs 8.84 (+3.99), touchdowns
+  68 vs 32 (+113%).
+- **Tendency-mixed play calling** (`__NO_PLAY_MIX` restores argmax): the
+  defensive coordinator keys the offense's most frequent recent call (pure
+  history math, no RNG); the bot charts its own tendencies and dodges the
+  read unless the best play is a blowout. Keyed-play rate 14.2% vs 48.9%
+  (-34.8pp), 8/8 paired seeds.
+- **Acts.** STORM FRONT (240f warning, wet grip, slower turbo ceiling) and
+  BLITZ PACKAGE (210f warning, stacked fronts on every huddle while live).
+  Both prove first physical divergence against `__NO_ACTS` inside the warn
+  phase — CUT TURBO at +60f, SPREAD WIDE at +180f — via a physical-only
+  motion probe (act phases deliberately excluded so the clock itself can't
+  fake a divergence). Session reset during a warning cancels cleanly.
+- **Honest imperfection.** Three personas (DIESEL power runner, GHOST juker,
+  BIG AIR showboat whose planner is paid extra for ramp lines), slot-based
+  lapses (`__NO_LAPSE`), hash-based aim fuzz, and a REDLINE behavior whose
+  per-play deterministic gut call sometimes pushes the heat gauge past the
+  stall point — overheats are drama the governor would otherwise never allow.
+- **Show ladder.** Tier 1 launches/landings/blocks/tackles, tier 2 first
+  downs/breakaways/4th-down conversions/act resolutions, tier 3 touchdowns
+  and the title, with exact 6 hold / 24 slow / 48 admire frames per apex and
+  `__NO_ADMIRE` gating the celebration intent. `__NO_PAYOFF_FX` is a proven
+  same-seed sim no-op.
+- **Viewer story** (`__NO_VIEWER_STORY`, sim-exact, RNG-untouched): persistent
+  `HOME x · AWAY y` scoreboard, down-and-distance line, plain verbs (FIND THE
+  GAP, REDLINE THE ENGINE, BEAT THE BLITZ), TV-style gold chains line on the
+  field, and a truthful drive forecast (SHORT OF CHAINS / CHAINS AHEAD / TO
+  THE HOUSE) recomputed from the live plan's own integrator projection — the
+  eval re-derives every sampled label from simulation truth.
+
+Thirty fixed ten-minute seeds (0xd000 + i*233) were all finite: 136..148
+plays, 6..17 TDs, 56..73 first downs, 120..142 tackles, 2..31 broken tackles,
+3..19 hurdles, 57..122 jukes, 260..289 blocks, 6..28 ramp launches, 0..8
+overheats, 4..16 tumbles, 3..13 turnovers, 8..33 keyed plays, 817..929 events,
+198..217 progress marks; worst story lull 717f, and the worst visible-event
+lull is a deterministic 262f (the touchdown-celebration-to-kickoff pipeline).
+A 20-seed 15-minute panel scored 98..154; the rival schedule is pinned at 98
+(the panel's 10th percentile), so most titles are won late and the flattest
+matches genuinely lose on the tiebreak. Football's own rules are the anti-
+stall layer: the play clock, the forward-progress whistle, and turnover on
+downs bound every possible wedge, and the shipping soak records 1s still /
+4s quiet / 7s stall over ten minutes with zero rescues of any kind.
+
+Deliberate cuts, recorded rather than hidden: no passing game, no special
+teams (a failed 4th down is always a turnover), no player-controlled defensive
+possessions, and the rival plays entirely off-screen on a deterministic
+schedule. Permanent switches: `__NO_LANE_PLAN`, `__NO_PLAY_MIX`, `__NO_ACTS`,
+`__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`, `__NO_VIEWER_STORY`.
 
 ## D. Per-game priorities
 

@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOTO BOWL</title>
+<style>
+  html,body{margin:0;height:100%;background:#07120b}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#0e2f1c}
+  canvas:focus-visible{outline:2px solid #ffd166;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Moto Bowl. An autonomous motocross rusher calls plays, jumps ramps, and outruns a bike-riding defense toward the title."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,RI,hash,clamp,rect,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,manual,initSession,sessionStep,drawSession,playing,
+  addScore,gameOver,createShow,fxBurst,fxDust}=E;
+const{controllerMux,generateValidated}=AI;
+
+// MOTO BOWL — Tecmo Bowl crossed with Excitebike for the 4:9 strip. Downs and
+// play calls give the drama its grammar; throttle heat and dirt give every
+// snap its physics. Human and bot steer the same bike through one advanceBike
+// path, the defense reads tendencies instead of rolling dice, the terrain is
+// generated and validated per drive, and the title match ends — win or lose —
+// at frame 54,000 against a rival that scores on a fixed broadcast clock.
+const TAU=Math.PI*2,PPY=7,GOAL=100*PPY,LEFT=12,RIGHT=148,MATCH_FRAMES=54000;
+const TURF='#0e2f1c',TURF2='#123723',INK='#07120b',CHALK='#cfe0d2',GOLD='#ffd166',
+  ORANGE='#ff8a2a',CORAL='#ff6f6b',MINT='#68e0c1',BLUE='#7f9dff',MUDC='#6b4a2a',
+  RAMPC='#c9a05a',OILC='#141a26',CREAM='#fff0c9';
+const PLAY_DEFS=[
+  {name:'SWEEP LEFT',x:34},
+  {name:'MID BLAST',x:80},
+  {name:'OPTION RIGHT',x:126}
+];
+const PERSONAS=[
+  {name:'DIESEL',power:.34,fuzz:5,heatCap:76,showboat:2,jukeLead:15,color:CORAL},
+  {name:'GHOST',power:.10,fuzz:3,heatCap:62,showboat:4,jukeLead:11,color:MINT},
+  {name:'BIG AIR',power:.20,fuzz:6,heatCap:70,showboat:9,jukeLead:13,color:GOLD}
+];
+// The rival's offense plays in another timeline; its points arrive as
+// deterministic pressure beats on the scoreboard. Fourteen touchdowns sit at
+// the 2026-07-10 calibration's 10th-percentile final score: most matches are
+// close wins, and a flat match genuinely loses the title.
+const RIVAL_SCHEDULE=[[3300,7],[6900,7],[10500,7],[14100,7],[17700,7],[21300,7],[24900,7],
+  [28500,7],[32100,7],[35700,7],[39300,7],[42900,7],[46500,7],[50100,7]];
+
+let showFrame=0,runFrame=0,matchNo=0,state='huddle',stateT=0,resultT=0,outcome='',camY=0;
+let rusher=null,defenders=[],blockers=[],terrain=null,texts=[],plan=null,planAt=-1e9,defSerial=0;
+let persona=PERSONAS[0],personaIndex=0,lastLapse=false;
+let down=1,scrimmage=20*PPY,toGain=30*PPY,driveNo=0,playNo=0,wave=0;
+let homeScore=0,rivalScore=0,rivalNext=0;
+let pickIndex=1,defKey=1,keyed=false,pickHistory=[],genAttempts=0;
+let playMaxY=0,playMaxYFrame=0,playStartY=0,pendingTurnover=false;
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0;
+const stats={plays:0,drives:0,yards:0,tds:0,firstDowns:0,fourthDownConversions:0,tackles:0,
+  brokenTackles:0,hurdles:0,jukes:0,blocks:0,launches:0,landings:0,overheats:0,tumbles:0,whistles:0,
+  turnovers:0,keyedPlays:0,readsDodged:0,rivalPoints:0,lapses:0,endings:0,wins:0,
+  events:0,progress:0,maxEventLull:0,maxProgressLull:0,appliedIntents:0,admireIntents:0};
+
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},
+  2:{frames:42,minGap:90},
+  3:{frames:78,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+// Acts. The storm soaks the whole arena (grip, pace, and landings); the blitz
+// package is the defense's own act — stacked fronts on every huddle while it
+// lives. Both telegraph on fixed clocks with zero RNG draws, and the bot's
+// riding must visibly change during the warning, not at the land.
+const storm={phase:'calm',warnAt:3600,landAt:3840,endAt:5040,count:0};
+const blitz={phase:'calm',warnAt:7800,landAt:8010,endAt:9510,count:0};
+const actNotes=[];
+
+function yd(y){return y/PPY;}
+function sayAt(s,c,wy,t){texts.push({s,c:c||CREAM,x:80,worldY:wy,t:t||60});}
+function markEvent(n){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(n&&playing())addScore(n);}
+function markProgress(n){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(n&&playing())addScore(n);}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+24});}
+function noteAct(e){actNotes.push({kind:e.kind,id:e.id,at:e.at,tag:e.tag,landsAt:e.landsAt});SHOW.note(e);}
+function finiteObject(o){return Object.values(o).filter(v=>typeof v==='number').every(Number.isFinite);}
+function allFinite(){return finiteObject(rusher)&&defenders.every(finiteObject)&&blockers.every(finiteObject);}
+
+// ---- terrain: generated and proven per drive ---------------------------------
+// Excitebike's track is the level gen: ramps, mud, whoops, and oil laid down
+// fresh for every drive from sim RNG, then validated so at least one honest
+// riding corridor survives every 25-yard window. generateValidated re-rolls
+// pathological layouts instead of shipping them.
+function buildTerrain(fromY){
+  const ramps=[],muds=[],oils=[],whoops=[];
+  for(let y=fromY+8*PPY;y<GOAL-4*PPY;y+=12*PPY){
+    if(hash(y,matchNo*17+driveNo)>0.45)ramps.push({x:RI(30,130),y:y+RI(-14,14),w:26});
+  }
+  const mudN=3+Math.min(3,wave);
+  for(let i=0;i<mudN;i++)muds.push({x:RI(24,136),y:fromY+RI(6,88)*PPY,w:RI(26,44),len:RI(28,52)});
+  const whoopN=1+(wave>=2?1:0);
+  for(let i=0;i<whoopN;i++)whoops.push({y:fromY+RI(14,80)*PPY,len:RI(40,64)});
+  if(wave>=2)for(let i=0;i<wave-1&&i<3;i++)oils.push({x:RI(28,132),y:fromY+RI(10,86)*PPY,w:RI(20,30),len:RI(18,30)});
+  return{ramps,muds,oils,whoops};
+}
+function corridorClear(t,x,y0,y1){
+  for(const m of t.muds)if(Math.abs(m.x-x)<m.w/2+8&&m.y<y1&&m.y+m.len>y0)return false;
+  for(const o of t.oils)if(Math.abs(o.x-x)<o.w/2+8&&o.y<y1&&o.y+o.len>y0)return false;
+  return true;
+}
+function validTerrain(t,fromY){
+  for(let y0=fromY;y0<GOAL;y0+=25*PPY){
+    let open=false;
+    for(let x=24;x<=136&&!open;x+=8)if(corridorClear(t,x,y0,y0+25*PPY))open=true;
+    if(!open)return false;
+  }
+  return true;
+}
+function genTerrain(fromY){
+  const out=generateValidated(()=>buildTerrain(fromY),t=>validTerrain(t,fromY),{maxAttempts:24});
+  genAttempts+=out.attempts;
+  return out.value;
+}
+function mudAt(x,y){for(const m of terrain.muds)if(Math.abs(m.x-x)<m.w/2&&y>=m.y&&y<=m.y+m.len)return m;return null;}
+function oilAt(x,y){for(const o of terrain.oils)if(Math.abs(o.x-x)<o.w/2&&y>=o.y&&y<=o.y+o.len)return o;return null;}
+function whoopAt(y){for(const s of terrain.whoops)if(y>=s.y&&y<=s.y+s.len)return s;return null;}
+function rampAt(x,y0,y1){for(const r of terrain.ramps)if(Math.abs(r.x-x)<r.w/2&&r.y>y0&&r.y<=y1)return r;return null;}
+
+// ---- one bike, one physics path -----------------------------------------------
+// advanceBike is the entire rusher integrator: human intents, bot intents, and
+// the planner's copied-state rollouts all pass through this exact function.
+// Pure math on the state it is handed plus the terrain and the wet flag — no
+// RNG, no presentation reads.
+function makeRusher(x,y){
+  return{x,y,vx:0,v:.9,z:0,vz:0,heat:18,wobble:0,stallT:0,tumbleT:0,jukeT:0,hopCd:0,
+    breakCd:0,breakaway:false,wheelie:0,intent:null,lastX:x,lastY:y};
+}
+function stormLive(){return storm.phase==='live';}
+function advanceBike(b,intent,env){
+  const out={launched:false,landed:false,overheated:false,tumbled:false,juked:false,hopped:false};
+  if(b.jukeT>0)b.jukeT--;if(b.hopCd>0)b.hopCd--;if(b.breakCd>0)b.breakCd--;
+  if(b.tumbleT>0){
+    b.tumbleT--;b.v=Math.max(.25,b.v*.965);b.vx*=.9;
+    b.x=clamp(b.x+b.vx,LEFT,RIGHT);b.y+=b.v*.4;
+    b.lastX=b.x;b.lastY=b.y;return out;
+  }
+  if(b.stallT>0){
+    b.stallT--;b.v=Math.max(.3,b.v*.985);b.vx*=.92;
+    b.x=clamp(b.x+b.vx,LEFT,RIGHT);b.y+=b.v;
+    b.heat=Math.max(24,b.heat-.5);
+    b.lastX=b.x;b.lastY=b.y;return out;
+  }
+  const grip=env.wet?.68:1;
+  if(b.z<=0){
+    b.vx+=clamp(intent.steer||0,-1,1)*.11*grip;b.vx*=.86;
+    if(oilAt(b.x,b.y)){b.vx*=1.05;b.vx+=clamp(intent.steer||0,-1,1)*-.06;}
+    let target=intent.brake?.5:intent.turbo?(env.wet?1.5:1.7):1.32;
+    if(mudAt(b.x,b.y)){target=Math.min(target,.62);b.v*=.95;}
+    if(whoopAt(b.y)){target=Math.min(target,1.28);if(b.v>1.2)b.wobble+=intent.turbo?1.7:1.1;}
+    b.v+=(target-b.v)*.05;
+    if(intent.turbo&&!intent.brake)b.heat=Math.min(102,b.heat+.85);
+    else b.heat=Math.max(0,b.heat-.45);
+    if(b.heat>=100){b.stallT=100;b.heat=26;out.overheated=true;}
+    if(rampAt(b.x,b.y,b.y+b.v)&&b.v>.85){b.vz=.62+b.v*.42;b.z=.01;out.launched=true;}
+    else if(intent.jump&&b.hopCd<=0){b.vz=.5;b.z=.01;b.hopCd=48;out.hopped=true;}
+    if((intent.juke===1||intent.juke===-1)&&b.jukeT<=0){b.vx+=intent.juke*1.7;b.jukeT=58;b.wobble+=7;out.juked=true;}
+    b.wobble=Math.max(0,b.wobble-.55);
+    if(b.wobble>26){b.tumbleT=66;b.wobble=0;b.v=Math.max(.35,b.v*.4);out.tumbled=true;}
+  }else{
+    b.z+=b.vz;b.vz-=.052;
+    b.vx+=clamp(intent.steer||0,-1,1)*.04;b.vx*=.94;
+    b.v*=.999;
+    if(b.z<=0){b.z=0;b.vz=0;out.landed=true;
+      b.wobble+=Math.max(0,Math.abs(b.vx)*5-2.4)+(env.wet?3:0);}
+  }
+  b.x=clamp(b.x+b.vx,LEFT,RIGHT);
+  if(b.x===LEFT||b.x===RIGHT){b.vx*=-.4;b.wobble+=1.5;} // arena boards, not sidelines
+  b.y+=b.v;
+  b.lastX=b.x;b.lastY=b.y;
+  return out;
+}
+
+// ---- the defense ----------------------------------------------------------------
+// Role-discipline pursuit: linemen fire off the ball, backers mirror and fill,
+// safeties keep depth until the rusher threatens. Dives are committed and
+// visibly punished by a sprawl when they miss — the juke's whole payoff. The
+// formation you read in the huddle is the formation that fires at the snap;
+// a read play gets a burst of pursuit speed, never a teleport.
+function defSpeed(d){
+  const base=d.role==='line'?1.02:d.role==='backer'?1.22:d.role==='corner'?1.45:1.5;
+  return(base+Math.min(5,wave)*.045)*(stormLive()?.94:1)*(d.boostT>0?1.16:1);
+}
+function makeDefender(role,x,y){
+  return{id:defSerial++,role,x,y,vx:0,vy:0,diveT:0,sprawlT:0,engageT:0,dvx:0,dvy:0,boostT:0,hurdled:false};
+}
+function spawnDefense(){
+  defenders=[];
+  const stacked=blitz.phase==='live';
+  const lineN=3+(stacked?1:0);
+  for(let i=0;i<lineN;i++){
+    const spread=stacked?38:56;
+    const x=clamp(80+(i-(lineN-1)/2)*spread+RI(-6,6),LEFT+6,RIGHT-6);
+    defenders.push(makeDefender('line',x,scrimmage+RI(2,4)*PPY));
+  }
+  for(let i=0;i<2;i++)defenders.push(makeDefender('backer',clamp(50+i*60+RI(-8,8),LEFT+6,RIGHT-6),scrimmage+RI(8,11)*PPY));
+  const safetyN=1+(wave>=2?1:0);
+  for(let i=0;i<safetyN;i++)defenders.push(makeDefender('safety',
+    clamp(56+i*48+RI(-10,10),LEFT+6,RIGHT-6),scrimmage+(stacked?RI(12,15):RI(19,24))*PPY));
+  // Corners live in the open field: they backpedal to stay ahead of the run
+  // and turn breakaways into real chases instead of free grass.
+  const cornerN=1+(wave>=2?1:0)+(wave>=4?1:0);
+  for(let i=0;i<cornerN;i++)defenders.push(makeDefender('corner',i%2?126:34,scrimmage+RI(29,35)*PPY));
+}
+function stepDefender(d,r){
+  if(d.boostT>0)d.boostT--;
+  if(d.engageT>0){d.engageT--;d.vx*=.85;d.vy*=.85;d.x=clamp(d.x+d.vx,LEFT,RIGHT);d.y+=d.vy;return;}
+  if(d.sprawlT>0){d.sprawlT--;d.vx*=.86;d.vy*=.86;d.x+=d.vx;d.y+=d.vy;return;}
+  if(d.diveT>0){
+    // The first half of a dive still tracks the target; only the layout is
+    // committed. Beating it takes a timed juke, not a reflex.
+    if(d.diveT>8){const hx=r.x-d.x,hy=r.y-d.y,hd=Math.hypot(hx,hy)||1;
+      d.dvx+=(hx/hd*2.05-d.dvx)*.16;d.dvy+=(hy/hd*2.05-d.dvy)*.16;}
+    d.diveT--;d.x=clamp(d.x+d.dvx,LEFT,RIGHT);d.y+=d.dvy;
+    if(d.diveT===0)d.sprawlT=48;return;}
+  const sp=defSpeed(d);
+  const dx=r.x-d.x,dy=r.y-d.y,dist=Math.hypot(dx,dy)||1;
+  // Deep defenders cut the angle to the goal line instead of chasing heels.
+  const lead=clamp(dist/2.4,0,d.role==='corner'||d.role==='safety'?90:40);
+  let ax=r.x+r.vx*lead,ay=r.y+r.v*lead;
+  if(d.role==='backer'&&dy<-2*PPY){ax=r.x*.7+d.x*.3;ay=d.y+2;}
+  if(d.role==='safety'&&dist>92){ax=r.x*.6+80*.4;ay=d.y+Math.max(0,r.v-.6);}
+  if(d.role==='corner'&&dy<9*PPY&&dist>52){ax=r.x*.8+d.x*.2;ay=Math.max(d.y,r.y+8*PPY);}
+  const adx=ax-d.x,ady=ay-d.y,ad=Math.hypot(adx,ady)||1;
+  d.vx+=(adx/ad*sp-d.vx)*.085;d.vy+=(ady/ad*sp-d.vy)*.085;
+  if(mudAt(d.x,d.y)){d.vx*=.94;d.vy*=.94;}
+  d.x=clamp(d.x+d.vx,LEFT,RIGHT);d.y+=d.vy;
+  // Committed dive: close, and the rusher is on the ground to be hit.
+  if(dist<15&&r.z<3&&d.diveT<=0&&d.sprawlT<=0){
+    const t=clamp(dist/2.05,4,12),px=r.x+r.vx*t,py=r.y+r.v*t;
+    const pdx=px-d.x,pdy=py-d.y,pd=Math.hypot(pdx,pdy)||1;
+    d.diveT=16;d.dvx=pdx/pd*2.05;d.dvy=pdy/pd*2.05;
+  }
+}
+// Blockers: two escort riders who hunt the most dangerous unblocked defender
+// and lock him up on contact — Tecmo's follow-your-blocks, on dirt bikes.
+function makeBlocker(x,y){return{id:defSerial++,x,y,vx:0,vy:0,engageT:0,blockCd:0};}
+function spawnBlockers(){
+  blockers=[makeBlocker(rusher.x-15,scrimmage+PPY),makeBlocker(rusher.x+15,scrimmage+PPY)];
+}
+function stepBlocker(bk,r,ds){
+  if(bk.blockCd>0)bk.blockCd--;
+  if(bk.engageT>0){bk.engageT--;bk.vx*=.85;bk.vy*=.85;bk.x=clamp(bk.x+bk.vx,LEFT,RIGHT);bk.y+=bk.vy;return null;}
+  let best=null,bd=1e9;
+  for(const d of ds){
+    if(d.sprawlT>0||d.engageT>0||d.diveT>0)continue;
+    const dy=d.y-r.y;if(dy<-8||dy>150)continue;
+    const dd=Math.hypot(d.x-bk.x,d.y-bk.y)+Math.abs(d.x-r.x)*.5;
+    if(dd<bd){bd=dd;best=d;}
+  }
+  let ax,ay;
+  if(best){ax=best.x;ay=best.y;}
+  else{ax=r.x+(bk.id%2?16:-16);ay=r.y+36;} // escort formation when no threat
+  const adx=ax-bk.x,ady=ay-bk.y,ad=Math.hypot(adx,ady)||1,sp=1.12;
+  bk.vx+=(adx/ad*sp-bk.vx)*.08;bk.vy+=(ady/ad*sp-bk.vy)*.08;
+  if(mudAt(bk.x,bk.y)){bk.vx*=.94;bk.vy*=.94;}
+  bk.x=clamp(bk.x+bk.vx,LEFT,RIGHT);bk.y+=bk.vy;
+  // A block is a window, not an erasure: the blocker pays more time than the
+  // defender and needs a long remount before he can throw the next one.
+  if(best&&bk.blockCd<=0&&Math.hypot(best.x-bk.x,best.y-bk.y)<7){
+    bk.engageT=70;bk.blockCd=240;best.engageT=30;best.vx*=.2;best.vy*=.2;
+    return best;
+  }
+  return null;
+}
+function defenderContact(){
+  if(rusher.z>3.2||rusher.tumbleT>0)return null;
+  for(const d of defenders){
+    if(d.sprawlT>0||d.engageT>0)continue;
+    if(Math.hypot(d.x-rusher.x,d.y-rusher.y)<(d.diveT>0?9:7.5))return d;
+  }
+  return null;
+}
+
+// ---- downs, drives, plays -------------------------------------------------------
+function newDrive(reason){
+  driveNo++;stats.drives++;wave=Math.min(6,driveNo-1);
+  down=1;scrimmage=20*PPY;toGain=scrimmage+10*PPY;
+  terrain=genTerrain(scrimmage);
+  pickHistory=[];
+  startHuddle();
+  if(reason)sayAt(reason,BLUE,rusher.y+26,70);
+}
+function startHuddle(){
+  state='huddle';stateT=90;playNo++;
+  rusher.x=clamp(rusher.x,40,120);rusher.y=scrimmage-3*PPY;rusher.v=.9;rusher.vx=0;rusher.z=0;rusher.vz=0;
+  rusher.stallT=0;rusher.tumbleT=0;rusher.wobble=0;rusher.breakaway=false;
+  pickIndex=1;keyed=false;plan=null;planAt=-1e9;
+  defKey=predictKey();
+  spawnDefense();spawnBlockers();
+}
+function predictKey(){
+  // The coordinator keys the offense's favorite call from the last four
+  // snaps; a fresh tendency chart falls back to the middle. Pure history math.
+  if(!pickHistory.length)return 1;
+  const counts=[0,0,0];for(const p of pickHistory.slice(-4))counts[p]++;
+  let best=1,n=-1;for(let i=0;i<3;i++)if(counts[i]>n){n=counts[i];best=i;}
+  return best;
+}
+function snap(){
+  state='play';stateT=0;stats.plays++;
+  playStartY=rusher.y;playMaxY=rusher.y;playMaxYFrame=runFrame;
+  pickHistory.push(pickIndex);if(pickHistory.length>8)pickHistory.shift();
+  keyed=pickIndex===defKey;
+  if(keyed){stats.keyedPlays++;
+    for(const d of defenders)if(d.role==='line')d.boostT=120;
+    sayAt('DEFENSE READS IT!',CORAL,scrimmage+8*PPY,66);shake(2);
+  }
+  markEvent();
+}
+function endPlay(reason,tier1Id){
+  if(state!=='play')return;
+  const gained=Math.max(0,rusher.y-playStartY);
+  stats.yards+=yd(gained);
+  markEvent();markProgress();
+  if(tier1Id)offer(tier1Id,1,rusher.x,rusher.y,reason);
+  scrimmage=clamp(rusher.y,6*PPY,GOAL-1);
+  if(scrimmage>=toGain){
+    const fourth=down===4;
+    down=1;toGain=Math.min(GOAL,scrimmage+10*PPY);
+    stats.firstDowns++;markProgress(40);
+    if(fourth){stats.fourthDownConversions++;offer('fourth-down',2,rusher.x,rusher.y,driveNo);
+      sayAt('4TH DOWN MOVES THE CHAINS',GOLD,rusher.y+20,80);fxBurst(rusher.x,sy(rusher.y),10,GOLD,1.6);}
+    else{offer('first-down',2,rusher.x,rusher.y,stats.firstDowns);sayAt('FIRST DOWN',GOLD,rusher.y+20,66);}
+  }else{
+    down++;
+    if(down>4){
+      stats.turnovers++;pendingTurnover=true;
+      offer('turnover',2,rusher.x,rusher.y,driveNo);
+      state='dead';stateT=80;sayAt('TURNOVER ON DOWNS',CORAL,rusher.y+20,80);return;
+    }
+  }
+  state='dead';stateT=70;
+  if(reason)sayAt(reason,CHALK,rusher.y+14,54);
+}
+function touchdown(){
+  if(state!=='play')return;
+  state='td';stateT=150;
+  homeScore+=7;stats.tds++;stats.yards+=yd(Math.max(0,GOAL-playStartY));
+  markEvent(300);markProgress(3);
+  offer('touchdown',3,rusher.x,rusher.y,stats.tds);
+  fxBurst(rusher.x,sy(rusher.y),34,GOLD,2.8,.02);fxDust(rusher.x,sy(rusher.y)+4,10,ORANGE);
+  shake(7);ring(rusher.x,sy(rusher.y),GOLD,2.4,30);
+  sayAt('TOUCHDOWN!',GOLD,rusher.y+26,110);
+}
+function rivalStep(){
+  if(rivalNext>=RIVAL_SCHEDULE.length)return;
+  const[at,pts]=RIVAL_SCHEDULE[rivalNext];
+  if(runFrame>=at){
+    rivalNext++;rivalScore+=pts;stats.rivalPoints+=pts;
+    markEvent();offer('rival-score',1,80,rusher.y+40,pts);
+    sayAt(pts>=7?'RIVALS PUNCH IT IN +7':'RIVAL FIELD GOAL +3',BLUE,rusher.y+40,84);
+  }
+}
+function finishMatch(){
+  if(state==='ending')return;
+  state='ending';resultT=360;stats.endings++;
+  const won=homeScore>rivalScore;outcome=won?'TITLE WON':'TITLE LOST';
+  if(won){stats.wins++;markEvent(800);markProgress(4);
+    offer('title',3,rusher.x,rusher.y,'won');fxBurst(rusher.x,sy(rusher.y),44,GOLD,3.2,.02);}
+  else{markEvent(80);offer('final-whistle',2,rusher.x,rusher.y,'lost');}
+  sayAt(outcome,won?GOLD:CORAL,rusher.y+34,240);shake(won?9:4);
+}
+
+// ---- acts --------------------------------------------------------------------
+function resetActs(){
+  Object.assign(storm,{phase:'calm',warnAt:3600,landAt:3840,endAt:5040});
+  Object.assign(blitz,{phase:'calm',warnAt:7800,landAt:8010,endAt:9510});
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){storm.phase='calm';blitz.phase='calm';return;}
+  if(storm.phase==='calm'&&runFrame===storm.warnAt){
+    storm.phase='warn';plan=null;
+    noteAct({kind:'act-warning',id:'storm',at:showFrame,tag:runFrame,landsAt:showFrame+240});
+    sayAt('STORM ROLLING IN',BLUE,rusher.y+44,90);
+  }else if(storm.phase==='warn'&&runFrame>=storm.landAt){
+    storm.phase='live';noteAct({kind:'act-land',id:'storm',at:showFrame,tag:runFrame});
+    sayAt('THE SKY OPENS UP',CREAM,rusher.y+44,72);shake(3);
+  }else if(storm.phase==='live'&&runFrame>=storm.endAt){
+    storm.count++;storm.phase='calm';storm.warnAt+=9600;
+    storm.landAt=storm.warnAt+240;storm.endAt=storm.landAt+1200;
+    offer('storm-clear',2,rusher.x,rusher.y,storm.count);sayAt('RAIN BREAKS',MINT,rusher.y+40,60);
+  }
+  if(blitz.phase==='calm'&&runFrame===blitz.warnAt){
+    blitz.phase='warn';plan=null;
+    noteAct({kind:'act-warning',id:'blitz',at:showFrame,tag:runFrame,landsAt:showFrame+210});
+    sayAt('DEFENSE STACKS THE BOX',CORAL,rusher.y+50,90);
+  }else if(blitz.phase==='warn'&&runFrame>=blitz.landAt){
+    blitz.phase='live';noteAct({kind:'act-land',id:'blitz',at:showFrame,tag:runFrame});
+    sayAt('BLITZ PACKAGE ON',CORAL,rusher.y+50,72);shake(2);
+  }else if(blitz.phase==='live'&&runFrame>=blitz.endAt){
+    blitz.count++;blitz.phase='calm';blitz.warnAt+=10800;
+    blitz.landAt=blitz.warnAt+210;blitz.endAt=blitz.landAt+1500;
+    offer('blitz-survived',2,rusher.x,rusher.y,blitz.count);sayAt('BLITZ CALLED OFF',MINT,rusher.y+44,60);
+  }
+}
+
+// ---- the bot -------------------------------------------------------------------
+// Copied-state lane planning: candidate target lanes x turbo policies roll the
+// exact advanceBike integrator and the exact defender pursuit forward 90
+// frames and take the best surviving line. Pure math on copies — zero RNG.
+function forecastWet(offset){
+  if(typeof globalThis.__NO_ACTS!=='undefined')return false;
+  if(storm.phase==='warn'&&runFrame+offset>=storm.landAt)return true;
+  return storm.phase==='live';
+}
+function simulateLane(targetX,turboOn){
+  const b=Object.assign({},rusher);
+  const ds=defenders.map(d=>Object.assign({},d));
+  const bks=blockers.map(bk=>Object.assign({},bk));
+  let minDist=1e9,rampHit=false,tackled=-1,overheated=false;
+  for(let f=0;f<90;f++){
+    const steer=clamp((targetX-b.x)*.12,-1,1);
+    const ev=advanceBike(b,{steer,turbo:turboOn&&b.heat<92,brake:false,jump:false,juke:0},{wet:forecastWet(f)});
+    if(ev.launched)rampHit=true;if(ev.overheated)overheated=true;
+    for(const bk of bks)stepBlocker(bk,b,ds);
+    for(const d of ds){
+      stepDefender(d,b);
+      if(d.sprawlT<=0&&d.engageT<=0&&b.z<3.2&&b.tumbleT<=0){
+        const dd=Math.hypot(d.x-b.x,d.y-b.y);
+        if(dd<minDist)minDist=dd;
+        if(dd<(d.diveT>0?9:7.5)&&tackled<0)tackled=f;
+      }
+    }
+    if(tackled>=0)break;
+    if(b.y>=GOAL)break;
+  }
+  const gain=b.y-rusher.y;
+  return{targetX,turboOn,gain,minDist,rampHit,tackled,overheated,
+    score:gain*1.1+(tackled<0?60:tackled*.9)+Math.min(24,minDist)*.9
+      -(overheated?70:0)+(rampHit?persona.showboat*3:0)};
+}
+function reactiveLane(){
+  // Ablation policy: run at the widest gap between the defenders ahead.
+  const ahead=defenders.filter(d=>d.y>rusher.y-6&&d.y<rusher.y+30*PPY&&d.sprawlT<=0)
+    .map(d=>d.x).sort((a,b)=>a-b);
+  const edges=[LEFT+8,...ahead,RIGHT-8];
+  let bestX=80,bestGap=-1;
+  for(let i=1;i<edges.length;i++){const gap=edges[i]-edges[i-1];
+    if(gap>bestGap){bestGap=gap;bestX=(edges[i]+edges[i-1])/2;}}
+  return{targetX:clamp(bestX,LEFT+10,RIGHT-10),turboOn:rusher.heat<55,gain:0,minDist:99,rampHit:false,tackled:-1,score:0};
+}
+function buildPlan(){
+  if(typeof globalThis.__NO_LANE_PLAN!=='undefined')return reactiveLane();
+  const cands=[];
+  for(const x of[28,54,80,106,132])for(const turbo of[false,true])cands.push(simulateLane(x,turbo));
+  cands.sort((a,b)=>b.score-a.score||a.targetX-b.targetX);
+  return cands[0];
+}
+function scorePlayCall(i){
+  const p=PLAY_DEFS[i];let s=0;
+  if(corridorClear(terrain,p.x,scrimmage,scrimmage+20*PPY))s+=6;
+  for(const d of defenders)if(Math.abs(d.x-p.x)<30&&d.y<scrimmage+14*PPY)s-=2.2;
+  for(const r of terrain.ramps)if(Math.abs(r.x-p.x)<26&&r.y>scrimmage&&r.y<scrimmage+22*PPY)s+=persona.showboat*.4;
+  return s;
+}
+function choosePlay(){
+  const scores=[0,1,2].map(scorePlayCall);
+  let best=0;for(let i=1;i<3;i++)if(scores[i]>scores[best])best=i;
+  if(typeof globalThis.__NO_PLAY_MIX!=='undefined')return best;
+  // Tendency management: if the coordinator has surely charted this exact
+  // call, take the second-best play unless the best one is a blowout.
+  const predicted=predictKey();
+  if(best===predicted){
+    let alt=-1;for(let i=0;i<3;i++)if(i!==best&&(alt<0||scores[i]>scores[alt]))alt=i;
+    if(alt>=0&&scores[best]-scores[alt]<5){stats.readsDodged++;return alt;}
+  }
+  return best;
+}
+function lapseActive(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return false;
+  const slot=runFrame%5400,on=340+personaIndex*180,active=slot>=on&&slot<on+18;
+  if(active&&!lastLapse){stats.lapses++;markEvent();}
+  lastLapse=active;
+  return active;
+}
+function incomingDiver(){
+  let best=null,bd=1e9;
+  for(const d of defenders){
+    if(d.sprawlT>0)continue;
+    const dd=Math.hypot(d.x-rusher.x,d.y-rusher.y);
+    if(dd<bd&&(d.diveT>0||dd<persona.jukeLead)){bd=dd;best=d;}
+  }
+  return best?{d:best,dist:bd}:null;
+}
+function botController(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){
+    stats.admireIntents++;
+    return{steer:0,turbo:false,brake:false,jump:false,juke:0,pick:pickIndex,tactic:'ADMIRE'};
+  }
+  if(state==='huddle'){
+    if(stateT===60)pickIndex=choosePlay();
+    return{steer:0,turbo:false,brake:false,jump:false,juke:0,pick:pickIndex,tactic:'HUDDLE UP'};
+  }
+  if(state!=='play'){
+    return{steer:0,turbo:false,brake:false,jump:false,juke:0,pick:pickIndex,
+      tactic:state==='td'?'CELEBRATE':'RESET'};
+  }
+  if(!plan||runFrame-planAt>=30){plan=buildPlan();planAt=runFrame;}
+  const lapse=lapseActive();
+  const fuzz=(hash(playNo*31+personaIndex,Math.floor(runFrame/24))-.5)*persona.fuzz*2;
+  let targetX=clamp(plan.targetX+fuzz,LEFT+8,RIGHT-8);
+  let turbo=plan.turboOn&&rusher.heat<persona.heatCap;
+  let brake=false;
+  let tactic=turbo?'TURBO BURST':'FIND THE GAP';
+  if(storm.phase==='warn'){turbo=false;brake=rusher.v>1.3;targetX=clamp(targetX,60,100);tactic='CUT TURBO';}
+  else if(blitz.phase==='warn'){targetX=targetX<80?30:130;tactic='SPREAD WIDE';}
+  if(lapse){targetX=rusher.x;turbo=rusher.intent?!!rusher.intent.turbo:false;brake=false;tactic='LAPSE';}
+  let jump=false,juke=0;
+  const threat=incomingDiver();
+  if(threat&&!lapse&&rusher.z<=0){
+    if(threat.d.diveT>0&&rusher.hopCd<=0&&threat.dist<13){jump=true;tactic='HURDLE';}
+    else if(rusher.jukeT<=0&&threat.dist<persona.jukeLead){
+      juke=threat.d.x<=rusher.x?1:-1;tactic='JUKE';}
+  }
+  // Redline: a pursuer on the back wheel is worth cooking the engine for —
+  // the honest way overheats happen to a bot with a heat governor.
+  if(!lapse&&!turbo&&storm.phase!=='warn'){
+    // Some chases are worth blowing the engine over: the redline ceiling
+    // sits above the stall point on a deterministic per-play gut call.
+    const ceiling=hash(playNo*7+personaIndex,driveNo)<.35?101:96;
+    if(rusher.heat<ceiling)for(const d of defenders){
+      if(d.sprawlT>0||d.engageT>0)continue;
+      const dd=Math.hypot(d.x-rusher.x,d.y-rusher.y);
+      if(dd<26&&d.y<rusher.y+4){turbo=true;tactic='REDLINE';break;}
+    }
+  }
+  if(rusher.stallT>0)tactic='ENGINE STALL';
+  if(rusher.tumbleT>0)tactic='RECOVER';
+  const steer=clamp((targetX-rusher.x)*.12,-1,1);
+  return{steer,turbo,brake,jump,juke,pick:pickIndex,tactic};
+}
+function humanIntent(){
+  const steer=(keys.right?1:0)-(keys.left?1:0);
+  if(state==='huddle'&&steer)pickIndex=steer<0?0:2;
+  else if(state==='huddle'&&keys.down)pickIndex=1;
+  return{steer,turbo:!!keys.up,brake:!!keys.down&&state==='play',jump:!!keys.a,
+    juke:(keys.b||keys.c)?(steer||(rusher.vx<0?-1:1)):0,pick:pickIndex,tactic:'MANUAL'};
+}
+const controller=controllerMux({human:humanIntent,ai:botController,manual:()=>playing()||manual()});
+function applyIntent(intent){rusher.intent=intent;stats.appliedIntents++;return intent;}
+
+// ---- match flow ----------------------------------------------------------------
+function resetMatch(full){
+  matchNo++;runFrame=0;state='huddle';stateT=0;resultT=0;outcome='';
+  down=1;driveNo=0;playNo=0;wave=0;homeScore=0;rivalScore=0;rivalNext=0;pendingTurnover=false;
+  personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];lastLapse=false;
+  texts=[];defenders=[];pickHistory=[];plan=null;planAt=-1e9;
+  resetActs();
+  rusher=makeRusher(80,17*PPY);
+  newDrive();
+  camY=rusher.y;
+  if(full)SHOW.reset(showFrame);
+}
+function stepWorld(){
+  runFrame++;
+  stepActs();rivalStep();
+  if(runFrame>=MATCH_FRAMES){finishMatch();return;}
+  const intent=applyIntent(controller());
+  if(state==='huddle'){
+    stateT--;
+    if(intent.pick!==undefined&&intent.pick!==null)pickIndex=clamp(intent.pick,0,2);
+    if(stateT<=0)snap();
+  }else if(state==='play'){
+    const ev=advanceBike(rusher,intent,{wet:stormLive()});
+    if(ev.launched){stats.launches++;markEvent(15);offer('launch',1,rusher.x,rusher.y,'ramp');fxDust(rusher.x,sy(rusher.y),6,RAMPC);}
+    if(ev.landed){stats.landings++;markEvent();offer('landing',1,rusher.x,rusher.y,'land');}
+    if(ev.hopped)markEvent();
+    if(ev.juked){stats.jukes++;markEvent(8);}
+    if(ev.overheated){stats.overheats++;markEvent();offer('overheat',1,rusher.x,rusher.y,'stall');
+      sayAt('ENGINE OVERHEAT',CORAL,rusher.y+16,66);shake(3);}
+    if(ev.tumbled){stats.tumbles++;markEvent();sayAt('WIPEOUT',CORAL,rusher.y+14,60);shake(4);}
+    for(const bk of blockers){
+      const hit=stepBlocker(bk,rusher,defenders);
+      if(hit){stats.blocks++;markEvent(6);offer('block',1,bk.x,bk.y,hit.id);fxDust(bk.x,sy(bk.y),5,'#ffb066');}
+    }
+    for(const d of defenders)stepDefender(d,rusher);
+    // Hurdling a committed dive is the signature escape: score it when the
+    // rusher is airborne directly over a diving or sprawling defender.
+    if(rusher.z>2.5)for(const d of defenders){
+      if((d.diveT>0||d.sprawlT>38)&&!d.hurdled&&Math.hypot(d.x-rusher.x,d.y-rusher.y)<10){
+        d.hurdled=true;stats.hurdles++;markEvent(25);offer('hurdle',1,rusher.x,rusher.y,'clear');
+        sayAt('HURDLED!',GOLD,rusher.y+12,54);}
+    }
+    const d=defenderContact();
+    if(d){
+      const power=rusher.v*.5+(rusher.intent&&rusher.intent.turbo?.28:0)+persona.power-Math.min(5,wave)*.045;
+      if(rusher.breakCd<=0&&power>.9&&hash(d.id*13+playNo,runFrame)<clamp(power-.75,0,.6)){
+        stats.brokenTackles++;rusher.breakCd=90;rusher.v*=.82;d.sprawlT=54;
+        markEvent(20);offer('broken-tackle',1,rusher.x,rusher.y,d.id);
+        sayAt('BREAKS THE TACKLE!',ORANGE,rusher.y+12,60);fxDust(rusher.x,sy(rusher.y),8,ORANGE);
+      }else{
+        stats.tackles++;shake(3);fxDust(rusher.x,sy(rusher.y),8,CHALK);
+        endPlay('TACKLED','tackle');
+      }
+    }
+    if(state==='play'){
+      if(rusher.y>playMaxY){playMaxY=rusher.y;playMaxYFrame=runFrame;
+        if(playMaxY-playStartY>=20*PPY&&!rusher.breakaway){rusher.breakaway=true;
+          offer('breakaway',2,rusher.x,rusher.y,playNo);sayAt('BREAKAWAY!',GOLD,rusher.y+18,66);markEvent(30);}}
+      if(rusher.y>=GOAL)touchdown();
+      // Forward progress: the whistle is football's honest anti-stall rule.
+      else if(runFrame-playMaxYFrame>300){stats.whistles++;endPlay('WHISTLE — PROGRESS STOPPED','whistle');}
+      else if(++stateT>1500){stats.whistles++;endPlay('WHISTLE','whistle');}
+    }
+  }else if(state==='dead'){
+    stateT--;rusher.v=Math.max(0,rusher.v-.05);rusher.y+=rusher.v;
+    if(stateT<=0){
+      if(pendingTurnover){pendingTurnover=false;newDrive('RIVAL BALL COMES BACK — NEW DRIVE');}
+      else startHuddle();
+    }
+  }else if(state==='td'){
+    stateT--;rusher.wheelie=Math.min(12,rusher.wheelie+1);rusher.y+=Math.max(.4,rusher.v*.98);rusher.v*=.985;
+    if(stateT<=0){rusher.wheelie=0;newDrive('KICKOFF — FRESH DEFENSE');}
+  }
+  camY+=(rusher.y-camY)*.12;
+}
+function step(){
+  showFrame++;
+  sessionStep({reset:()=>resetMatch(true)});
+  pres=SHOW.step(showFrame);
+  if(state!=='ending'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  }else{
+    resultT--;
+    if(resultT<=0){if(playing())gameOver(outcome+'  '+homeScore+'-'+rivalScore);resetMatch(true);}
+  }
+  stepParts();stepRings();
+  for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+}
+
+// ---- rendering -------------------------------------------------------------------
+function sy(wy){return 270-(wy-camY);}
+const viewerStoryOn=()=>typeof globalThis.__NO_VIEWER_STORY==='undefined';
+let viewerDraw={frame:-1,enabled:false,hud:'',verb:'',downLine:'',forecast:'',chainDrawn:false};
+const VERB_MAP={'HUDDLE UP':'CALL THE PLAY','FIND THE GAP':'FIND THE GAP','TURBO BURST':'TURBO BURST',
+  'CUT TURBO':'CUT THE TURBO','SPREAD WIDE':'BEAT THE BLITZ',REDLINE:'REDLINE THE ENGINE',HURDLE:'HURDLE!',JUKE:'JUKE!',
+  'ENGINE STALL':'ENGINE STALL',RECOVER:'PICK IT BACK UP',CELEBRATE:'CELEBRATE',ADMIRE:'SOAK IT IN',
+  LAPSE:'LOSES FOCUS',RESET:'LINE IT UP',MANUAL:'MANUAL CONTROL'};
+function viewerVerb(){return VERB_MAP[(rusher.intent&&rusher.intent.tactic)||'']||'RIDE';}
+function downLabel(){
+  const d=clamp(down,1,4),dist=Math.max(1,Math.ceil(yd(toGain-scrimmage)));
+  const names=['1ST','2ND','3RD','4TH'];
+  return toGain>=GOAL?names[d-1]+' & GOAL':names[d-1]+' & '+dist;
+}
+// Truthful drive forecast: the live plan already rolled the exact integrator
+// and defense forward; report whether that line reaches the chains.
+function driveStory(){
+  if(state!=='play'||!plan||typeof globalThis.__NO_LANE_PLAN!=='undefined')return{label:'',gain:null};
+  const projected=rusher.y+plan.gain;
+  if(plan.tackled<0&&projected>=GOAL)return{label:'TO THE HOUSE',gain:plan.gain};
+  return{label:projected>=toGain?'CHAINS AHEAD':'SHORT OF CHAINS',gain:plan.gain};
+}
+function drawField(){
+  rect(0,0,W,H,TURF);
+  const yd0=Math.floor((camY-320)/PPY),yd1=Math.ceil((camY+320)/PPY);
+  for(let yy=Math.floor(yd0/10)*10;yy<=yd1;yy+=10){
+    if((yy/10)%2!==0)continue;
+    const py=sy((yy+10)*PPY);
+    rect(0,py,W,10*PPY,TURF2);
+  }
+  for(let yy=Math.floor(yd0/5)*5;yy<=yd1;yy+=5){
+    const py=sy(yy*PPY);if(py<-4||py>H+4)continue;
+    ctx.globalAlpha=yy%10===0?.4:.18;rect(LEFT-4,py,RIGHT-LEFT+8,1,CHALK);ctx.globalAlpha=1;
+  }
+  rect(LEFT-6,0,2,H,CHALK);rect(RIGHT+4,0,2,H,CHALK);
+  rect(0,0,LEFT-6,H,INK);rect(RIGHT+6,0,W-RIGHT-6,H,INK);
+  for(let i=0;i<26;i++){
+    const wy=camY-320+((hash(i,7)*640+(i%2?0:320))%640);
+    const py=sy(wy);
+    if(py>-4&&py<H+4){rect(1+hash(i,3)*4,py,2,2,'#2b3b4e');rect(W-8+hash(i,5)*5,py,2,2,'#2b3b4e');}
+  }
+  const gy=sy(GOAL);
+  if(gy>-70&&gy<H+70){
+    rect(LEFT-4,gy-8*PPY,RIGHT-LEFT+8,8*PPY,'#27406b');
+    for(let x=LEFT;x<RIGHT;x+=16)rect(x,gy-8*PPY+((x/16)%2?10:26),10,4,'#31527f');
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('T I T L E',56,gy-24);
+    rect(LEFT-4,gy,RIGHT-LEFT+8,2,CREAM);
+  }
+}
+function drawTerrainBits(){
+  for(const m of terrain.muds){const py=sy(m.y+m.len),ph=m.len;
+    if(py>H+60||py+ph<-60)continue;
+    rect(m.x-m.w/2,py,m.w,ph,MUDC);
+    ctx.globalAlpha=.4;for(let i=0;i<4;i++)rect(m.x-m.w/2+hash(i,m.x)*(m.w-4),py+hash(i,m.y)*(ph-2),4,2,'#4d3620');ctx.globalAlpha=1;
+  }
+  for(const o of terrain.oils){const py=sy(o.y+o.len),ph=o.len;
+    if(py>H+60||py+ph<-60)continue;
+    rect(o.x-o.w/2,py,o.w,ph,OILC);
+    ctx.globalAlpha=.5;rect(o.x-o.w/2+2,py+2,Math.max(2,o.w-8),2,'#3d5b8a');ctx.globalAlpha=1;
+  }
+  for(const s of terrain.whoops){const py=sy(s.y+s.len),ph=s.len;
+    if(py>H+70||py+ph<-70)continue;
+    ctx.globalAlpha=.55;
+    for(let yy=0;yy<ph;yy+=8)rect(LEFT+2,py+yy,RIGHT-LEFT-4,2,'#7a5c33');
+    ctx.globalAlpha=1;
+  }
+  for(const r of terrain.ramps){const py=sy(r.y);
+    if(py>H+20||py<-20)continue;
+    rect(r.x-r.w/2,py-3,r.w,8,RAMPC);
+    rect(r.x-r.w/2,py-5,r.w,2,'#eccf96');
+  }
+}
+function drawChains(){
+  const py=sy(scrimmage);
+  if(py>-4&&py<H+4){ctx.globalAlpha=.75;rect(LEFT-4,py,RIGHT-LEFT+8,1,'#9fd8ff');ctx.globalAlpha=1;}
+  if(viewerStoryOn()&&toGain<GOAL){
+    const gy=sy(toGain);
+    if(gy>-4&&gy<H+4){viewerDraw.chainDrawn=true;
+      rect(LEFT-4,gy,RIGHT-LEFT+8,2,GOLD);
+      ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText('1ST',RIGHT-10,gy-2);}
+  }
+}
+function drawBike(x,py,z,c,wheelie,tumble,star){
+  const lift=z*2.4;
+  if(z>0){ctx.globalAlpha=.3;rect(x-3,py,6,2,'#000');ctx.globalAlpha=1;}
+  ctx.save();ctx.translate(Math.round(x),Math.round(py-lift));
+  if(tumble)ctx.rotate(Math.sin(showFrame*.6)*.7);
+  else if(wheelie)ctx.rotate(-.35);
+  if(star)rect(-4,-8,8,11,'#fffbe8'); // the ball carrier reads at a glance
+  rect(-3,-1,6,3,'#1a1d24');
+  rect(-3,-4,6,3,c);
+  rect(-1,-7,3,3,star?GOLD:CREAM);
+  rect(-4,1,3,2,'#0a0c10');rect(2,1,3,2,'#0a0c10');
+  ctx.restore();
+}
+function drawDefender(d){
+  const py=sy(d.y);if(py<-10||py>H+10)return;
+  if(d.diveT>0){ctx.save();ctx.translate(Math.round(d.x),Math.round(py));
+    ctx.rotate(Math.atan2(-d.dvy,d.dvx));rect(-5,-2,10,4,BLUE);rect(3,-2,2,2,CREAM);ctx.restore();return;}
+  if(d.sprawlT>0){ctx.globalAlpha=.85;rect(d.x-4,py-2,8,4,'#4a5f9e');ctx.globalAlpha=1;return;}
+  drawBike(d.x,py,0,BLUE,false,false);
+}
+function drawHuddleCards(){
+  if(state!=='huddle')return;
+  const baseY=H-58;
+  ctx.globalAlpha=.92;rect(12,baseY,W-24,26,INK);ctx.globalAlpha=1;
+  ctx.strokeStyle='#2a3b52';ctx.strokeRect(12.5,baseY+.5,W-25,25);
+  ctx.font='bold 5px monospace';
+  for(let i=0;i<3;i++){
+    const cx2=34+i*46,sel=i===pickIndex,parts=PLAY_DEFS[i].name.split(' ');
+    ctx.fillStyle=sel?GOLD:'#5c728c';
+    ctx.fillText(parts[0],cx2-12,baseY+9);
+    ctx.fillText(parts[1],cx2-12,baseY+16);
+    if(sel)rect(cx2-14,baseY+19,26,2,GOLD);
+  }
+}
+function drawActs(){
+  if(storm.phase==='warn'){ctx.fillStyle=BLUE;ctx.font='bold 6px monospace';ctx.fillText('STORM FRONT',58,44);}
+  if(storm.phase==='live'){
+    ctx.globalAlpha=.35;
+    for(let i=0;i<26;i++){
+      const x=(hash(i,11)*W+showFrame*1.7*(1+(i%3)*.2))%W,y=(hash(i,13)*H+showFrame*4.6)%H;
+      rect(x,y,1,5,'#9fc8e8');
+    }
+    ctx.globalAlpha=.12;rect(0,0,W,H,'#1a2f4a');ctx.globalAlpha=1;
+  }
+  if(blitz.phase==='warn'){ctx.fillStyle=CORAL;ctx.font='bold 6px monospace';ctx.fillText('BLITZ COMING',58,52);}
+}
+function drawHud(){
+  if(viewerStoryOn()){
+    const scoreTxt='HOME '+homeScore+' · AWAY '+rivalScore,dl=downLabel(),verb=viewerVerb();
+    const story=driveStory();
+    viewerDraw.hud='MOTO BOWL  '+scoreTxt;viewerDraw.verb=verb;viewerDraw.downLine=dl;viewerDraw.forecast=story.label;
+    ctx.globalAlpha=.94;rect(0,0,W,31,INK);ctx.globalAlpha=1;
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('MOTO BOWL',5,10);
+    ctx.font='bold 6px monospace';
+    ctx.fillStyle=homeScore>rivalScore?GOLD:homeScore<rivalScore?CORAL:CHALK;
+    ctx.fillText(scoreTxt,W-4-scoreTxt.length*4.8,10);
+    ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(verb,5,21);
+    ctx.fillStyle=GOLD;ctx.fillText(dl,100,21);
+    const q=clamp(1+Math.floor(runFrame/13500),1,4);
+    ctx.fillStyle=CHALK;ctx.fillText('Q'+q,142,21);
+    rect(4,26,110,3,'#22392a');
+    rect(4,26,110*clamp(rusher.y/GOAL,0,1),3,ORANGE);
+    rect(4+110*clamp(toGain/GOAL,0,1)-1,25,2,5,GOLD);
+    rect(120,26,36,3,'#22392a');rect(120,26,36*clamp(rusher.heat/100,0,1),3,rusher.heat>75?CORAL:MINT);
+    if(story.label){
+      const c=story.label==='TO THE HOUSE'?GOLD:story.label==='CHAINS AHEAD'?MINT:CORAL,w2=story.label.length*5+10;
+      ctx.globalAlpha=.92;rect(80-w2/2,35,w2,12,INK);ctx.globalAlpha=1;
+      ctx.strokeStyle=c;ctx.strokeRect(80-w2/2+.5,35.5,w2-1,11);
+      ctx.font='bold 7px monospace';ctx.fillStyle=c;ctx.fillText(story.label,80-story.label.length*2.1,44);
+    }
+    return;
+  }
+  rect(0,0,W,24,INK);ctx.font='bold 7px monospace';ctx.fillStyle=GOLD;ctx.fillText('MOTO BOWL',5,10);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText((rusher.intent&&rusher.intent.tactic)||'RIDE',5,19);
+  ctx.fillStyle=CREAM;ctx.fillText(homeScore+'-'+rivalScore+'  '+downLabel(),92,10);
+  ctx.fillStyle=MINT;ctx.fillText('HEAT '+Math.round(rusher.heat),92,19);
+}
+function draw(){
+  viewerDraw={frame:showFrame,enabled:viewerStoryOn(),hud:'',verb:'',downLine:'',forecast:'',chainDrawn:false};
+  preDraw();
+  drawField();drawTerrainBits();drawChains();
+  for(const bk of blockers){const py=sy(bk.y);
+    if(py>-10&&py<H+10)drawBike(bk.x,py,0,bk.engageT>0?'#c97f3d':'#ffb066',false,false);}
+  for(const d of defenders)drawDefender(d);
+  drawBike(rusher.x,sy(rusher.y),rusher.z,rusher.stallT>0?'#8a5a3a':ORANGE,rusher.wheelie>4,rusher.tumbleT>0,true);
+  if(rusher.stallT>0){ctx.globalAlpha=.6+.3*Math.sin(showFrame*.5);
+    ctx.font='bold 6px monospace';ctx.fillStyle=CORAL;ctx.fillText('!',rusher.x-1,sy(rusher.y)-12);ctx.globalAlpha=1;}
+  drawRings();drawParts();
+  for(const t of texts){
+    const py=t.worldY!==undefined?sy(t.worldY):120;
+    ctx.globalAlpha=Math.min(1,t.t/15);ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
+    ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,4,W-t.s.length*4.2-4),clamp(py,40,H-8));
+  }
+  ctx.globalAlpha=1;
+  postDraw();
+  drawActs();drawHuddleCards();drawHud();
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.15;rect(0,viewerStoryOn()?31:24,W,H-(viewerStoryOn()?31:24),GOLD);ctx.globalAlpha=1;}
+  if(state==='ending'){
+    ctx.globalAlpha=.85;rect(12,134,136,76,INK);ctx.globalAlpha=1;
+    ctx.fillStyle=outcome==='TITLE WON'?GOLD:CORAL;ctx.font='bold 12px monospace';
+    ctx.fillText(outcome,outcome==='TITLE WON'?32:30,165);
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;
+    const s=homeScore+' - '+rivalScore;ctx.fillText(s,80-s.length*2.5,184);
+    ctx.font='bold 6px monospace';ctx.fillStyle=CHALK;
+    ctx.fillText(stats.tds+' TDS · '+Math.round(stats.yards)+' YARDS',44,198);
+  }
+  drawSession();
+}
+
+// ---- probes and fixtures ----------------------------------------------------------
+// Signatures intentionally omit SHOW, camera, and FX state so presentation
+// ablations must remain a complete simulation no-op.
+globalThis.__motobowlProbe=()=>({
+  state,runFrame,showFrame,matchNo,persona:persona.name,outcome,finite:allFinite(),
+  down,scrimmageYd:yd(scrimmage),toGainYd:yd(toGain),driveNo,playNo,wave,
+  homeScore,rivalScore,pickIndex,defKey,keyed,genAttempts,
+  rusher:{x:rusher.x,y:rusher.y,vx:rusher.vx,v:rusher.v,z:rusher.z,heat:rusher.heat,
+    stallT:rusher.stallT,tumbleT:rusher.tumbleT,tactic:rusher.intent&&rusher.intent.tactic},
+  defenders:defenders.length,
+  stats:Object.assign({},stats),
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),
+  maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  acts:{storm:storm.phase,blitz:blitz.phase,notes:actNotes.slice()},show:SHOW.probe(),playing:playing()
+});
+globalThis.__motobowlSignature=()=>JSON.stringify({
+  state,runFrame,matchNo,persona:persona.name,down,scrimmage,toGain,driveNo,playNo,wave,
+  homeScore,rivalScore,rivalNext,pickIndex,defKey,keyed,pendingTurnover,pickHistory:pickHistory.slice(),
+  r:[rusher.x,rusher.y,rusher.vx,rusher.v,rusher.z,rusher.vz,rusher.heat,rusher.wobble,
+    rusher.stallT,rusher.tumbleT,rusher.jukeT,rusher.hopCd,rusher.breakCd].map(v=>Math.round(v*1e5)),
+  d:defenders.map(d=>[d.id,d.role,Math.round(d.x*1e4),Math.round(d.y*1e4),Math.round(d.vx*1e4),
+    Math.round(d.vy*1e4),d.diveT,d.sprawlT,d.engageT,d.boostT]),
+  b:blockers.map(bk=>[bk.id,Math.round(bk.x*1e4),Math.round(bk.y*1e4),Math.round(bk.vx*1e4),
+    Math.round(bk.vy*1e4),bk.engageT]),
+  t:{ramps:terrain.ramps.map(r=>[r.x,Math.round(r.y),r.w]),muds:terrain.muds.map(m=>[m.x,Math.round(m.y),m.w,m.len]),
+    oils:terrain.oils.map(o=>[o.x,Math.round(o.y),o.w,o.len]),whoops:terrain.whoops.map(s=>[Math.round(s.y),s.len])},
+  a:[storm.phase,storm.warnAt,storm.landAt,storm.endAt,blitz.phase,blitz.warnAt,blitz.landAt,blitz.endAt],
+  s:[stats.plays,stats.tds,stats.firstDowns,stats.tackles,stats.brokenTackles,stats.hurdles,stats.jukes,
+    stats.launches,stats.landings,stats.overheats,stats.tumbles,stats.whistles,stats.turnovers,
+    stats.keyedPlays,stats.lapses,stats.endings,Math.round(stats.yards*100)]
+});
+globalThis.__motobowlViewerProbe=()=>{
+  const story=driveStory();
+  return{enabled:viewerStoryOn(),hud:'MOTO BOWL  HOME '+homeScore+' · AWAY '+rivalScore,
+    verb:viewerVerb(),downLine:downLabel(),forecast:story.label,forecastGain:story.gain,
+    homeScore,rivalScore,drawn:Object.assign({},viewerDraw)};
+};
+globalThis.__soakProbe=()=>({sig:Math.round(rusher.x*10)+'|'+Math.round(rusher.y*10)+'|'+state+'|'+defenders.reduce((n,d)=>n+Math.round(d.y),0),
+  events:eventSerial,progress:progressSerial,finite:allFinite()});
+// Physical + intent only — no act phases, so an A/B divergence on this string
+// is a real behavior change, never just the warning clock itself.
+globalThis.__motobowlMotion=()=>[Math.round(rusher.x*1e4),Math.round(rusher.y*1e4),Math.round(rusher.vx*1e4),
+  Math.round(rusher.v*1e4),Math.round(rusher.heat*1e4),rusher.intent&&rusher.intent.turbo,
+  rusher.intent&&rusher.intent.brake,rusher.intent&&rusher.intent.steer].join('|');
+globalThis.__motobowlActState=()=>({runFrame,storm:storm.phase,blitz:blitz.phase,state,
+  tactic:rusher.intent&&rusher.intent.tactic});
+globalThis.__motobowlSetAct=kind=>{
+  resetMatch(true);
+  Object.assign(storm,kind==='storm'?{phase:'calm',warnAt:60,landAt:300,endAt:1500}
+    :{phase:'calm',warnAt:999999,landAt:1000239,endAt:1001439});
+  Object.assign(blitz,kind==='blitz'?{phase:'calm',warnAt:60,landAt:270,endAt:1770}
+    :{phase:'calm',warnAt:999999,landAt:1000209,endAt:1001709});
+  stateT=1; // snap almost immediately so the warning catches a live play
+  actNotes.length=0;plan=null;planAt=-1e9;
+  return globalThis.__motobowlActState();
+};
+globalThis.__motobowlManual=()=>({playing:playing(),state,pick:pickIndex,x:rusher.x,y:rusher.y,
+  v:rusher.v,heat:rusher.heat,intent:rusher.intent&&Object.assign({},rusher.intent)});
+globalThis.__motobowlAdmireFixture=()=>{const old=pres;
+  pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};
+  delete globalThis.__NO_ADMIRE;const a=botController();
+  globalThis.__NO_ADMIRE=1;const b=botController();delete globalThis.__NO_ADMIRE;
+  pres=old;return{admired:a.tactic,gated:b.tactic};};
+globalThis.__motobowlRampFixture=()=>{
+  resetMatch(true);
+  const saved=terrain;
+  const results=[];
+  for(const v of[1.0,1.3,1.6,1.85]){
+    terrain={ramps:[{x:80,y:206,w:26}],muds:[],oils:[],whoops:[]};
+    const b=makeRusher(80,200);b.v=v;
+    let air=0,launched=false;
+    for(let f=0;f<200;f++){
+      const ev=advanceBike(b,{steer:0,turbo:false,brake:false,jump:false,juke:0},{wet:false});
+      if(ev.launched)launched=true;
+      if(b.z>0)air++;
+      if(launched&&b.z<=0&&air>0)break;
+    }
+    results.push({v,launched,air,finite:finiteObject(b)});
+  }
+  terrain=saved;
+  return results;
+};
+globalThis.__motobowlOverheatFixture=()=>{
+  resetMatch(true);
+  const saved=terrain;
+  terrain={ramps:[],muds:[],oils:[],whoops:[]};
+  const b=makeRusher(80,200);b.heat=99.5;
+  const ev=advanceBike(b,{steer:0,turbo:true,brake:false,jump:false,juke:0},{wet:false});
+  const stallAt={stallT:b.stallT,heat:b.heat,overheated:ev.overheated,v:b.v};
+  let frames=0;
+  while(b.stallT>0&&frames<300){advanceBike(b,{steer:0,turbo:true,brake:false,jump:false,juke:0},{wet:false});frames++;}
+  terrain=saved;
+  return{stallAt,recoveredAfter:frames,v:b.v,finite:finiteObject(b)};
+};
+globalThis.__motobowlGenFixture=n=>{
+  resetMatch(true);
+  const out=[];
+  for(let i=0;i<n;i++){
+    driveNo++;wave=Math.min(6,i%7);
+    const t=genTerrain(20*PPY);
+    out.push({valid:validTerrain(t,20*PPY),ramps:t.ramps.length,muds:t.muds.length,
+      oils:t.oils.length,whoops:t.whoops.length});
+  }
+  return out;
+};
+globalThis.__motobowlPlannerFixture=()=>{
+  resetMatch(true);stateT=1;stepWorld();stepWorld(); // through the snap into a live play
+  const before=globalThis.__motobowlSignature();
+  const a=buildPlan(),middle=globalThis.__motobowlSignature();
+  const b=buildPlan(),after=globalThis.__motobowlSignature();
+  // Re-run the winning candidate by hand through the exact integrator: identical result.
+  const check=simulateLane(a.targetX,a.turboOn);
+  return{pure:before===middle&&middle===after,repeat:JSON.stringify(a)===JSON.stringify(b),
+    error:Math.max(Math.abs(check.gain-a.gain),Math.abs(check.score-a.score)),
+    plan:a,state,finite:allFinite()};
+};
+globalThis.__motobowlTackleFixture=()=>{
+  resetMatch(true);stateT=1;stepWorld();stepWorld();
+  persona=PERSONAS[1]; // GHOST: low power, the tackle must stick
+  rusher.v=.6;rusher.breakCd=90;
+  const d=defenders[0];d.x=rusher.x;d.y=rusher.y+3;d.sprawlT=0;d.diveT=0;
+  const before={state,tackles:stats.tackles};
+  stepWorld();
+  return{before,after:{state,tackles:stats.tackles,down},finite:allFinite()};
+};
+globalThis.__motobowlKeyFixture=()=>{
+  resetMatch(true);
+  pickHistory=[0,0,0,0];
+  const allLeft=predictKey();
+  pickHistory=[2,2,1,2];
+  const mostlyRight=predictKey();
+  pickHistory=[];
+  return{allLeft,mostlyRight,fresh:predictKey()};
+};
+globalThis.__motobowlNearApexSetup=()=>{
+  resetMatch(true);homeScore=35;rivalScore=30;runFrame=MATCH_FRAMES-1;
+  SHOW.offer({id:'fixture-apex',tier:3,at:showFrame,tag:'DRAIN TEST',expiresAt:showFrame+120});
+  return{runFrame,showFrame,show:SHOW.probe()};
+};
+
+initSession('motobowl',[["LEFT / RIGHT","STEER · PICK PLAY"],["UP","TURBO (WATCH HEAT)"],
+  ["SPACE","HURDLE"],["X / SHIFT","JUKE"]]);
+resetMatch(true);
+start(()=>step(),()=>draw());
+</script>
+</html>

@@ -69,6 +69,14 @@ let lastDiscoverKey=-1,discoveryDirty=true,discoveryPasses=0;
 let deepest=0,kills=0,nextMob=540,day=0,buildScore=0,trapKills=0,trapBuilds=0,deaths=0,repaths=0;
 let golemKills=0,surge=0,nextGolemDepth=100,lastDeepFrame=0,recentDeaths=[];
 let caravans=0,forgeT=0,nextTripF=0;
+// Weather is a second sky timeline over the day cycle: long clear spells, a
+// darkening 240-frame telegraph, then a lightning storm that owns the surface
+// for fifteen seconds. Scheduling is pure hash math (no sim RNG draws);
+// strikes are sim events and may roll sim RNG only at land. The storm is the
+// game's telegraphed act (act-warning/act-land notes, gated by __NO_ACTS):
+// from the first dark gust the surface bot breaks off work and shelters.
+let wPhase='clear',wT=0,stormN=0,nextStormF=1e9,stormEndF=-1e4,strikes=0;
+let boltT=0,boltX=0,boltY=0,boltN=0;
 // Show kernel adoption is telemetry + ladder only for Block Mine: the game
 // already has rich environmental systems (day/night, depth, caravans, babel)
 // and a 30-minute no-stall contract, so no hold/slow-mo directives — just
@@ -297,6 +305,8 @@ function resetGame(){
   deepest=0;kills=0;nextMob=540;day=0.3;buildScore=0;trapKills=0;trapBuilds=0;deaths=0;repaths=0;
   golemKills=0;surge=0;nextGolemDepth=100;lastDeepFrame=0;recentDeaths=[];
   caravans=0;forgeT=0;nextTripF=0;
+  wPhase='clear';wT=0;stormN=0;stormEndF=-1e4;strikes=0;boltT=0;boltX=0;boltY=0;boltN=0;
+  nextStormF=3600+Math.floor(hash(seed*3+7,11)*2400); // first front 60-100s in
   homePortal=null;deepPortals=[];lastPortalDepth=0;nextSurfMob=0;
   towerH=0;towerTarget=10;saplings=[];treesPlanted=0;
   mobRepathBudget=0;mobSerial=0;
@@ -715,6 +725,51 @@ function campServices(){
     if(playing())addScore(g*30);
   }
 }
+// --- Weather: rolling storm fronts --------------------------------------------
+// A bolt hits one column: the first non-air cell from the sky down takes the
+// impact, and anything exposed above it — miner, wolf, harpy, treetop — is in
+// the strike. Camp columns are spared (the tent IS the shelter), and once the
+// Babel crown burns it takes every biased bolt as a lightning rod.
+function stormStrike(){
+  strikes++;const idx=strikes;
+  let sx=1+Math.floor(hash(seed*17+stormN*31,idx*13)*(COLS-2));
+  if(towerH>=8&&(idx&1)===0)sx=TOWER_X; // the tallest thing on the meadow draws fire
+  if(Math.abs(sx-CAMP_X)<=2)sx=sx<CAMP_X?CAMP_X-3:CAMP_X+3;
+  let iy=SURFACE;
+  for(let y=SURFACE-64;y<=SURFACE;y++)if(tile(sx,y)!==AIR){iy=y;break;}
+  boltT=8;boltX=sx;boltY=iy;boltN=idx;shake(4);
+  burst(centerX(sx),iy*TS,14,'#eef4ff',2.4);burst(centerX(sx),iy*TS,8,'#ffe066',1.6);
+  if(sx===TOWER_X&&tile(sx,iy)===BEACON){ // the crown takes the bolt
+    burst(centerX(sx),iy*TS,20,'#9af7ff',2.6);
+    texts.push({s:'THE CROWN TAKES THE BOLT',c:'#9af7ff',x:centerX(sx),y:iy*TS-10,t:100});
+    SHOW.offer({id:'rod',tier:1,at:showFrame});return;
+  }
+  SHOW.offer({id:'strike',tier:1,at:showFrame,x:centerX(sx),y:iy*TS});
+  if(P.dead<=0&&P.cx===sx&&P.cy<=iy)hurt(1.5,'LIGHTNING');
+  for(const m of mobs)if(m.dead<=0&&Math.floor(m.x/TS)===sx&&Math.floor(m.y/TS)<=iy){
+    m.hp-=3;m.hit=8;if(m.hp<=0)killMob(m,'storm');
+  }
+}
+function weatherStep(){
+  if(typeof __NO_ACTS!=='undefined')return;
+  if(boltT>0)boltT--;
+  if(wPhase==='clear'&&frame>=nextStormF){
+    wPhase='warn';wT=0;
+    SHOW.note({kind:'act-warning',id:'storm',at:showFrame,tag:showFrame});
+    say(P.cy<=SURFACE+3?'STORM FRONT ROLLING IN':'WIND HOWLS UP TOP','#9fb4d8');
+  }else if(wPhase==='warn'&&++wT>=240){
+    wPhase='storm';wT=0;shake(2);
+    SHOW.note({kind:'act-land',id:'storm',at:showFrame,tag:showFrame});
+    say(P.cy<=SURFACE+3?'THE SKY BREAKS OPEN':'THUNDER SHAKES THE ROCK','#cfe4ff');
+  }else if(wPhase==='storm'){
+    if(++wT>=900){
+      wPhase='clear';stormEndF=frame;stormN++;
+      nextStormF=frame+7200+Math.floor(hash(seed*13+stormN*29,17)*3600);
+      SHOW.offer({id:'storm',tier:2,at:showFrame,tag:stormN});
+      say('THE FRONT PASSES','#8fd0f0');
+    }else if(wT%140===0)stormStrike();
+  }
+}
 function followRoute(){
   while(P.route.length&&P.route[0].x===P.cx&&P.route[0].y===P.cy)P.route.shift();
   if(!P.route.length)return false;const n=P.route[0],t=tile(n.x,n.y);
@@ -1068,6 +1123,18 @@ function aiAct(){
       P.homing=true;P.tripEnd=frame+2400+(P.cy-SURFACE)*45;P.route=[];P.target=null;
       say('HOMEWARD BOUND','#ffd166');
     }
+  }
+  // Storm discipline: lightning owns the meadow. From the first dark gust of
+  // the telegraph until the front passes, surface work stops and the miner
+  // waits it out under the camp tent — the columns strikes always spare.
+  // Sheltering is deliberate story, not a stall, so it stamps progressFrame;
+  // the wait is bounded by the storm clock, so it can't mask a real wedge.
+  if(!P.homing&&P.cy<=SURFACE+1&&wPhase!=='clear'){
+    if(campNear()){
+      P.aiMode=wPhase==='warn'?'STORM COMING':'WAIT OUT STORM';
+      P.progressFrame=frame;lastDeepFrame=frame;return;
+    }
+    if(routeAndFollow(CAMP_X,SURFACE-1,'TAKE SHELTER')){P.progressFrame=frame;return;}
   }
   // Surface errands, in daylight order: plant the grove, raise the tower,
   // walk over for camp services when they're due, and when there is nothing
@@ -1471,7 +1538,7 @@ function step(){
   SHOW.step(showFrame); // telemetry + cue arbitration only: no world directives
   if(isNight()!==wasNight){wasNight=!wasNight;
     SHOW.note({kind:wasNight?'night':'dawn',id:'daycycle',at:showFrame});}
-  refreshDiscovery();gateStep();playerStep();campServices();mobStep();projectileStep();fluidStep();stepParts();updateGoals();
+  refreshDiscovery();gateStep();playerStep();campServices();weatherStep();mobStep();projectileStep();fluidStep();stepParts();updateGoals();
   if(tile(P.cx,P.cy)===LAVA){
     if(!playing()&&!manual()&&P.cobble>=2){buildBridge(P.cx,P.cy);P.aiMode='SEAL LAVA';}
     else{hurt(1,'LAVA FLOW');if(!playing()&&!manual()&&P.moveT<=0){const safe=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]}))
@@ -1525,16 +1592,133 @@ function step(){
   camY+=((P.y-178)-camY)*0.07;
 }
 
+// All sky work is render-only: pure math on sim state (day, wPhase, wT, frame)
+// plus hash() — it must never touch the sim RNG stream or any sim variable.
+function mixC(a,b,t){
+  // Returns '#rrggbb' so results chain back through mixC (dusk over day over
+  // storm is three blends deep).
+  t=clamp(t,0,1);
+  const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16);
+  const ch=s=>{const v=Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t);
+    return(v<16?'0':'')+v.toString(16);};
+  return'#'+ch(16)+ch(8)+ch(0);
+}
+// How much of the sky the storm owns right now: ramps up through the
+// telegraph, holds through the storm, and drains away after the front passes.
+function cloudCover(){
+  if(wPhase==='warn')return Math.min(1,wT/200);
+  if(wPhase==='storm')return 1;
+  return Math.max(0,1-(frame-stormEndF)/240);
+}
 function drawSky(){
   const sy=SURFACE*TS-camY;
-  const night=Math.max(0,Math.cos(day*Math.PI*2)*0.5+0.15);
-  rect(0,0,W,H,sy>0?(night>0.45?'#172745':'#71b8e6'):'#11151c');
-  if(sy>0){
-    const sunX=18+day*150,sunY=20+Math.sin(day*Math.PI)*30;
-    rect(sunX-5,sunY-5,10,10,night>0.45?'#e8ebcf':'#ffe06a');
-    for(let i=0;i<3;i++){const x=((i*67+frame*0.025)%210)-25,y=30+i*17;
-      rect(x,y,24,5,night>0.45?'#354766':'#e7f3fb');rect(x+6,y-4,11,4,night>0.45?'#354766':'#f4fbff');}
+  if(sy<=0){rect(0,0,W,H,'#11151c');return;}
+  const gh=Math.min(sy,H),cover=cloudCover();
+  // Sun altitude drives everything: +1 at noon (day=0.5), -1 at midnight.
+  // isNight() flips exactly at alt=-0.6, so daylight ramps around that point.
+  const alt=-Math.cos(day*Math.PI*2);
+  const t=clamp((alt+0.6)/1.2,0,1),glow=Math.max(0,1-Math.abs(alt+0.6)/0.3);
+  let top=mixC('#0a1124','#3f97d9',t),bot=mixC('#141f3d','#9ad9f2',t);
+  bot=mixC(bot,'#f2925a',glow*0.65);top=mixC(top,'#6e4668',glow*0.3);
+  top=mixC(top,'#232b36',cover*0.6);bot=mixC(bot,'#39434f',cover*0.6);
+  for(let i=0;i<5;i++)rect(0,gh*i/5,W,gh/5+1,mixC(top,bot,i/4)); // banded pixel gradient
+  // drawSky doubles as the frame clear (preDraw never wipes the canvas):
+  // everything below the horizon needs paint too, or open cells ghost.
+  if(gh<H)rect(0,gh,W,H-gh,'#11151c');
+  // Distant storm flicker: sheets of lightning behind the clouds.
+  if(wPhase==='storm'&&hash(stormN*7+3,frame>>3)>0.94){
+    ctx.globalAlpha=0.1;rect(0,0,W,gh,'#dfe9ff');ctx.globalAlpha=1;
   }
+  // Stars: a fixed hash field that twinkles, fading out at dawn and under cloud.
+  const starA=(1-t)*(1-cover*0.85);
+  if(starA>0.02)for(let i=0;i<26;i++){
+    const x=hash(i*17+3,i*7+1)*W,y=hash(i*5+2,i*11+9)*gh*0.9;
+    ctx.globalAlpha=starA*(0.5+0.5*Math.sin(frame*0.06+i*2.1));
+    rect(x,y,hash(i*3,i)>0.7?2:1,1,'#e8f0ff');
+  }
+  ctx.globalAlpha=1;
+  // Sun and moon each traverse their own half of the cycle, screen-anchored.
+  // The arc rides the band between the goals panel (ends y=93) and the
+  // surface horizon (~y=182 with the camera at ground level) — any higher and
+  // the HUD eats the sun for most of the day.
+  const su=(day-0.1475)/0.705; // 0..1 across the daylight window
+  if(su>0&&su<1){
+    const x=-12+su*(W+24),y=102+(1-Math.sin(su*Math.PI))*66;
+    if(y<=gh-12){ // skip once the arc would dip below the visible horizon
+    ctx.globalAlpha=0.16*(1-cover*0.7);rect(x-9,y-9,18,18,'#ffe89a');ctx.globalAlpha=1-cover*0.55;
+    rect(x-4,y-5,8,10,'#ffd94d');rect(x-5,y-4,10,8,'#ffd94d');rect(x-3,y-3,6,6,'#fff0a8');
+    const ray=(frame>>5)&1;
+    for(const[dx,dy]of ray?[[0,-8],[0,8],[-8,0],[8,0]]:[[-6,-6],[6,-6],[-6,6],[6,6]])
+      rect(x+dx-1,y+dy-1,2,2,'#ffe06a');
+    ctx.globalAlpha=1;
+    }
+  }
+  const nv=day>0.8525?(day-0.8525)/0.295:day<0.1475?(day+0.1475)/0.295:-1;
+  if(nv>0&&nv<1){
+    const x=-10+nv*(W+20),y=104+(1-Math.sin(nv*Math.PI))*58;
+    if(y<=gh-10){
+    const skyAt=mixC(top,bot,clamp(y/gh,0,1));
+    ctx.globalAlpha=0.1*(1-cover*0.7);rect(x-8,y-8,16,16,'#cfe0ff');ctx.globalAlpha=1-cover*0.55;
+    rect(x-4,y-4,8,8,'#e8ebcf');rect(x-3,y-5,6,1,'#e8ebcf');rect(x-3,y+4,6,1,'#e8ebcf');
+    rect(x-1,y-4,6,8,skyAt); // the shadow disc carves the crescent
+    rect(x-4,y-1,1,2,'#f6f8e2');
+    ctx.globalAlpha=1;
+    }
+  }
+  // Cloud banks are world-anchored so climbing Babel rises through them; the
+  // scud layer is storm-only and scrolls faster than the fair-weather decks.
+  const cloudC=mixC(mixC('#eef7fd','#2e3d5c',1-t),'#39424e',cover*0.8);
+  const cloudHi=mixC(mixC('#f6fbff','#3a4a6b',1-t),'#2e3742',cover*0.8);
+  for(let i=0;i<7;i++){
+    const wy=(7-i*8)*TS-camY;if(wy<-14||wy>gh+8)continue;
+    const x=((i*67+frame*(0.02+i*0.006))%(W+60))-30;
+    rect(x,wy,26,5,cloudC);rect(x+6,wy-4,13,4,cloudHi);rect(x+18,wy+1,10,3,cloudC);
+  }
+  if(cover>0.05){
+    ctx.globalAlpha=cover;
+    for(let i=0;i<5;i++){
+      const wy=(5-i*9)*TS-camY;if(wy<-14||wy>gh+8)continue;
+      const x=(((i*83+11)+frame*(0.09+i*0.02))%(W+80))-40;
+      rect(x,wy,34,6,'#262e3a');rect(x+8,wy-4,18,4,'#2e3742');rect(x+24,wy+2,12,3,'#232a34');
+    }
+    ctx.globalAlpha=1;
+  }
+  // Rain: wind-slanted streaks from cloud level to the ground, plus splashes.
+  const rainI=wPhase==='storm'?Math.min(1,wT/120):Math.max(0,1-(frame-stormEndF)/120);
+  if(rainI>0.02){
+    ctx.globalAlpha=0.4*rainI;
+    const rc=mixC('#a7c7e8','#5a7aa8',1-t),n=Math.floor(46*rainI);
+    for(let i=0;i<n;i++){
+      const y=(i*97+frame*5)%gh,x=((i*53+frame*2.2-y*0.18)%(W+10)+(W+10))%(W+10)-5;
+      rect(x,y,1,5,rc);
+    }
+    if(sy<H)for(let i=0;i<8;i++)if(hash(i*3+1,frame>>2)>0.62)
+      rect(hash(i*7+5,frame>>2)*W,sy-2,2,1,rc);
+    ctx.globalAlpha=1;
+  }
+}
+// The strike itself: a jagged core-and-glow bolt from the clouds to the
+// impact cell, over a two-frame whiteout. boltT/boltX/boltY are sim state
+// stamped by stormStrike; the jitter is pure hash on the strike index.
+function drawBolt(){
+  if(boltT<=0)return;
+  const sy=SURFACE*TS-camY;if(sy<=0)return;
+  const ey=boltY*TS-camY;
+  ctx.globalAlpha=boltT>=7?0.5:boltT*0.045;rect(0,0,W,Math.min(sy+6,H),'#f4f8ff');ctx.globalAlpha=1;
+  if(ey<4)return;
+  const x0=boltX*TS+TS/2,segs=7;
+  for(const[wd,c,a]of[[3,'#9fc0ff',0.5],[1,'#ffffff',0.95]]){
+    ctx.globalAlpha=a*(boltT/8);ctx.strokeStyle=c;ctx.lineWidth=wd;ctx.beginPath();
+    let px=x0+(hash(boltN*13,1)-0.5)*16;ctx.moveTo(px,0);
+    for(let i=1;i<=segs;i++){
+      const y=ey*i/segs,x=i===segs?x0:x0+(hash(boltN*13+i*7,5)-0.5)*(16*(1-i/segs)+5);
+      ctx.lineTo(x,y);
+      if(i===3){ctx.lineTo(x+(hash(boltN*5,i)-0.5)*22,y+9);ctx.moveTo(x,y);} // one fork
+      px=x;
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;ctx.lineWidth=1;
 }
 function drawBlock(t,x,y,sy){
   const c=BC[t];if(!c)return;
@@ -1715,6 +1899,12 @@ function drawDayDial(x,y){
   rect(x-1,y-1,10,10,night?'#101a2e':'#2b4a66');
   if(night){rect(x+2,y+1,5,6,'#e8ebcf');rect(x+1,y+2,2,4,'#101a2e');rect(x+7,y+1,1,1,'#fff');rect(x+1,y+6,1,1,'#fff');}
   else{rect(x+2,y+2,4,4,'#ffd166');rect(x+3,y,2,1,'#ffd166');rect(x+3,y+7,2,1,'#ffd166');rect(x,y+3,1,2,'#ffd166');rect(x+7,y+3,1,2,'#ffd166');}
+  // Weather badge: a storm cloud slides over the dial so the front is legible
+  // even while the camera is deep underground; the bolt flickers once it lands.
+  if(wPhase!=='clear'){
+    rect(x-1,y+4,10,4,'#2a3242');rect(x+1,y+3,7,3,'#39424e');
+    if(wPhase==='storm'&&(frame>>3)%3===0){rect(x+4,y+7,1,2,'#ffe066');rect(x+3,y+9,1,1,'#ffe066');}
+  }
 }
 function drawHUD(){
   ctx.globalAlpha=0.72;rect(0,0,W,31,'#0a0d12');ctx.globalAlpha=1;
@@ -1768,7 +1958,7 @@ function drawCamp(){
 function render(){
   preDraw();drawWorld();drawCamp();
   for(const m of mobs)if(!fogged(Math.floor(m.x/TS),Math.floor(m.y/TS)))drawMob(m);
-  drawProjectiles();drawPlayer();drawCracks();drawParts(camY);postDraw();drawHUD();
+  drawProjectiles();drawPlayer();drawCracks();drawBolt();drawParts(camY);postDraw();drawHUD();
 }
 
 initSession('blockmine',[['ARROWS','MOVE / CLIMB'],['X + ARROW','MINE / FIGHT'],['SPACE','PLACE TORCH'],['Z / SHIFT','BUILD TRAP'],['ESC','AUTOPILOT']]);

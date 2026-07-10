@@ -155,6 +155,7 @@ globalThis.__bmTowerFixture=s=>{
   Object.assign(P,{cx:CAMP_X,cy:SURFACE-1,x:centerX(CAMP_X),y:centerY(SURFACE-1),toX:CAMP_X,toY:SURFACE-1,
     cobble:120,wood:36,ladder:16,food:4,ammo:25,gold:0,route:[],target:null,mine:null,progressFrame:frame});
   nextTripF=1e9; // the fixture tests the build, not the commute
+  nextStormF=1e9; // nor the weather — the storm act has its own forced fixture
   return towerPlan();
 };
 globalThis.__bmTowerProbe=()=>{
@@ -176,6 +177,14 @@ globalThis.__bmDiscoveryFixture=()=>{
 };
 globalThis.__bmShow=()=>SHOW.probe();
 globalThis.__bmShowE=()=>SHOW.events();
+// The kernel event log is bounded (600) and tier-1 kill offers churn it, so
+// act notes are collected via this wrapper instead of read back from events().
+globalThis.__bmActNotes=[];
+{const orig=SHOW.note;SHOW.note=e=>{
+  if(e.kind==='act-warning'||e.kind==='act-land')globalThis.__bmActNotes.push({kind:e.kind,id:e.id,tag:e.tag});
+  return orig(e);};}
+globalThis.__bmWeather=()=>({phase:wPhase,t:wT,storms:stormN,next:nextStormF,strikes});
+globalThis.__bmStormAt=f=>{nextStormF=f;};
 globalThis.__bmSig=()=>Math.round(P.x*31+P.y*7)+deepest*101+kills*1009+buildScore*13+
   mobs.length*7+torches.length*17+Math.round(camY)+goalState.completed*271;`;
   eval((engine+'\n'+autoplay+'\n'+inline).replace(/'use strict';/g,'')+footer);
@@ -343,6 +352,47 @@ console.log('payoff ladder: tier telemetry ordered, day/night notes, no world di
   delete globalThis.__NO_PAYOFF_FX;
   if(sigA!==sigB)fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
   else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
+console.log('storm acts: telegraphed fronts land with lightning, builder shelters in the warn');
+{
+  // Schedule proof: over 10 minutes the deterministic front cadence must land
+  // repeatedly, each with a 180..300-frame telegraph and real strikes.
+  boot(0xB10C70);run(36000);
+  const notes=globalThis.__bmActNotes.filter(e=>e.id==='storm');
+  let pend=null;const gaps=[];
+  for(const e of notes){
+    if(e.kind==='act-warning')pend=e;
+    else if(e.kind==='act-land'&&pend){gaps.push(e.tag-pend.tag);pend=null;}
+  }
+  const w=globalThis.__bmWeather();
+  console.log(`  ${gaps.length} storms landed (telegraphs ${gaps.join(',')}f), ${w.strikes} strikes`);
+  if(gaps.length<2)fail(`only ${gaps.length} telegraphed storms landed in 10 minutes`);
+  for(const g of gaps)if(g<180||g>300)fail(`storm telegraph ${g} frames outside 180..300`);
+  if(w.strikes<gaps.length*4)fail(`storms landed nearly dry (${w.strikes} strikes over ${gaps.length} storms)`);
+  // Act A/B: a same-seed Babel builder with a front forced overhead. With acts
+  // he must break off the build DURING the telegraph, not at the first bolt.
+  const sample=noActs=>{
+    if(noActs)globalThis.__NO_ACTS=1;
+    // Front forced at frame 600: the builder is mid-row then, so the shelter
+    // break shows up in the signature within a few frames of the telegraph
+    // (at 900 he happens to be descending the spine, where the shelter route
+    // and the ore route share ~200 frames of identical ladder cells).
+    boot(0xB10C71);globalThis.__bmTowerFixture(777);globalThis.__bmStormAt(600);
+    const sigs=[];let warnF=-1;
+    for(let i=0;i<2400;i++){globalThis.__bmStep();sigs.push(globalThis.__bmSig());
+      if(warnF<0&&globalThis.__bmWeather().phase==='warn')warnF=i;}
+    delete globalThis.__NO_ACTS;
+    return{sigs,warnF,probe:globalThis.__bmProbe()};
+  };
+  const A=sample(false),B=sample(true);
+  let d=-1;for(let i=0;i<A.sigs.length;i++)if(A.sigs[i]!==B.sigs[i]){d=i;break;}
+  console.log(`  A/B: warn began frame ${A.warnF}, first divergence frame ${d}, `+
+    `sheltered mode seen: ${A.probe.mode}`);
+  if(A.warnF<0)fail('forced storm never entered its warn phase');
+  if(B.warnF>=0)fail('__NO_ACTS run still scheduled a storm');
+  if(d<0)fail('storm never changed the builder behavior (A/B identical)');
+  else if(d<A.warnF||d>=A.warnF+240)fail(`builder first diverged at ${d}, outside the telegraph window [${A.warnF},${A.warnF+240})`);
 }
 
 console.log('manual controls: enter for instructions, enter to play, move + mine, place torch');

@@ -112,6 +112,12 @@ globalThis.__ccNearApexSetup=()=>{
   runFrame=53999;SHOW.offer({id:'fixture-apex',tier:3,at:showFrame,tag:'DRAIN TEST',expiresAt:showFrame+120});
   return{runFrame,showFrame,show:SHOW.probe()};
 };
+globalThis.__ccStoryFlight=(dx,dy,vx,vy)=>{
+  const t=activeTarget(),j=targetJoint(t,true);
+  Object.assign(body,{x:j.x+dx,y:j.y+dy,vx,vy,grounded:false,hitT:0,repairT:0});
+  body.lastX=body.x;body.lastY=body.y;
+  return globalThis.__crestcrashViewerProbe();
+};
 globalThis.__ccEndingLog=[];
 {const __cce0=finishRun;finishRun=()=>{const before=stats.endings,out=__cce0();
   if(stats.endings>before)globalThis.__ccEndingLog.push({showFrame,runFrame,state,resultT,outcome:lastOutcome,
@@ -402,6 +408,50 @@ console.log('11) shared ten-minute soak: moving, happening, and toppling relays'
   // the shared sampler additionally enforces the hard 240f ordinary-stillness
   // and 1800f story-stall contracts.
   assertSoak('crestcrash soak',report,{still:4,quiet:8,stall:30,minEvents:340,minProgress:170},fail);
+}
+
+console.log('12) viewer story: plain goal from frame one, truthful receipts, presentation-only A/B');
+{
+  const game=bootGame('crestcrash',{seed:0xccd1,footer:FOOTER});game.frames(1,true);
+  const v=game.sandbox.__crestcrashViewerProbe();
+  console.log(`  opening "${v.drawn.hud}" / "${v.drawn.verb}" / ${v.drawn.targetLabel}`);
+  if(!v.enabled||!v.drawn.enabled||v.drawn.frame!==game.sandbox.__crestcrashProbe().showFrame||
+    v.drawn.hud!=='TOPPLE RANGE 00/80'||v.drawn.hud!==v.hud||!v.drawn.verb||v.drawn.verb!==v.verb||
+    v.drawn.targetLabel!=='RELAY AHEAD'||v.drawn.barFrac!==0||v.drawn.corePips!==0||v.drawn.crownLit)
+    fail(`first rendered frame did not plainly explain the show: ${JSON.stringify(v)}`);
+  game.frames(7199,true);
+  const p=game.sandbox.__crestcrashProbe(),v2=game.sandbox.__crestcrashViewerProbe();
+  console.log(`  2 minutes in: "${v2.drawn.hud}", ${v2.drawn.corePips} core pips, bar ${(v2.drawn.barFrac*100).toFixed(1)}%`);
+  if(v2.relays!==p.run.jointBreaks||v2.cores!==p.run.coreBreaks||v2.drawn.hud!==v2.hud||
+    v2.drawn.barFrac!==v2.barFrac||v2.drawn.corePips!==v2.corePips||v2.drawn.verb!==v2.verb||
+    p.run.jointBreaks<1||!v2.drawn.hud.includes('/80'))
+    fail(`persistent goal HUD disagreed with simulation truth: ${JSON.stringify({v2,run:p.run})}`);
+
+  const flight=bootGame('crestcrash',{seed:0xccd2,footer:FOOTER}),labels=[];
+  for(const[expect,args]of[['ON LINE',[-30,-20,3,1]],['SHORT',[-120,-10,1,0]],['LONG',[10,-40,3,-1]]]){
+    const s=flight.sandbox.__ccStoryFlight(...args);labels.push(`${s.forecast} (min ${s.forecastMin.toFixed(1)}px, delta ${s.forecastDelta.toFixed(1)})`);
+    const truthful=s.forecast==='ON LINE'?s.forecastMin<=s.forecastTolerance:
+      s.forecast==='SHORT'?s.forecastMin>s.forecastTolerance&&s.forecastDelta<0:
+      s.forecast==='LONG'?s.forecastMin>s.forecastTolerance&&s.forecastDelta>=0:false;
+    if(s.forecast!==expect||!truthful)
+      fail(`flight forecast lied: expected ${expect}, got ${JSON.stringify(s)}`);
+  }
+  console.log(`  forecasts ${labels.join('; ')}`);
+  flight.sandbox.__ccStoryFlight(-30,-20,3,1);flight.frames(1,true);
+  const inFlight=flight.sandbox.__crestcrashViewerProbe();
+  if(!inFlight.drawn.forecast||inFlight.drawn.forecast!==inFlight.forecast)
+    fail(`airborne frame did not draw its own truthful forecast: ${JSON.stringify(inFlight)}`);
+
+  const a=bootGame('crestcrash',{seed:0xccd3,footer:FOOTER}),b=bootGame('crestcrash',{seed:0xccd3,footer:FOOTER});
+  b.sandbox.__NO_VIEWER_STORY=1;a.frames(7200,true);b.frames(7200,true);
+  const same=a.sandbox.__crestcrashSignature()===b.sandbox.__crestcrashSignature(),
+    ra=a.sandbox.__ccNextRandom(),rb=b.sandbox.__ccNextRandom(),
+    va=a.sandbox.__crestcrashViewerProbe(),vb=b.sandbox.__crestcrashViewerProbe();
+  console.log(`  2-minute rendered A/B signatures ${same?'identical':'DIFFER'}; next RNG ${ra.toFixed(8)}/${rb.toFixed(8)}; story ${va.enabled}/${vb.enabled}`);
+  if(!same)fail('viewer story rendering changed the same-seed simulation');
+  if(ra!==rb)fail('viewer story consumed engine RNG for simulation-invisible work');
+  if(!va.enabled||vb.enabled||vb.drawn.hud!==''||vb.drawn.verb!==''||vb.drawn.forecast!==''||vb.drawn.targetLabel!=='')
+    fail(`__NO_VIEWER_STORY did not cleanly ablate the presentation layer: ${JSON.stringify({va,vb})}`);
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

@@ -405,6 +405,64 @@ function step(){
 }
 
 function sx(x){return x-camX;}
+
+// Viewer story: presentation-only spectator layer (fusion-ultra causal-story
+// contract: one actor, one target, a plain verb, persistent progress toward
+// the frame-54,000 ending). Gated by __NO_VIEWER_STORY; draws from sim truth,
+// mutates nothing, and consumes no engine RNG.
+const viewerStoryOn=()=>typeof globalThis.__NO_VIEWER_STORY==='undefined';
+let viewerDraw={frame:-1,enabled:false,hud:'',verb:'',forecast:'',targetLabel:'',barFrac:0,corePips:0,crownLit:false};
+const VERB_MAP={ADMIRE:'ADMIRE THE FALL','SEEK RELAY':'FIND NEXT RELAY','DIVE NOW':'DIVE FOR SPEED',
+  CREST:'CLIMB TO CREST',BRACE:'BRACE TO STRIKE','MARK JOINT':'FLY AT THE JOINT',
+  'CALLED SHOT':'CALLED SHOT','CUT HEADWIND':'CUT THE HEADWIND','BEAT PLATING':'BEAT THE PLATES',
+  'RECOVER LINE':'RECOVER THE LINE',REPAIR:'FIELD REPAIR','COIL RECOVER':'COIL WIND-UP',MANUAL:'MANUAL CONTROL'};
+function viewerVerb(){
+  if(body.repairT>0)return'FIELD REPAIR';
+  if(body.coilT>90)return'COIL WIND-UP';
+  return VERB_MAP[(body.intent&&body.intent.tactic)||'']||'RIDE THE RIDGE';
+}
+// Pure-math flight projection against the live joint: copies the body and
+// integrates the exact runtime advanceBody, so the label is honest.
+function flightStory(){
+  const t=activeTarget(),none={label:'',delta:null,min:null,tolerance:RADIUS+7};
+  if(!t||t.broken||body.grounded||body.repairT>0||body.hitT>0||state!=='run')return none;
+  const b=Object.assign({},body),joint=targetJoint(t,true),
+    trim=body.intent?clamp(body.intent.trim||0,-1,1):0;
+  let min=1e9,atX=b.x;
+  for(let f=0;f<240;f++){
+    const ev=advanceBody(b,{dive:false,trim,brace:false},forecastWind(f),true);
+    const d=Math.hypot(b.x-joint.x,b.y-joint.y);
+    if(d<min){min=d;atX=b.x;}
+    if(ev.landed||b.x>t.x+30)break;
+  }
+  const tol=RADIUS+7,delta=atX-joint.x;
+  return{label:min<=tol?'ON LINE':delta<0?'SHORT':'LONG',delta,min,tolerance:tol};
+}
+function drawViewerStory(){
+  if(!viewerStoryOn())return;
+  const story=flightStory();
+  if(story.label){
+    viewerDraw.forecast=story.label;
+    const c=story.label==='ON LINE'?MINT:story.label==='SHORT'?CORAL:GOLD,w=story.label.length*5+10;
+    ctx.globalAlpha=.92;rect(80-w/2,35,w,12,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle=c;ctx.strokeRect(80-w/2+.5,35.5,w-1,11);
+    ctx.font='bold 7px monospace';ctx.fillStyle=c;ctx.fillText(story.label,80-story.label.length*2.1,44);
+  }
+  const t=activeTarget();
+  if(t&&!t.broken&&state==='run'){
+    const j=targetJoint(t,false),jx=sx(j.x);
+    if(jx>-20&&jx<170){
+      const label='STRIKE HERE',tx=clamp(jx,30,130),w=label.length*4.2+8;
+      viewerDraw.targetLabel=label;
+      ctx.globalAlpha=.9;rect(tx-w/2,j.y-27,w,10,INK);ctx.globalAlpha=1;
+      ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText(label,tx-label.length*2.1,j.y-19.5);
+    }else{
+      viewerDraw.targetLabel='RELAY AHEAD';
+      ctx.globalAlpha=.9;rect(102,35,56,10,INK);ctx.globalAlpha=1;
+      ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText('RELAY AHEAD >',105,42.5);
+    }
+  }
+}
 function drawSky(){
   rect(0,0,W,H,SKY);rect(0,116,W,244,SKY2);
   for(let i=0;i<16;i++){const x=(hash(i,3)*W+showFrame*.015*(i%3+1))%W,y=22+hash(i,4)*95;rect(x,y,1,1,'#8792cf');}
@@ -444,15 +502,32 @@ function drawActs(){
   }
 }
 function drawHud(){
+  if(viewerStoryOn()){
+    const relays=runCount('jointBreaks'),cores=runCount('coreBreaks'),crownLit=runCount('crownBreaks')>=1,
+      count=(relays<10?'0':'')+relays+'/80',verb=viewerVerb();
+    viewerDraw.hud='TOPPLE RANGE '+count;viewerDraw.verb=verb;
+    viewerDraw.barFrac=clamp(relays/80,0,1);viewerDraw.corePips=Math.min(10,cores);viewerDraw.crownLit=crownLit;
+    ctx.globalAlpha=.94;rect(0,0,W,31,INK);ctx.globalAlpha=1;
+    ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('TOPPLE RANGE',5,10);
+    ctx.fillStyle=GOLD;ctx.fillText(count,156-count.length*4.8,10);
+    ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(verb,5,21);
+    ctx.fillStyle=cores>=10?GOLD:'#8792cf';ctx.fillText('CORES '+cores+'/10',96,21);
+    const crownColor=crownLit?GOLD:crownTargetId&&showFrame%30<15?GOLD:'#3a4066';
+    rect(148,17,9,3,crownColor);rect(148,14,2,3,crownColor);rect(151,13,3,4,crownColor);rect(155,14,2,3,crownColor);
+    rect(4,26,110,3,'#262c52');if(viewerDraw.barFrac>0)rect(4,26,110*viewerDraw.barFrac,3,GOLD);
+    for(let i=0;i<10;i++)rect(118+i*4,26,3,3,i<viewerDraw.corePips?GOLD:'#3a4066');
+    return;
+  }
   rect(0,0,W,24,INK);ctx.font='bold 7px monospace';ctx.fillStyle=GOLD;ctx.fillText('CRESTCRASH',5,10);
   ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText((body.intent&&body.intent.tactic)||'MARK JOINT',5,19);
   ctx.fillStyle=CREAM;ctx.fillText('C'+chapter+'  '+runCount('jointBreaks')+' RELAYS',103,10);ctx.fillStyle=MINT;ctx.fillText('SHELL '+Math.max(0,Math.round(body.integrity)),103,19);
 }
 function draw(){
+  viewerDraw={frame:showFrame,enabled:viewerStoryOn(),hud:'',verb:'',forecast:'',targetLabel:'',barFrac:0,corePips:0,crownLit:false};
   drawSky();preDraw();drawTerrain();for(const t of targets)drawTarget(t);drawForecast();drawBody();drawRings();drawParts();
   for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/15);ctx.fillStyle=t.c;ctx.font='bold 7px monospace';ctx.fillText(t.s,sx(t.x)-t.s.length*2.1,t.y);}ctx.globalAlpha=1;
-  postDraw();drawActs();drawHud();
-  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.15;rect(0,24,W,H-24,GOLD);ctx.globalAlpha=1;}
+  postDraw();drawActs();drawViewerStory();drawHud();
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.15;rect(0,viewerStoryOn()?31:24,W,H-(viewerStoryOn()?31:24),GOLD);ctx.globalAlpha=1;}
   if(state==='ending'){ctx.globalAlpha=.82;rect(12,134,136,72,INK);ctx.globalAlpha=1;ctx.fillStyle=lastOutcome==='RANGE COMPLETE'?GOLD:CORAL;ctx.font='bold 12px monospace';ctx.fillText(lastOutcome,lastOutcome==='RANGE COMPLETE'?25:42,165);ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;ctx.fillText(runCount('jointBreaks')+' RELAYS TOPPLED',42,184);}
   drawSession();
 }
@@ -479,6 +554,14 @@ globalThis.__crestcrashSignature=()=>JSON.stringify({
   a:[headwind.phase,headwind.warnAt,headwind.landAt,headwind.endAt,plating.phase,plating.warnAt,plating.landAt,plating.endAt,plating.targetId],
   s:[stats.launches,stats.landings,stats.impacts,stats.jointBreaks,stats.coreBreaks,stats.crownBreaks,stats.collapses,stats.misses,stats.tumbles,stats.repairs,stats.recoveries,stats.coilRecoveries,stats.lapses,stats.upgrades,stats.endings]
 });
+globalThis.__crestcrashViewerProbe=()=>{
+  const story=flightStory(),relays=runCount('jointBreaks');
+  return{enabled:viewerStoryOn(),hud:'TOPPLE RANGE '+(relays<10?'0':'')+relays+'/80',verb:viewerVerb(),
+    relays,cores:runCount('coreBreaks'),crown:runCount('crownBreaks'),
+    barFrac:clamp(relays/80,0,1),corePips:Math.min(10,runCount('coreBreaks')),
+    forecast:story.label,forecastDelta:story.delta,forecastMin:story.min,forecastTolerance:story.tolerance,
+    drawn:Object.assign({},viewerDraw)};
+};
 globalThis.__soakProbe=()=>({sig:Math.round(body.x*10)+'|'+Math.round(body.y*10)+'|'+state,events:eventSerial,progress:progressSerial,finite:allFinite()});
 globalThis.__crestcrashMotion=()=>[Math.round(body.x*1e4),Math.round(body.y*1e4),Math.round(body.vx*1e4),Math.round(body.vy*1e4),body.grounded,body.intent&&body.intent.dive,body.intent&&body.intent.trim,body.intent&&body.intent.tactic,headwind.phase,plating.phase].join('|');
 globalThis.__crestcrashActState=()=>({runFrame,headwind:headwind.phase,plating:plating.phase,tactic:body.intent&&body.intent.tactic});
