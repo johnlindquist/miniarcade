@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "game": "neon-getaway",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "ac337487675d0cbdad553bc52ae0ab462df60f4dbe851e6c3611074b6883117a",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 the getaway coupe, bike, taxi, muscle car, and van have distinct constructed silhouettes, wheels, cabins, lights, visible drivers, facing, damage, and action poses. Cruiser, interceptor, police bike, van, helicopter crew, traffic, and the running swap driver remain recognizable and match both references for authored actor identity."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The wet neon avenue, market tram and awnings, canal water and boardwalks, port rails and freight gantry, civic roundabout, roof materials, intersections, curb refuges, skyline, traffic, and foreground lights form a layered living city without relying on the HUD. Its density and material specificity meet the two reference worlds."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The native sheet shows five structurally distinct districts: Neon Core boulevards, Old Market tram streets, Canal Ward waterways and boardwalks, Iron Port rails and gantries, and Civic Crown roundabouts and monuments. Landmarks, street grammar, side silhouettes, and traversal fixtures change rather than merely swapping palette."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned crops prove wheel rotation and body motion, police pursuit and siren animation, a takeoff-apex-landing ramp arc, and the old-car to running-driver to new-car swap. The forming dragnet, landed police wall, damage reactions, spotlight, particles, rings, camera response, and five-star fade provide anticipation, impact, and follow-through."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The cyan player silhouette stays focal against every district while wanted stars, heat and damage bars, route dots, tactic text, ramp arrows, swap bay, warning safe line, police formations, and decoy redirection remain legible at native size beside video. Rich city detail does not obscure the pursuit state or intended escape line."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road markings, warning grammar, and gold payoff effects stay consistent across the full city. The actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
+    }
+  }
+}

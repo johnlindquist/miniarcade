@@ -162,6 +162,83 @@ function frameDifference(aInput,bInput,options){
   };
 }
 
+// Measure the pixels an actor actually paints by comparing an isolated actor
+// render with a same-state clean plate. The probe box is only a search hint:
+// the returned bounds always come from native RGBA, and touching the padded
+// crop is reported so a too-small probe cannot turn clipping into a false pass.
+function measureDrawnActorExtent(actorInput,baselineInput,options){
+  options=options||{};
+  const actor=options.native===false?asFrame(actorInput,options):toNativeFrame(actorInput,options);
+  const baseline=options.native===false?asFrame(baselineInput,options):toNativeFrame(baselineInput,options);
+  if(actor.width!==baseline.width||actor.height!==baseline.height)
+    throw new Error('Actor and baseline frame dimensions differ');
+  const threshold=options.threshold===undefined?8:options.threshold;
+  if(typeof threshold!=='number'||!Number.isFinite(threshold)||threshold<0||threshold>255)
+    throw new Error('Actor extent threshold must be between 0 and 255');
+  const probeBox=options.probeBox||options.box||null,padding=options.padding===undefined?8:options.padding;
+  if(typeof padding!=='number'||!Number.isFinite(padding)||padding<0)
+    throw new Error('Actor extent padding must be a non-negative number');
+  let requestedCrop=options.crop;
+  if(!requestedCrop&&probeBox){
+    if(![probeBox.x,probeBox.y,probeBox.width,probeBox.height].every(Number.isFinite)||
+      !(probeBox.width>0&&probeBox.height>0))throw new Error('Actor probe box must be finite and non-empty');
+    const left=Math.floor(probeBox.x-padding),top=Math.floor(probeBox.y-padding);
+    const right=Math.ceil(probeBox.x+probeBox.width+padding),bottom=Math.ceil(probeBox.y+probeBox.height+padding);
+    requestedCrop={x:left,y:top,width:right-left,height:bottom-top};
+  }
+  const crop=normalizeCrop(requestedCrop,actor.width,actor.height);
+  let drawnPixels=0,minX=Infinity,minY=Infinity,maxX=-1,maxY=-1;
+  for(let y=crop.y;y<crop.y+crop.height;y++)for(let x=crop.x;x<crop.x+crop.width;x++){
+    const i=(y*actor.width+x)*4;
+    const delta=Math.max(Math.abs(actor.rgba[i]-baseline.rgba[i]),
+      Math.abs(actor.rgba[i+1]-baseline.rgba[i+1]),Math.abs(actor.rgba[i+2]-baseline.rgba[i+2]),
+      Math.abs(actor.rgba[i+3]-baseline.rgba[i+3]));
+    if(delta<threshold)continue;
+    drawnPixels++;minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);
+  }
+  const bounds=maxX<0?null:{x:minX,y:minY,width:maxX-minX+1,height:maxY-minY+1};
+  const clipped=!!bounds&&(bounds.x===crop.x||bounds.y===crop.y||
+    bounds.x+bounds.width===crop.x+crop.width||bounds.y+bounds.height===crop.y+crop.height);
+  let probeOverflow=null;
+  if(bounds&&probeBox){
+    const left=Math.max(0,Math.floor(probeBox.x)-bounds.x),top=Math.max(0,Math.floor(probeBox.y)-bounds.y);
+    const right=Math.max(0,bounds.x+bounds.width-Math.ceil(probeBox.x+probeBox.width));
+    const bottom=Math.max(0,bounds.y+bounds.height-Math.ceil(probeBox.y+probeBox.height));
+    probeOverflow={left,top,right,bottom,any:left>0||top>0||right>0||bottom>0};
+  }
+  return{
+    id:options.id||null,kind:options.kind||null,type:options.type||null,
+    bounds,width:bounds?bounds.width:0,height:bounds?bounds.height:0,
+    drawnPixels,bboxArea:bounds?bounds.width*bounds.height:0,
+    changedFraction:round(drawnPixels/(crop.width*crop.height)),threshold,crop,
+    probeBox:probeBox?Object.assign({},probeBox):null,probeOverflow,clipped
+  };
+}
+
+// Return structured failures instead of throwing so visual suites can preserve
+// the failed measurement in metrics.json. Arrays are accepted as a convenience
+// for games that apply one cap to a family of actor variants.
+function assertActorScale(measurement,limits){
+  limits=limits||{};
+  if(Array.isArray(measurement)){
+    const results=measurement.map(value=>assertActorScale(value,limits));
+    return{ok:results.every(value=>value.ok),failures:results.flatMap(value=>value.failures),results,limits:Object.assign({},limits)};
+  }
+  const failures=[],label=limits.label||measurement&&measurement.id||measurement&&measurement.type||'actor';
+  if(!measurement||!measurement.bounds||measurement.drawnPixels<(limits.minPixels===undefined?1:limits.minPixels))
+    failures.push(`${label}: no rendered actor pixels measured`);
+  if(measurement&&measurement.bounds){
+    if(limits.maxWidth!==undefined&&measurement.width>limits.maxWidth)
+      failures.push(`${label}: drawn width ${measurement.width}px > ${limits.maxWidth}px`);
+    if(limits.maxHeight!==undefined&&measurement.height>limits.maxHeight)
+      failures.push(`${label}: drawn height ${measurement.height}px > ${limits.maxHeight}px`);
+    if(limits.allowClipped!==true&&measurement.clipped)failures.push(`${label}: drawn extent touches its measurement crop`);
+    if(limits.allowProbeOverflow!==true&&measurement.probeOverflow&&measurement.probeOverflow.any)
+      failures.push(`${label}: drawn extent exceeds its probe box`);
+  }
+  return{ok:failures.length===0,failures,measurement,limits:Object.assign({},limits)};
+}
+
 function coarseLuma(frame,crop,columns,rows){
   const values=new Float64Array(columns*rows);
   for(let gy=0;gy<rows;gy++)for(let gx=0;gx<columns;gx++){
@@ -366,6 +443,7 @@ function writeJson(outPath,value){
 
 module.exports={
   REVIEW_CATEGORIES,sha256,asFrame,toNativeFrame,normalizeCrop,quantile,
-  analyzeFrame,frameDifference,structureDistance,analyzeBurst,extractSkyline,skylineDistance,
+  analyzeFrame,frameDifference,measureDrawnActorExtent,assertActorScale,
+  structureDistance,analyzeBurst,extractSkyline,skylineDistance,
   discoverBeatFrame,captureBeat,writeContactSheet,checkMetricBands,deriveBand,verifyReviewReceipt,writeJson
 };

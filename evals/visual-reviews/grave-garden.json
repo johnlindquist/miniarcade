@@ -6,39 +6,55 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "cfe1b750269d5f7e395469643202c06b740aef2d6170e3d61bee29831b759371",
+  "montageSha256": "1e31372fdc074e632e461601c7ca5c70d327bb6621223b7c476c05f8a8e0fe58",
   "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
+  "reviewer": "Codex independent native-size reference review",
+  "seed": "0x6752444e",
+  "checkpoints": [
+    "opening@12",
+    "formation@12",
+    "warning@12",
+    "danger@12",
+    "save-anticipation@6",
+    "save-payoff@6",
+    "later@35",
+    "apex@6"
+  ],
+  "oldBaseline": {
+    "version": "v1-overscale",
+    "seed": "0x6752444e",
+    "pairedBeats": true
+  },
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the straw-hatted gardener has a constructed face, apron, limbs, facing, walk, dig, carry, and crouch poses. Sunblooms, pea wards, thorn walls, moon caps, shamblers, hounds, buckets, and undertakers remain distinct in silhouette and match both references for authored character identity."
+      "note": "At native 160x360, the straw-hatted gardener, four plant species, and four undead silhouettes retain recognizable construction, facing, gait, carry, attack, and reaction poses after the scale reduction. Measured bodies now sit between 12 and 18 pixels wide in the reviewed beats, with the 18x32 undertaker the largest routine actor; character identity remains as legible as MACHINE HUNT and BLOCK MINE without dominating the garden."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The glass-pane greenhouse, cultivated furrows, cobble separators, grave loam, headstones, iron fence, sky landmarks, rooted apron, workbench, and foreground tools form a layered place without depending on HUD text. Its material density meets the two reference worlds."
+      "note": "The smaller cast exposes the authored world: glass greenhouse bays, raised soil beds, long grave approaches, fences, headstones, cones, lane paths, foreground roots, tools, and workbench remain distinct without HUD text. The scene combines MACHINE HUNT-like breathing room with BLOCK MINE-like material and prop specificity."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The native sheet shows structural chapter changes through the scarecrow garden, crooked crypt, harvest arch and pumpkins, frost crypt and frozen well, and blood-moon dead tree. These alter landmark mass and silhouette rather than merely recoloring the same board."
+      "note": "The stable defense lanes gain recognizable chapter silhouettes through the scarecrow garden, crooked crypt, harvest arch and pumpkins, frost crypt and frozen well, and blood-moon dead tree. Opening and later frames change landmark mass, edge structure, weather, and materials rather than merely recoloring the same board."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned crops prove gardener locomotion, plant recoil, and undead gait. Physical uproot-carry-replant staging, the threatened-lane anticipation, broad barrow-save flash, projectile contact, hit reactions, and chapter apex provide readable anticipation, impact, and follow-through."
+      "note": "Aligned native crops show the small gardener changing gait and carry posture, plants anticipating and recoiling, and undead walking and staggering. The last-second save crosses the full threatened lane with contact particles and readable aftermath, while the apex transforms the whole playfield; impact energy comes from motion and presentation rather than oversized actors."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Four tall lanes and three large beds preserve formation gaps at native size. Right-edge enemy silhouettes, countdowns, gold approach chevrons, damaged-plant bars, the carrying gardener, and danger-lane tint make the forecast and weak lane readable beside video."
+      "note": "The old/new native row confirms that the low-vision 2x look is gone: defenses occupy the left garden while 60.6% of the visible travel axis remains as forecast runway. Gold chevrons, distant undead silhouettes, projectiles, lane tint, and carry intent stay legible, and sampled actor occupancy remains 8.3-12.7% of the playfield, so normal play is busy but not crowded."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Dark greenhouse teal, cultivated earth, grave gray, leaf green, moon plum, carved wood UI, cream pixels, and gold payoff grammar stay consistent across every chapter. The characters, architecture, seed packets, telegraphs, and celebrations read as one authored grave-garden world."
+      "note": "Dark greenhouse teal, cultivated earth, grave gray, leaf green, moon plum, cream pixels, and gold payoff cues remain coherent across the HUD, actors, architecture, props, telegraphs, and celebrations. The scale rework strengthens the same authored grave-garden language instead of introducing a separate miniature style."
     }
   }
 }

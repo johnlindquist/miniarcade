@@ -30,6 +30,18 @@ const LANES=4,SLOTS=3,LANE_Y=[88,140,192,244],SLOT_X=[42,68,94],CYCLE=900,WARN=3
 const INK='#0a100d',CREAM='#f4eccd',GOLD='#f4c95d',MINT='#8fe06f',LEAF='#3f8b4c',
   LIME='#b8ed75',SOIL='#62452d',SOIL2='#805b39',STONE='#66706b',STONE2='#89928a',
   NIGHT='#121a28',PLUM='#8a5cb5',RED='#d95656',CYAN='#6fd3c8',ICE='#b9e1df';
+// Physics keeps the original broad logical grid. Presentation projects that
+// grid into a compact cultivated bed and a long cemetery approach, so scale is
+// a renderer concern and same-seed simulation signatures remain unchanged.
+const DRAW_LANE_Y=[94,137,180,223],DRAW_WORLD_TOP=52,DRAW_WORLD_BOTTOM=292;
+function drawX(x){
+  return x<=104?16+(x-24)*(58/80):74+(x-104)*(85/56);
+}
+function drawY(y){return DRAW_LANE_Y[0]+(y-LANE_Y[0])*(43/52);}
+const drawLaneY=lane=>DRAW_LANE_Y[lane],drawSlotX=col=>drawX(SLOT_X[col]);
+const worldFxBurst=(x,y,...args)=>fxBurst(drawX(x),drawY(y),...args);
+const worldFxDust=(x,y,...args)=>fxDust(drawX(x),drawY(y),...args);
+const worldRing=(x,y,...args)=>ring(drawX(x),drawY(y),...args);
 const PLANT={
   bloom:{cost:25,hp:8,name:'SUNBLOOM',power:.35,color:GOLD},
   pea:{cost:50,hp:9,name:'PEA WARD',power:3.5,color:MINT},
@@ -300,13 +312,13 @@ function finishTask(t){
     if(!slotPlant(t.lane,t.col)&&affordable(t.type)){
       sun-=PLANT[t.type].cost;slots[t.lane][t.col]=makePlant(t.type,t.lane,t.col);
       stats.plants++;markEvent(10);markProgress(1);offer('plant',1,SLOT_X[t.col],LANE_Y[t.lane],t.type);
-      fxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,10,PLANT[t.type].color,1.2,.03);
+      worldFxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,10,PLANT[t.type].color,1.2,.03);
     }
   }else if(t.action==='move'&&gardener.carrying&&!slotPlant(t.lane,t.col)){
     const p=gardener.carrying;p.lane=t.lane;p.col=t.col;p.hitT=0;
     slots[t.lane][t.col]=p;gardener.carrying=null;stats.transplants++;markEvent(14);markProgress(1);
     offer('replant',2,SLOT_X[t.col],LANE_Y[t.lane],p.type);
-    fxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,14,PLANT[p.type].color,1.5,.04);
+    worldFxBurst(SLOT_X[t.col],LANE_Y[t.lane]+7,14,PLANT[p.type].color,1.5,.04);
   }
   gardener.task=null;gardener.workT=0;gardener.pose='stand';cachedPlan=null;planAt=-1e9;
 }
@@ -318,7 +330,7 @@ function stepGardener(intent){
   g.face=dx>.15?1:dx<-.15?-1:g.face;
   if((t.phase==='uproot'||t.phase==='dig')&&t.workT>0){
     t.workT--;g.pose=t.phase==='uproot'?'uproot':'plant';
-    if(t.workT%7===0)fxDust(g.x,g.y+7,2,SOIL2);
+    if(t.workT%7===0)worldFxDust(g.x,g.y+7,2,SOIL2);
     if(t.workT<=0){
       if(t.phase==='uproot'){
         const p0=slotPlant(t.fromLane,t.fromCol);
@@ -330,7 +342,7 @@ function stepGardener(intent){
   }
   if(d>1.2){
     const sp=g.carrying?.68:.82;g.x+=dx/d*sp;g.y+=dy/d*sp;g.walk+=sp;g.pose=g.carrying?'carry':'walk';
-    if(((showFrame+Math.floor(g.walk))%9)===0)fxDust(g.x-g.face*2,g.y+7,1,'#a18459');
+    if(((showFrame+Math.floor(g.walk))%9)===0)worldFxDust(g.x-g.face*2,g.y+7,1,'#a18459');
   }else{
     g.x=p.x;g.y=p.y;
     if(t.phase==='source'){t.phase='uproot';t.workT=26;g.pose='uproot';}
@@ -350,15 +362,15 @@ function killEnemy(z,how){
   if(z.x<55){
     stats.saves++;visualFlash=24;visualFlashLane=z.lane;offer('last-save',2,z.x,LANE_Y[z.lane],'save');
     say('LAST-SECOND SAVE!',LIME,LANE_Y[z.lane]-18,62);shake(3);
-    fxBurst(z.x,LANE_Y[z.lane],18,LIME,2.1,.04);
-  }else fxBurst(z.x,LANE_Y[z.lane],9,'#c9d1c4',1.3,.03);
+    worldFxBurst(z.x,LANE_Y[z.lane],18,LIME,2.1,.04);
+  }else worldFxBurst(z.x,LANE_Y[z.lane],9,'#c9d1c4',1.3,.03);
 }
 function stepPlants(){
   for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++){
     const p=slots[l][c];if(!p)continue;p.age++;if(p.hitT>0)p.hitT--;if(p.recoil>0)p.recoil--;
     if(p.type==='bloom'){
       if(--p.produce<=0){p.produce=330;sun=Math.min(300,sun+18);stats.harvests++;markEvent(2);
-        offer('sun',1,SLOT_X[c],LANE_Y[l],l);fxBurst(SLOT_X[c],LANE_Y[l]-5,6,GOLD,1.1,-.02);}
+        offer('sun',1,SLOT_X[c],LANE_Y[l],l);worldFxBurst(SLOT_X[c],LANE_Y[l]-5,6,GOLD,1.1,-.02);}
       continue;
     }
     if(--p.cool>0)continue;
@@ -383,9 +395,9 @@ function stepShots(){
       if(s.type==='moon'){
         for(const z of enemies)if(!z.dead&&z.lane===s.lane&&z!==hit&&Math.abs(z.x-hit.x)<15){
           z.hp-=.55;z.hitT=4;if(z.hp<=0)killEnemy(z,'moon');}
-        ring(hit.x,LANE_Y[s.lane],PLUM,1.2,16);
+        worldRing(hit.x,LANE_Y[s.lane],PLUM,1.2,16);
       }
-      fxBurst(hit.x,LANE_Y[s.lane]-2,s.type==='moon'?8:4,s.type==='moon'?PLUM:MINT,1.1,.01);
+      worldFxBurst(hit.x,LANE_Y[s.lane]-2,s.type==='moon'?8:4,s.type==='moon'?PLUM:MINT,1.1,.01);
       if(hit.hp<=0)killEnemy(hit,s.type);
     }
   }
@@ -399,7 +411,7 @@ function plantInFront(z){
 function breach(z){
   if(z.dead)return;z.dead=true;stats.breaches++;greenhouse=Math.max(0,greenhouse-1);
   markEvent();markProgress();say('BREACH · '+laneName(z.lane),RED,LANE_Y[z.lane]-17,70);shake(5);
-  fxBurst(GREENHOUSE_X,LANE_Y[z.lane],22,RED,2.2,.05);
+  worldFxBurst(GREENHOUSE_X,LANE_Y[z.lane],22,RED,2.2,.05);
 }
 function stepBarrows(){
   for(const b of barrows){
@@ -424,7 +436,7 @@ function stepEnemies(){
       if(p.type==='thorn'){z.hp-=.032;if(z.hp<=0){killEnemy(z,'thorn');continue;}}
       if(p.hp<=0){
         slots[p.lane][p.col]=null;markEvent();say(PLANT[p.type].name+' UPROOTED',RED,LANE_Y[p.lane]-18,55);
-        fxBurst(px,LANE_Y[p.lane]+6,12,SOIL2,1.4,.04);cachedPlan=null;planAt=-1e9;
+        worldFxBurst(px,LANE_Y[p.lane]+6,12,SOIL2,1.4,.04);cachedPlan=null;planAt=-1e9;
       }
     }else{
       const moon=z.moon&&act.phase==='live'?1.28:1;
@@ -504,185 +516,195 @@ function drawSkyAndLandmarks(){
     ['#182635','#65808a'],['#260f1d','#6b3038'],['#26364a','#d19a57']
   ],pal=palettes[stage];
   for(let i=0;i<5;i++)rect(0,52+i*5,W,6,mix(pal[0],pal[1],i/4));
-  // Celestial landmark changes shape and placement across the six chapters.
-  if(stage===0){rect(121,57,9,9,'#e8dba5');rect(124,58,7,7,pal[1]);}
-  else if(stage===1){rect(127,56,12,12,'#d9e2d4');rect(130,55,9,11,pal[0]);}
-  else if(stage===2){rect(118,59,10,7,'#e49b45');rect(121,57,4,2,'#6f4b2d');}
-  else if(stage===3){rect(126,55,11,11,'#d9f0ed');rect(129,58,2,2,'#a8c7c8');rect(133,62,2,2,'#a8c7c8');}
+  // Small, chapter-specific celestial marks leave the sky wider than the cast.
+  if(stage===0){rect(122,57,7,7,'#e8dba5');rect(125,58,5,5,pal[1]);}
+  else if(stage===1){rect(128,56,9,9,'#d9e2d4');rect(131,55,7,9,pal[0]);}
+  else if(stage===2){rect(119,59,8,6,'#e49b45');rect(121,57,3,2,'#6f4b2d');}
+  else if(stage===3){rect(128,56,8,8,'#d9f0ed');rect(130,58,1,1,'#a8c7c8');rect(133,61,2,2,'#a8c7c8');}
   else if(stage===4||act.phase!=='calm'){
-    const r=act.phase==='warn'?7+Math.floor((runFrame-act.warnAt)/48):12;
-    ctx.globalAlpha=.24;ctx.fillStyle=RED;ctx.beginPath();ctx.arc(128,61,r+6,0,7);ctx.fill();ctx.globalAlpha=1;
+    const r=act.phase==='warn'?5+Math.floor((runFrame-act.warnAt)/60):9;
+    ctx.globalAlpha=.24;ctx.fillStyle=RED;ctx.beginPath();ctx.arc(128,61,r+4,0,7);ctx.fill();ctx.globalAlpha=1;
     ctx.fillStyle='#d95b63';ctx.beginPath();ctx.arc(128,61,r,0,7);ctx.fill();
-  }else{rect(118,55,13,13,'#f4c95d');rect(116,60,17,3,'#f4c95d');}
-  // Distant chapel / mausoleum silhouette evolves structurally by chapter.
+  }else{rect(120,56,10,10,'#f4c95d');rect(118,60,14,2,'#f4c95d');}
+  // Distant chapel and iron fence establish depth behind the long approach.
   const chapel=stage===0?'#25352f':stage===3?'#52666a':'#222a32';
-  rect(138,60,18,17,chapel);rect(142,54,10,7,chapel);rect(146,49,2,7,chapel);
-  if(stage>=1){rect(132,66,5,11,chapel);rect(134,62,1,5,chapel);}
-  if(stage>=3){rect(135,59,3,2,ICE);rect(145,52,8,2,ICE);}
-  if(stage===2){for(const x of[111,121,135]){rect(x,70,7,5,'#b96f32');rect(x+2,68,2,2,'#4d6b38');}}
-  // Fence is midground: pale posts against the dark approach, never HUD.
-  rect(106,74,54,3,'#4e5754');
-  for(let x=108;x<160;x+=9){rect(x,68,3,10,'#69726d');rect(x+1,66,1,2,'#89928a');}
+  rect(142,61,15,16,chapel);rect(145,56,9,6,chapel);rect(149,52,2,5,chapel);
+  if(stage>=1){rect(137,68,4,9,chapel);rect(138,65,2,4,chapel);}
+  if(stage>=3){rect(141,61,3,1,ICE);rect(147,55,7,1,ICE);}
+  if(stage===2){for(const x of[111,122,134]){rect(x,71,5,4,'#b96f32');rect(x+2,69,1,2,'#4d6b38');}}
+  rect(75,74,85,2,'#4e5754');
+  for(let x=78;x<160;x+=10){rect(x,69,2,8,'#69726d');rect(x,67,2,2,'#89928a');}
 }
 function drawGreenhouse(){
-  rect(0,74,25,218,'#29332f');rect(3,78,19,210,'#3f4a43');
+  rect(0,72,19,178,'#29332f');rect(2,75,15,171,'#3f4a43');
   for(let l=0;l<LANES;l++){
-    const y=LANE_Y[l]-20;
-    rect(5,y,14,34,'#223b38');rect(7,y+3,10,27,'#6aa9a0');
-    ctx.globalAlpha=.35+.08*Math.sin(showFrame*.03+l);rect(8,y+4,4,25,'#b7e9cf');ctx.globalAlpha=1;
-    rect(12,y+3,2,27,'#304f4a');rect(7,y+16,10,2,'#304f4a');
-    rect(20,y+10,5,8,'#78604a');
+    const y=drawLaneY(l)-12;
+    rect(3,y,12,24,'#223b38');rect(5,y+2,8,20,'#6aa9a0');
+    ctx.globalAlpha=.32+.08*Math.sin(showFrame*.03+l);rect(6,y+3,3,18,'#b7e9cf');ctx.globalAlpha=1;
+    rect(9,y+2,1,20,'#304f4a');rect(5,y+11,8,1,'#304f4a');rect(15,y+8,4,6,'#78604a');
   }
-  // Sloped glass roof, chimney, water butt, and climbing vine make it a place.
-  ctx.fillStyle='#53645c';ctx.beginPath();ctx.moveTo(0,74);ctx.lineTo(13,62);ctx.lineTo(25,74);ctx.fill();
-  ctx.strokeStyle='#a4c7b8';ctx.beginPath();ctx.moveTo(3,73);ctx.lineTo(13,64);ctx.lineTo(22,73);ctx.stroke();
-  rect(2,64,4,12,'#594a3b');rect(1,63,6,3,'#756150');
-  rect(0,263,4,22,'#40514b');rect(4,269,4,16,'#53716a');
-  for(let i=0;i<9;i++){const y=82+i*22,x=20+Math.sin(i*1.7)*3;
-    rect(x,y,2,8,'#2f7045');if(i%2===0)rect(x-3,y+2,4,3,'#4c965a');}
+  // Sloped roof, chimney, water butt, shelves, and vine give the narrow facade depth.
+  ctx.fillStyle='#53645c';ctx.beginPath();ctx.moveTo(0,72);ctx.lineTo(10,63);ctx.lineTo(19,72);ctx.fill();
+  ctx.strokeStyle='#a4c7b8';ctx.beginPath();ctx.moveTo(2,71);ctx.lineTo(10,65);ctx.lineTo(17,71);ctx.stroke();
+  rect(2,64,3,8,'#594a3b');rect(1,63,5,2,'#756150');
+  rect(0,229,3,16,'#40514b');rect(3,234,3,11,'#53716a');rect(8,242,9,3,'#252f2b');
+  for(let i=0;i<8;i++){const y=81+i*20,x=15+Math.sin(i*1.7)*2;
+    rect(x,y,1,6,'#2f7045');if(i%2===0)rect(x-2,y+2,3,2,'#4c965a');}
   // Heart lamps map greenhouse health into the built object itself.
   const lit=Math.ceil(greenhouse/(GREENHOUSE_MAX/6));
-  for(let i=0;i<6;i++)rect(2+i*4,286,3,3,i<lit?MINT:'#26332e');
+  for(let i=0;i<6;i++)rect(1+i*3,247,2,2,i<lit?MINT:'#26332e');
 }
 function drawLaneGround(){
   for(let l=0;l<LANES;l++){
-    const y=LANE_Y[l]-23;
-    rect(25,y,135,46,l%2?'#253827':'#2b402b');
-    rect(25,y+36,135,10,l%2?'#1e2d22':'#223326');
-    // Cultivated beds use scalloped earth and furrows; the threat corridor
-    // switches to grave loam at x=106.
-    rect(29,y+9,74,26,SOIL);rect(29,y+10,74,3,SOIL2);
-    for(let x=31;x<102;x+=7)rect(x,y+16,1,15,hash(x,l)>0.45?'#4d3526':'#725038');
-    rect(104,y+5,56,31,l%2?'#35383a':'#303638');
-    for(let x=108;x<158;x+=10)if(hash(x,l*19+stage)>0.35){
-      rect(x,y+24,5,7,'#5a625f');rect(x+1,y+20,3,5,'#737c77');rect(x+2,y+19,1,2,'#8a938d');}
-    // Cobble separator / foreground lip.
-    rect(25,y+43,135,3,'#59605a');
-    for(let x=28;x<160;x+=12)rect(x,y+43,7,1,'#7a817a');
-    if(stage===2){rect(108+(l%2)*13,y+32,9,4,'#8f552d');rect(112+(l%2)*13,y+29,3,3,'#d58a36');}
-    if(stage===3){rect(25,y,135,2,ICE);for(let x=32;x<156;x+=19)rect(x,y+37,8,2,'#d9efed');}
-    if(stage>=4){for(let x=108;x<158;x+=14){rect(x,y+28,2,8,'#5e2634');rect(x-2,y+27,6,2,'#7d3444');}}
+    const y=drawLaneY(l)-17,grass=l%2?'#253827':'#2b402b',loam=l%2?'#35383a':'#303638';
+    rect(19,y,141,34,grass);rect(19,y+28,141,6,l%2?'#1e2d22':'#223326');
+    // Three compact beds occupy less than half the width; the rest is runway.
+    rect(22,y+4,53,24,SOIL);rect(22,y+5,53,2,SOIL2);
+    for(let x=24;x<75;x+=6)rect(x,y+10,1,15,hash(x,l)>.45?'#4d3526':'#725038');
+    for(const x of[38,57]){rect(x,y+5,2,22,'#4e3728');rect(x+1,y+6,1,20,'#8d6541');}
+    rect(76,y+2,84,27,loam);rect(76,y+3,84,2,l%2?'#44484a':'#3d4445');
+    // Repeating tiny graves, weeds, stones, and a service path sell the long distance.
+    for(let x=81;x<158;x+=11)if(hash(x,l*19+stage)>.3){
+      const h=3+((x+l)%3);rect(x,y+19-h,3,h,'#737c77');rect(x+1,y+17-h,1,2,'#8a938d');
+      if((x+l)%2)rect(x+4,y+22,2,1,'#59625d');}
+    for(let x=80+l*3;x<158;x+=17){rect(x,y+25,5,1,'#4b504e');if(hash(x,stage+l)>.55)rect(x+2,y+23,1,2,'#35543b');}
+    // Narrow cobble lips separate lanes without turning them into giant rows.
+    rect(19,y+31,141,3,'#59605a');for(let x=22;x<160;x+=11)rect(x,y+31,6,1,'#7a817a');
+    if(stage===2){rect(113+(l%2)*13,y+24,6,3,'#8f552d');rect(115+(l%2)*13,y+22,2,2,'#d58a36');}
+    if(stage===3){
+      rect(19,y,141,1,ICE);for(let x=26;x<156;x+=18)rect(x,y+27,7,1,'#d9efed');
+      for(let x=81+(l%2)*4;x<158;x+=13){rect(x,y+7+(x%3),7,1,'#89a8aa');rect(x+2,y+6+(x%3),2,1,ICE);}
+    }
+    if(stage>=4){for(let x=84;x<158;x+=15){rect(x,y+20,1,6,'#5e2634');rect(x-2,y+19,5,1,'#7d3444');}}
   }
 }
 function drawStageLandmarks(){
   // These are compositional chapter changes inside the playable world, not
   // palette swaps: a viewer can identify the chapter from silhouette alone.
-  ctx.globalAlpha=.72;
+  ctx.globalAlpha=.68;
   if(stage===0){
-    // Patchwork scarecrow watches the opening rows.
-    const x=126,y=LANE_Y[1]+7;rect(x-1,y-24,3,30,'#795838');rect(x-11,y-18,23,3,'#8f6840');
-    rect(x-6,y-24,13,8,'#9a7147');rect(x-4,y-29,9,6,'#c6a356');rect(x-8,y-28,17,2,'#d2b666');
+    // A narrow patchwork scarecrow watches the far half of the approach.
+    const x=137,y=drawLaneY(1)+5;rect(x,y-18,2,22,'#795838');rect(x-7,y-13,15,2,'#8f6840');
+    rect(x-4,y-18,9,6,'#9a7147');rect(x-3,y-22,7,4,'#c6a356');rect(x-5,y-21,11,1,'#d2b666');
   }else if(stage===1){
-    // A crooked family crypt occupies the middle distance.
-    const x=122,y=LANE_Y[1]+18;rect(x,y-32,28,29,'#343d43');rect(x+3,y-38,22,7,'#465159');
-    rect(x+11,y-47,4,10,'#343d43');rect(x+7,y-43,12,3,'#343d43');
-    rect(x+9,y-22,10,19,'#171e22');ctx.strokeStyle='#59656b';ctx.strokeRect(x+9.5,y-21.5,9,18);
+    // A crooked family crypt sits behind the lane rather than filling it.
+    const x=132,y=drawLaneY(1)+12;rect(x,y-22,22,20,'#343d43');rect(x+2,y-26,18,5,'#465159');
+    rect(x+9,y-33,3,8,'#343d43');rect(x+6,y-30,9,2,'#343d43');
+    rect(x+7,y-15,7,13,'#171e22');ctx.strokeStyle='#59656b';ctx.strokeRect(x+7.5,y-14.5,6,12);
   }else if(stage===2){
-    // Harvest arch and clustered jack-o-lanterns change the right edge.
-    const y=LANE_Y[2]+16;rect(116,y-35,5,35,'#6e4428');rect(148,y-35,5,35,'#6e4428');
-    for(let i=0;i<6;i++){const x=118+i*6;rect(x,y-40-Math.abs(i-2.5)*2,7,5,'#9a5b2d');}
-    for(const x of[122,139]){rect(x,y-8,12,8,'#c77831');rect(x+3,y-11,4,3,'#496139');
-      rect(x+3,y-5,2,2,'#34221b');rect(x+8,y-5,2,2,'#34221b');}
+    // Harvest arch and tiny jack-o-lantern cluster change the right silhouette.
+    const y=drawLaneY(2)+10;rect(127,y-27,3,27,'#6e4428');rect(153,y-27,3,27,'#6e4428');
+    for(let i=0;i<6;i++){const x=128+i*5;rect(x,y-30-Math.abs(i-2.5),5,3,'#9a5b2d');}
+    for(const x of[131,144]){rect(x,y-6,8,5,'#c77831');rect(x+2,y-8,3,2,'#496139');
+      rect(x+2,y-4,1,1,'#34221b');rect(x+5,y-4,1,1,'#34221b');}
   }else if(stage===3){
-    // Frost crypt and a frozen stone well make a hard pale silhouette.
-    const y=LANE_Y[0]+17;rect(119,y-25,33,23,'#52666a');rect(116,y-29,39,5,'#8fb0af');
-    rect(126,y-18,11,16,'#26383d');rect(121,y-32,29,4,ICE);
-    const wy=LANE_Y[3]+9;ctx.fillStyle='#627a79';ctx.beginPath();ctx.ellipse(133,wy,17,7,0,0,7);ctx.fill();
-    ctx.fillStyle=ICE;ctx.beginPath();ctx.ellipse(133,wy-2,14,4,0,0,7);ctx.fill();
+    // Frost crypt and frozen well are distinct but remain distant landmarks.
+    const y=drawLaneY(0)+11;rect(130,y-18,24,16,'#52666a');rect(128,y-21,28,4,'#8fb0af');
+    rect(137,y-13,8,11,'#26383d');rect(132,y-24,20,3,ICE);
+    const wy=drawLaneY(3)+5;ctx.fillStyle='#627a79';ctx.beginPath();ctx.ellipse(141,wy,11,4,0,0,7);ctx.fill();
+    ctx.fillStyle=ICE;ctx.beginPath();ctx.ellipse(141,wy-1,9,3,0,0,7);ctx.fill();
   }else if(stage===4){
-    // A bone-white dead tree forks through two lanes under the red moon.
-    rect(145,LANE_Y[3]+12,6,-153,'#5d5550');
-    ctx.strokeStyle='#8e8177';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(148,LANE_Y[1]);ctx.lineTo(131,LANE_Y[0]-11);
-    ctx.moveTo(148,LANE_Y[2]);ctx.lineTo(124,LANE_Y[1]-8);ctx.moveTo(145,LANE_Y[2]+12);ctx.lineTo(129,LANE_Y[3]-2);ctx.stroke();ctx.lineWidth=1;
+    // A bone-white dead tree forks through the corridor under the red moon.
+    rect(151,drawLaneY(3)+8,4,-122,'#5d5550');
+    ctx.strokeStyle='#8e8177';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(153,drawLaneY(1));ctx.lineTo(139,drawLaneY(0)-8);
+    ctx.moveTo(153,drawLaneY(2));ctx.lineTo(134,drawLaneY(1)-6);ctx.moveTo(151,drawLaneY(2)+9);ctx.lineTo(137,drawLaneY(3)-2);ctx.stroke();ctx.lineWidth=1;
   }else{
     // Dawn replaces the cemetery silhouette with a flowering victory trellis.
-    rect(116,LANE_Y[0]-18,4,178,'#687749');rect(151,LANE_Y[0]-18,4,178,'#687749');
-    for(let y=LANE_Y[0]-17;y<LANE_Y[3]+15;y+=13){rect(118,y,34,2,'#819553');
-      for(let x=121;x<150;x+=9){rect(x,y-3,5,5,(x+y)%2?GOLD:MINT);rect(x+2,y-1,1,1,CREAM);}}
+    rect(128,drawLaneY(0)-14,3,151,'#687749');rect(155,drawLaneY(0)-14,3,151,'#687749');
+    for(let y=drawLaneY(0)-13;y<drawLaneY(3)+11;y+=11){rect(130,y,25,1,'#819553');
+      for(let x=133;x<154;x+=7){rect(x,y-2,3,3,(x+y)%2?GOLD:MINT);rect(x+1,y-1,1,1,CREAM);}}
   }
   ctx.globalAlpha=1;
 }
 function drawForegarden(){
   // Stone apron under the last row: foreground roots, a drainage grate and
   // loose tools bridge the world into the seed-packet workbench.
-  rect(0,267,W,25,'#222b25');rect(0,267,W,4,'#657067');
-  for(let x=4;x<158;x+=17){rect(x,273+(x%3),12,2,'#364239');rect(x+4,277+(x%5),2,8,'#303a33');}
-  for(let x=34;x<124;x+=15){ctx.strokeStyle='#4f674b';ctx.beginPath();ctx.moveTo(x,268);ctx.lineTo(x-5,284);ctx.lineTo(x-11,289);ctx.stroke();}
-  rect(67,274,27,12,'#151c18');for(let x=70;x<93;x+=5)rect(x,276,2,8,'#4e5a52');
-  rect(9,281,18,2,'#86613e');rect(23,277,3,9,STONE2);rect(135,278,15,7,'#405e58');rect(146,275,4,12,'#58736c');
+  rect(0,249,W,43,'#222b25');rect(0,270,W,22,'#1b241f');rect(0,249,W,3,'#657067');rect(0,270,W,2,'#303c34');
+  for(let x=3;x<158;x+=16){rect(x,256+(x%3),11,2,'#364239');rect(x+4,260+(x%5),2,7,'#303a33');}
+  for(let x=26;x<126;x+=14){ctx.strokeStyle='#4f674b';ctx.beginPath();ctx.moveTo(x,250);ctx.lineTo(x-4,270);ctx.lineTo(x-10,280);ctx.stroke();}
+  rect(65,260,26,11,'#151c18');for(let x=68;x<90;x+=5)rect(x,262,2,7,'#4e5a52');
+  // Potting bench, coiled hose, fork, watering can, and stacked seed trays.
+  rect(21,273,54,3,'#715039');rect(25,276,3,12,'#4b382b');rect(67,276,3,12,'#4b382b');
+  for(let x=31;x<64;x+=9){rect(x,266,7,6,'#5d412d');rect(x+1,267,5,2,'#8a6544');}
+  ctx.strokeStyle='#52705b';ctx.beginPath();ctx.arc(105,273,12,0,7);ctx.arc(105,273,7,0,7);ctx.stroke();
+  rect(8,280,14,2,'#86613e');rect(19,276,2,8,STONE2);rect(135,276,13,6,'#405e58');rect(146,273,3,11,'#58736c');
 }
 function drawForecast(){
   if(waveClock>=WARN)return;
   const left=Math.ceil((WARN-waveClock)/60),counts=[0,0,0,0];
   for(const q of wavePlan)counts[q.lane]++;
   for(let l=0;l<LANES;l++){
-    const y=LANE_Y[l];
+    const y=drawLaneY(l);
     if(!counts[l])continue;
-    ctx.globalAlpha=.38+.22*Math.sin(showFrame*.16+l);
-    rect(104,y-20,54,39,act.phase==='warn'&&act.targetLane===l?'#71313d':'#515349');
+    ctx.globalAlpha=.13+.07*Math.sin(showFrame*.16+l);
+    rect(76,y-14,84,28,act.phase==='warn'&&act.targetLane===l?'#71313d':'#737064');
     ctx.globalAlpha=1;
-    for(let i=0;i<Math.min(4,counts[l]);i++)drawEnemySilhouette(151-i*7,y+8,(wavePlan.find(q=>q.lane===l&&q.id%4===i)||wavePlan.find(q=>q.lane===l)).type,.55);
-    ctx.fillStyle=CREAM;ctx.font='bold 6px monospace';ctx.fillText(left+'s',136,y-13);
-    for(let i=0;i<3;i++){const x=109+i*9+(showFrame%18)/2;ctx.strokeStyle=GOLD;ctx.beginPath();
-      ctx.moveTo(x,y-2);ctx.lineTo(x-4,y-6);ctx.moveTo(x,y-2);ctx.lineTo(x-4,y+2);ctx.stroke();}
+    for(let i=0;i<Math.min(4,counts[l]);i++)drawEnemySilhouette(155-i*6,y+4,(wavePlan.find(q=>q.lane===l&&q.id%4===i)||wavePlan.find(q=>q.lane===l)).type,.48);
+    ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText('x'+counts[l]+'  '+left+'s',132,y-9);
+    for(let i=0;i<4;i++){const x=83+i*16+(showFrame%24)/2;ctx.strokeStyle=GOLD;ctx.beginPath();
+      ctx.moveTo(x,y);ctx.lineTo(x-3,y-3);ctx.moveTo(x,y);ctx.lineTo(x-3,y+3);ctx.stroke();}
   }
 }
 function drawSlotMarkers(){
   for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++)if(!slots[l][c]){
-    const x=SLOT_X[c],y=LANE_Y[l]+8;
+    const x=drawSlotX(c),y=drawY(LANE_Y[l]+8);
     ctx.globalAlpha=.26;ctx.strokeStyle=manualLane===l&&manualCol===c&&playing()?GOLD:'#c5ad7c';
-    ctx.beginPath();ctx.ellipse(x,y,9,4,0,0,7);ctx.stroke();ctx.globalAlpha=1;
+    ctx.beginPath();ctx.ellipse(x,y,6,3,0,0,7);ctx.stroke();ctx.globalAlpha=1;
   }
+}
+function wantsActor(id){
+  const selected=globalThis.__GG_VISUAL_ONLY_ACTOR;
+  return selected===undefined||selected===null||selected===''||selected===id;
 }
 function drawBarrows(){
   for(const b of barrows){
-    if(!b.ready&&!b.active)continue;
-    const x=b.x,y=LANE_Y[b.lane]+8,tilt=b.active?Math.sin(b.spin*.22):0;
+    if((!b.ready&&!b.active)||!wantsActor('barrow:'+b.lane))continue;
+    const x=drawX(b.x),y=drawY(LANE_Y[b.lane]+8),tilt=b.active?Math.sin(b.spin*.22):0;
     ctx.save();ctx.translate(x,y);ctx.rotate(tilt*.08);
-    // Garden barrow: iron wheel, timber tray, handles, and a tiny warding bell.
-    ctx.fillStyle='#1b201d';ctx.beginPath();ctx.arc(-3,3,5,0,7);ctx.fill();
-    ctx.fillStyle=STONE2;ctx.beginPath();ctx.arc(-3,3,3,0,7);ctx.fill();rect(-4,0,2,6,'#3b403d');
-    ctx.fillStyle='#a3633d';ctx.beginPath();ctx.moveTo(-8,-5);ctx.lineTo(6,-4);ctx.lineTo(3,3);ctx.lineTo(-6,2);ctx.fill();
-    rect(-6,-4,10,2,'#c17b4a');rect(4,-2,8,2,'#796044');rect(5,1,8,2,'#5c4935');
-    rect(-1,-9,2,5,'#d8c27a');rect(-3,-10,6,2,GOLD);
-    if(b.active){ctx.globalAlpha=.35;rect(-13,-7,9,12,GOLD);ctx.globalAlpha=1;}
+    // A compact iron-and-timber barrow; its spinning bell carries the save pose.
+    ctx.fillStyle='#171c19';ctx.beginPath();ctx.arc(-2,3,3,0,7);ctx.fill();
+    ctx.fillStyle=STONE2;ctx.beginPath();ctx.arc(-2,3,1.5,0,7);ctx.fill();
+    ctx.fillStyle='#a3633d';ctx.beginPath();ctx.moveTo(-6,-4);ctx.lineTo(4,-3);ctx.lineTo(2,2);ctx.lineTo(-5,1);ctx.fill();
+    rect(-5,-3,8,1,'#d08a51');rect(3,-1,7,1,'#796044');rect(3,1,7,1,'#5c4935');
+    rect(0,-7,1,4,'#d8c27a');rect(-2,-8,5,1,GOLD);
+    if(b.active){ctx.globalAlpha=.3;rect(-9,-5,5,9,GOLD);ctx.globalAlpha=1;}
     ctx.restore();
   }
 }
 function drawPlant(p,alpha){
-  alpha=alpha===undefined?1:alpha;const x=SLOT_X[p.col],base=LANE_Y[p.lane]+8;
-  const bob=Math.sin(showFrame*.08+p.serial)*1.2,wilt=1-clamp(p.hp/p.maxHp,0,1),hit=p.hitT>0;
+  if(!wantsActor('plant:'+p.lane+':'+p.col))return;
+  alpha=alpha===undefined?1:alpha;const x=Math.round(drawSlotX(p.col)),base=Math.round(drawY(LANE_Y[p.lane]+8));
+  const bob=Math.sin(showFrame*.08+p.serial)>.25?-1:0,wilt=p.hp<p.maxHp*.45?1:0,hit=p.hitT>0;
   ctx.globalAlpha=alpha;
-  // Rooted silhouette and cast shadow.
-  ctx.fillStyle='#172019';ctx.beginPath();ctx.ellipse(x+2,base+3,10,4,0,0,7);ctx.fill();
-  rect(x-2,base-8+wilt*4,4,12,hit?'#eef7d9':'#397b43');
-  rect(x-8,base-3,7,4,'#2f6d3d');rect(x+2,base-5,8,4,'#4b9854');
+  // Tiny roots, leaves, faces, and one-pixel pose changes preserve character.
+  ctx.fillStyle='#172019';ctx.beginPath();ctx.ellipse(x,base+3,6,2,0,0,7);ctx.fill();
+  rect(x-1,base-7+wilt*2,2,10,hit?'#eef7d9':'#397b43');
+  rect(x-5,base-2,4,3,'#2f6d3d');rect(x+1,base-4,5,3,'#4b9854');
   if(p.type==='bloom'){
-    const y=base-12+bob;
-    for(let i=0;i<8;i++){const a=i*Math.PI/4;rect(x+Math.cos(a)*6-2,y+Math.sin(a)*6-2,4,4,hit?'#fff2ca':GOLD);}
-    ctx.fillStyle='#80522b';ctx.beginPath();ctx.arc(x,y,5,0,7);ctx.fill();
-    rect(x-2,y-1,1,1,'#18130e');rect(x+2,y-1,1,1,'#18130e');rect(x-1,y+2,3,1,'#dba450');
+    const y=base-9+bob,petals=[[-1,-5],[2,-4],[4,-1],[2,2],[-1,3],[-4,2],[-5,-1],[-4,-4]];
+    for(const d of petals)rect(x+d[0],y+d[1],3,3,hit?'#fff2ca':GOLD);
+    rect(x-2,y-2,5,5,'#80522b');rect(x-1,y-1,1,1,'#18130e');rect(x+1,y-1,1,1,'#18130e');
   }else if(p.type==='pea'){
-    const kick=p.recoil>0?p.recoil*.45:0,y=base-13+bob;
-    rect(x-2,base-11,4,5,'#4b9854');rect(x-1,y-5,7,9,hit?'#e7f7df':'#66b95d');
-    rect(x+4-kick,y-3,8,6,hit?'#f5ffe8':'#78ca68');rect(x+9-kick,y-1,3,2,'#203d26');
-    rect(x+1,y-3,2,2,'#102016');
+    const kick=p.recoil>4?2:p.recoil>0?1:0,ready=p.cool<=3?1:0,y=base-10+bob+ready;
+    rect(x-1,base-9,3,4,'#4b9854');rect(x-2,y-4,6,7,hit?'#e7f7df':'#66b95d');
+    rect(x+3-kick,y-2,6,4,hit?'#f5ffe8':'#78ca68');rect(x+7-kick,y-1,2,2,'#203d26');
+    rect(x,y-2,1,1,'#102016');
   }else if(p.type==='thorn'){
-    const y=base-7;
-    rect(x-8,y-4,16,10,hit?'#efe2ce':'#7b5838');rect(x-6,y-7,12,5,'#4f783e');
-    for(const d of[[-8,-3],[-4,-8],[1,-8],[7,-4],[-7,5],[6,5]]){
+    const y=base-5-(hit?1:0);
+    rect(x-6,y-3,12,8,hit?'#efe2ce':'#7b5838');rect(x-4,y-6,8,4,'#4f783e');
+    for(const d of[[-6,-2],[-3,-6],[2,-6],[6,-2],[-5,4],[5,4]]){
       ctx.fillStyle='#d5c29b';ctx.beginPath();ctx.moveTo(x+d[0],y+d[1]);
-      ctx.lineTo(x+d[0]+(d[0]<0?-4:4),y+d[1]-2);ctx.lineTo(x+d[0],y+d[1]+2);ctx.fill();}
-    rect(x-3,y-2,2,2,'#211b16');rect(x+2,y-2,2,2,'#211b16');
+      ctx.lineTo(x+d[0]+(d[0]<0?-2:2),y+d[1]-1);ctx.lineTo(x+d[0],y+d[1]+1);ctx.fill();}
+    rect(x-2,y-1,1,1,'#211b16');rect(x+2,y-1,1,1,'#211b16');
   }else{
-    const y=base-13+bob;
-    ctx.globalAlpha=alpha*(.18+.08*Math.sin(showFrame*.12+p.serial));ctx.fillStyle=PLUM;ctx.beginPath();ctx.arc(x,y,12,0,7);ctx.fill();
-    ctx.globalAlpha=alpha;rect(x-3,y-1,6,9,'#c8c1aa');
-    ctx.fillStyle=hit?'#f5eaff':PLUM;ctx.beginPath();ctx.ellipse(x,y-2,10,6,0,Math.PI,Math.PI*2);ctx.fill();
-    rect(x-8,y-3,16,3,hit?'#fff':'#9b6dbe');rect(x-2,y-1,1,1,'#251b2d');rect(x+2,y-1,1,1,'#251b2d');
+    const y=base-9+bob;
+    ctx.globalAlpha=alpha*(.16+.07*Math.sin(showFrame*.12+p.serial));ctx.fillStyle=PLUM;ctx.beginPath();ctx.arc(x,y,7,0,7);ctx.fill();
+    ctx.globalAlpha=alpha;rect(x-2,y,4,7,'#c8c1aa');
+    ctx.fillStyle=hit?'#f5eaff':PLUM;ctx.beginPath();ctx.ellipse(x,y-1,6,4,0,Math.PI,Math.PI*2);ctx.fill();
+    rect(x-5,y-2,10,2,hit?'#fff':'#9b6dbe');rect(x-1,y,1,1,'#251b2d');rect(x+1,y,1,1,'#251b2d');
   }
   if(p.hp<p.maxHp*.95){
-    rect(x-8,base+7,16,2,'#271c19');rect(x-8,base+7,16*clamp(p.hp/p.maxHp,0,1),2,p.hp>p.maxHp*.4?MINT:RED);
+    rect(x-6,base+5,12,1,'#271c19');rect(x-6,base+5,12*clamp(p.hp/p.maxHp,0,1),1,p.hp>p.maxHp*.4?MINT:RED);
   }
   ctx.globalAlpha=1;
 }
@@ -690,60 +712,65 @@ function drawEnemySilhouette(x,base,type,alpha){
   const z={x,type,walk:0,hitT:0,biteT:0,hp:1,maxHp:1,moon:0};drawEnemyBody(z,base,alpha||1,true);
 }
 function drawEnemyBody(z,base,alpha,silhouette){
-  const x=z.x,step=Math.floor(z.walk/2)%2,bite=z.biteT>0?2:0,hit=z.hitT>0;
+  const x=Math.round(z.x),step=Math.floor(z.walk/2)%2,bite=z.biteT>0?2:0,hit=z.hitT>0,stagger=hit?(z.hitT%2?1:-1):0;
   const bone=silhouette?'#242925':hit?'#f5f2df':'#c2c5af',cloth=silhouette?'#1b201d':'#4a5360';
   ctx.globalAlpha=alpha===undefined?1:alpha;
-  ctx.fillStyle='#141917';ctx.beginPath();ctx.ellipse(x,base+7,9,3,0,0,7);ctx.fill();
+  const brute=z.type==='brute';ctx.fillStyle='#141917';ctx.beginPath();ctx.ellipse(x,base+4,brute?8:5,2,0,0,7);ctx.fill();
   if(z.type==='hound'){
-    rect(x-6,base-3,12,5,bone);rect(x-10,base-6,6,5,bone);rect(x-10,base-5,2,1,RED);
-    rect(x-5,base+1+(step?1:0),2,6,bone);rect(x+3,base+1+(step?0:1),2,6,bone);
-    rect(x+6,base-5,5,2,bone);
+    rect(x-5+stagger,base-3,10,4,bone);rect(x-7+stagger-bite,base-6,5,4,bone);rect(x-7+stagger-bite,base-5,1,1,RED);
+    rect(x-4,base+1+(step?1:0),2,4,bone);rect(x+3,base+1+(step?0:1),2,4,bone);
+    rect(x+5+stagger,base-5,3,1,bone);rect(x-1+stagger,base-5,2,2,cloth);
   }else if(z.type==='brute'){
-    rect(x-5,base-15,10,16,cloth);rect(x-4,base-21,8,7,bone);rect(x-6,base-24,12,4,'#252b2b');
-    rect(x-4,base+1+(step?1:0),4,7,'#252725');rect(x+1,base+1+(step?0:1),4,7,'#252725');
-    rect(x-9-bite,base-12,5,3,bone);rect(x+5,base-12,3,13,'#6c4a32');rect(x+3,base,7,2,STONE2);
-    rect(x-2,base-19,1,1,RED);rect(x+2,base-19,1,1,RED);
+    rect(x-6+stagger,base-15,12,15,cloth);rect(x-5+stagger,base-22,10,7,bone);rect(x-7+stagger,base-25,14,3,'#252b2b');
+    rect(x-5,base+(step?1:0),4,6,'#252725');rect(x+1,base+(step?0:1),4,6,'#252725');
+    rect(x-8-(bite?1:0),base-12,3,3,bone);rect(x+6,base-13,2,13,'#6c4a32');rect(x+5,base-1,5,2,STONE2);
+    rect(x-2+stagger,base-20,1,1,RED);rect(x+2+stagger,base-20,1,1,RED);rect(x-3+stagger,base-9,6,2,'#31536b');
   }else{
-    rect(x-4,base-10,8,11,cloth);rect(x-3,base-16,7,7,bone);
-    rect(x-4,base+1+(step?1:0),3,7,'#343b38');rect(x+1,base+1+(step?0:1),3,7,'#2d3431');
-    rect(x-8-bite,base-9,5,2,bone);rect(x+3,base-8,5,2,bone);
-    rect(x-2,base-14,1,1,'#222');rect(x+1,base-14,1,1,RED);
+    rect(x-3+stagger,base-8,6,9,cloth);rect(x-3+stagger,base-13,6,5,bone);
+    rect(x-3,base+(step?1:0),2,5,'#343b38');rect(x+1,base+(step?0:1),2,5,'#2d3431');
+    rect(x-6-bite+stagger,base-7,4,2,bone);rect(x+3+stagger,base-7,4,2,bone);
+    rect(x-1+stagger,base-11,1,1,'#222');rect(x+1+stagger,base-11,1,1,RED);
     if(z.type==='bucket'){
-      rect(x-5,base-20,10,7,hit?'#fff':STONE);rect(x-4,base-21,8,2,STONE2);rect(x+4,base-18,2,6,'#454d4b');
-    }else{rect(x-4,base-19,8,3,'#3d433d');rect(x-2,base-21,5,3,'#4a5149');}
+      rect(x-5+stagger,base-18,10,6,hit?'#fff':STONE);rect(x-4+stagger,base-19,8,2,STONE2);rect(x+4+stagger,base-17,1,5,'#454d4b');
+    }else{rect(x-4+stagger,base-16,8,3,'#3d433d');rect(x-2+stagger,base-18,5,3,'#4a5149');}
   }
-  if(z.moon){ctx.globalAlpha=.42;rect(x-7,base-24,14,32,RED);}
-  if(!silhouette&&z.hp<z.maxHp){rect(x-7,base-25,14,2,'#261a1b');rect(x-7,base-25,14*clamp(z.hp/z.maxHp,0,1),2,RED);}
+  if(z.moon){ctx.globalAlpha=.28;rect(x-(brute?9:7),base-(brute?25:19),brute?18:14,brute?31:25,RED);}
+  if(!silhouette&&z.hp<z.maxHp){const w=brute?16:12;rect(x-w/2,base+6,w,1,'#261a1b');rect(x-w/2,base+6,w*clamp(z.hp/z.maxHp,0,1),1,RED);}
   ctx.globalAlpha=1;
 }
-function drawEnemy(z){drawEnemyBody(z,LANE_Y[z.lane]+7,1,false);}
-function carriedPlantProxy(p,x,y){
-  const clone=Object.assign({},p,{lane:0,col:0,serial:p.serial});
-  const ox=SLOT_X[0],oy=LANE_Y[0]+8;
-  ctx.save();ctx.translate(x-ox,y-oy);drawPlant(clone,1);ctx.restore();
+function drawEnemy(z){
+  if(wantsActor('zombie:'+z.id))drawEnemyBody(Object.assign({},z,{x:drawX(z.x)}),drawY(LANE_Y[z.lane]+7),1,false);
+}
+function drawCarrySprig(p,x,y,face){
+  const c=PLANT[p.type].color,bob=Math.floor(gardener.walk/3)%2;
+  rect(x-3,y-2-bob,7,4,SOIL2);rect(x-2,y+2-bob,5,2,'#4b3928');rect(x,y-7-bob,1,5,LEAF);
+  rect(x-4,y-7-bob,4,3,c);rect(x+1,y-9-bob,4,4,c);rect(x+face*3,y-6-bob,2,2,CREAM);
 }
 function drawGardener(){
-  const g=gardener,x=g.x,y=g.y,bob=g.pose==='walk'||g.pose==='carry'?Math.floor(g.walk/3)%2:0;
-  const crouch=g.pose==='plant'||g.pose==='uproot'?3:0,face=g.face;
-  ctx.fillStyle='#121813';ctx.beginPath();ctx.ellipse(x,y+8,7,3,0,0,7);ctx.fill();
-  if(g.carrying)carriedPlantProxy(g.carrying,x,y-17-Math.sin(showFrame*.1));
-  rect(x-4,y+2+crouch+(bob?1:0),3,7,'#4b3928');rect(x+1,y+2+crouch+(bob?0:1),3,7,'#3b2d22');
-  rect(x-5,y-5+crouch,10,8,'#49705a');rect(x-3,y-4+crouch,6,7,'#d8b46a');
-  rect(x-3,y-11+crouch,7,7,'#c98f69');rect(x+face*2-1,y-8+crouch,2,1,'#282019');
-  // Straw hat has a broad asymmetric silhouette and a bouncing ribbon.
-  rect(x-7,y-13+crouch,14,3,'#d7b55c');rect(x-4,y-16+crouch,9,4,'#e4c66d');
-  rect(x-face*5,y-14+crouch,3,2,persona.color);
+  if(!wantsActor('gardener'))return;
+  const g=gardener,x=Math.round(drawX(g.x)),y=Math.round(drawY(g.y)),bob=g.pose==='walk'||g.pose==='carry'?Math.floor(g.walk/3)%2:0;
+  const crouch=g.pose==='plant'||g.pose==='uproot'?2:0,face=g.face,carrySway=g.carrying?((showFrame>>2)%2)*face:0;
+  ctx.fillStyle='#121813';ctx.beginPath();ctx.ellipse(x,y+7,5,2,0,0,7);ctx.fill();
+  if(g.carrying)drawCarrySprig(g.carrying,x+face*2+carrySway,y-12,face);
+  rect(x-3,y+2+crouch+(bob?1:0),2,5,'#4b3928');rect(x+1,y+2+crouch+(bob?0:1),2,5,'#3b2d22');
+  rect(x-4,y-4+crouch,8,7,'#49705a');rect(x-2,y-3+crouch,4,6,'#d8b46a');
+  rect(x-2,y-9+crouch,5,5,'#c98f69');rect(x+face*2-1,y-7+crouch,1,1,'#282019');
+  // Hat, ribbon, gait, and tools do the character work instead of sprite size.
+  rect(x-5,y-11+crouch,11,2,'#d7b55c');rect(x-3,y-14+crouch,7,3,'#e4c66d');
+  rect(x-face*4,y-12+crouch,2,1,persona.color);
   if(g.pose==='plant'||g.pose==='uproot'){
-    const a=(showFrame>>2)%2;rect(x+face*5,y-1+crouch+a,7,2,'#c98f69');
-    rect(x+face*9,y-3+crouch+a,2,9,'#6d4a2f');rect(x+face*8,y+5+crouch+a,5*face,2,STONE2);
+    const a=(showFrame>>2)%2;rect(x+(face>0?3:-6),y-1+crouch+a,4,2,'#c98f69');
+    rect(x+face*7-(face<0?1:0),y-3+crouch+a,1,9,'#6d4a2f');
+    rect(x+(face>0?6:-9),y+5+crouch+a,4,1,STONE2);
   }else if(g.carrying){
-    rect(x-6,y-9+crouch,3,8,'#c98f69');rect(x+3,y-9+crouch,3,8,'#c98f69');
-  }else rect(x+face*4,y-3+crouch,5,2,'#c98f69');
+    rect(x-4+carrySway,y-7+bob,2,6,'#c98f69');rect(x+2+carrySway,y-7+(bob?0:1),2,6,'#c98f69');
+  }else rect(x+(face>0?3:-6),y-2+crouch,4,2,'#c98f69');
 }
 function drawShots(){
   for(const s of shots){
-    if(s.type==='moon'){ctx.globalAlpha=.25;rect(s.x-5,s.y-5,10,10,PLUM);ctx.globalAlpha=1;rect(s.x-2,s.y-2,4,4,'#d9b9ef');}
-    else{rect(s.x-4,s.y-1,4,2,'#4f8d48');rect(s.x-1,s.y-3,5,5,MINT);rect(s.x+2,s.y-2,2,2,LIME);}
+    const x=drawX(s.x),y=drawY(s.y);
+    if(s.type==='moon'){ctx.globalAlpha=.22;rect(x-3,y-3,6,6,PLUM);ctx.globalAlpha=1;rect(x-1,y-1,2,2,'#d9b9ef');}
+    else{rect(x-3,y,3,1,'#4f8d48');rect(x-1,y-1,3,3,MINT);rect(x+1,y,1,1,LIME);}
   }
 }
 function drawHud(){
@@ -799,16 +826,16 @@ function render(){
   drawGardener();drawRings();drawParts();
   for(const t of texts){
     ctx.globalAlpha=Math.min(1,t.t/15);ctx.font='bold 7px monospace';ctx.fillStyle=t.c;
-    ctx.fillText(t.s,clamp(80-t.s.length*2.1,3,157-t.s.length*4.2),t.y);
+    ctx.fillText(t.s,clamp(80-t.s.length*2.1,3,157-t.s.length*4.2),drawY(t.y));
   }
   ctx.globalAlpha=1;drawForegarden();postDraw();drawHud();drawBottom();
   if(act.phase==='warn'){
-    ctx.globalAlpha=.18+.08*Math.sin(showFrame*.22);rect(25,LANE_Y[act.targetLane]-23,135,46,RED);ctx.globalAlpha=1;
+    ctx.globalAlpha=.18+.08*Math.sin(showFrame*.22);rect(76,drawLaneY(act.targetLane)-17,84,34,RED);ctx.globalAlpha=1;
   }
   if(visualFlash>0){
-    const y=LANE_Y[visualFlashLane]-23,a=visualFlash/24;
-    ctx.globalAlpha=.16*a;rect(25,y,135,46,LIME);ctx.globalAlpha=.5*a;
-    ctx.strokeStyle=CREAM;for(let x=31;x<155;x+=12){ctx.beginPath();ctx.moveTo(x,y+4);ctx.lineTo(x+8,y+22);ctx.stroke();}
+    const y=drawLaneY(visualFlashLane)-17,a=visualFlash/24;
+    ctx.globalAlpha=.16*a;rect(0,y,W,34,LIME);ctx.globalAlpha=.5*a;
+    ctx.strokeStyle=CREAM;for(let x=5;x<155;x+=12){ctx.beginPath();ctx.moveTo(x,y+4);ctx.lineTo(x+7,y+17);ctx.stroke();}
     ctx.globalAlpha=1;
   }
   if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.14;rect(0,52,W,240,GOLD);ctx.globalAlpha=1;}
@@ -895,6 +922,20 @@ globalThis.__graveGardenNextRandom=()=>E.random();
 globalThis.__graveGardenSetVisualBeat=name=>{
   resetGarden(true);
   if(name==='opening')return true;
+  if(name==='scale-contract'){
+    stage=1;waveNo=12;waveClock=620;wavePlan=[];sun=0;shots=[];
+    slots=Array.from({length:LANES},()=>Array(SLOTS).fill(null));
+    const plantTypes=['bloom','pea','thorn','lantern'],enemyTypes=['shambler','hound','bucket','brute'];
+    for(let l=0;l<LANES;l++){
+      slots[l][0]=makePlant(plantTypes[l],l,0);
+      if(l>1)slots[l][0].hp=slots[l][0].maxHp*.55;
+      const d=ENEMY[enemyTypes[l]];
+      enemies.push({id:960+l,type:enemyTypes[l],lane:l,x:132,hp:l?d.hp*.7:d.hp,maxHp:d.hp,
+        speed:d.speed,bite:d.bite,hitT:l===1?5:0,biteT:l===2?12:0,walk:l*4,moon:l===2?1:0,dead:false});
+    }
+    gardener.x=68;gardener.y=LANE_Y[1]+8;gardener.pose='stand';gardener.task=null;gardener.carrying=null;
+    cachedPlan=null;planAt=runFrame+9999;return true;
+  }
   if(name==='formation'){
     waveNo=8;stage=0;sun=210;slots[0][2]=makePlant('thorn',0,2);
     slots[1][1]=makePlant('lantern',1,1);slots[2][2]=makePlant('thorn',2,2);return true;
@@ -927,18 +968,46 @@ globalThis.__graveGardenSetVisualBeat=name=>{
     waveNo=49;stage=4;greenhouse=7;
     for(let l=0;l<LANES;l++){slots[l][1]=makePlant('lantern',l,1);slots[l][2]=makePlant('thorn',l,2);}
     offer('garden-apex',3,80,150,'fixture');say('THE GARDEN STILL STANDS',GOLD,118,100);
-    for(let l=0;l<LANES;l++)fxBurst(90,LANE_Y[l],18,l%2?GOLD:MINT,2.4,.02);
+    for(let l=0;l<LANES;l++)worldFxBurst(90,LANE_Y[l],18,l%2?GOLD:MINT,2.4,.02);
     return true;
   }
   return false;
 };
-globalThis.__graveGardenVisualProbe=()=>({
-  frame:showFrame,stage,wave:waveNo,act:act.phase,danger:enemies.some(z=>z.x<48),
-  gardenerBox:{x:gardener.x-9,y:gardener.y-19,width:18,height:29},
-  plantBox:{x:SLOT_X[1]-12,y:LANE_Y[2]-20,width:24,height:32},
-  zombieBox:enemies.length?{x:enemies[0].x-12,y:LANE_Y[enemies[0].lane]-24,width:24,height:34}:null,
-  save:visualFlash>0,finite:allFinite()
-});
+function gardenerDrawBox(){
+  const x=drawX(gardener.x),y=drawY(gardener.y);return{x:x-10,y:y-22,width:20,height:32};
+}
+function plantDrawBox(lane,col){
+  const x=drawSlotX(col),y=drawY(LANE_Y[lane]+8);return{x:x-9,y:y-17,width:18,height:24};
+}
+function zombieDrawBox(z){
+  const x=drawX(z.x),y=drawY(LANE_Y[z.lane]+7),boss=z.type==='brute';
+  return{x:x-(boss?10:9),y:y-(boss?25:20),width:boss?20:18,height:boss?32:28};
+}
+function barrowDrawBox(b){
+  const x=drawX(b.x),y=drawY(LANE_Y[b.lane]+8);return{x:x-12,y:y-12,width:24,height:24};
+}
+function visualActors(){
+  const out=[{id:'gardener',kind:'gardener',type:persona.name.toLowerCase(),box:gardenerDrawBox()}];
+  for(let l=0;l<LANES;l++)for(let c=0;c<SLOTS;c++)if(slots[l][c])
+    out.push({id:'plant:'+l+':'+c,kind:'plant',type:slots[l][c].type,box:plantDrawBox(l,c)});
+  for(const z of enemies)out.push({id:'zombie:'+z.id,kind:'zombie',type:z.type,box:zombieDrawBox(z)});
+  for(const b of barrows)if(b.ready||b.active)
+    out.push({id:'barrow:'+b.lane,kind:'barrow',type:'barrow',box:barrowDrawBox(b)});
+  return out;
+}
+function visualLayout(){
+  const visibleSpawnX=drawX(160),contactX=drawX(SLOT_X[2]+9),goalX=drawX(GREENHOUSE_X+2);
+  return{playfield:{x:0,y:DRAW_WORLD_TOP,width:160,height:DRAW_WORLD_BOTTOM-DRAW_WORLD_TOP},
+    defendedLineX:drawSlotX(2)+8,contactX,visibleSpawnX,goalX,
+    approachVisibilityFraction:(visibleSpawnX-contactX)/(visibleSpawnX-goalX)};
+}
+globalThis.__graveGardenVisualProbe=()=>{
+  const actors=visualActors(),firstZombie=enemies[0];
+  return{frame:showFrame,stage,wave:waveNo,act:act.phase,danger:enemies.some(z=>z.x<48),
+    actors,layout:visualLayout(),gardenerBox:gardenerDrawBox(),plantBox:plantDrawBox(0,1),
+    attackPlantBox:plantDrawBox(0,1),
+    zombieBox:firstZombie?zombieDrawBox(firstZombie):null,save:visualFlash>0,finite:allFinite()};
+};
 
 initSession('grave-garden',[
   ['ARROWS','CHOOSE GARDEN BED'],['SPACE','PLANT PEA WARD'],['X','PLANT THORN WALL'],

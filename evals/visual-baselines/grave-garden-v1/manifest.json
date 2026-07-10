@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "game": "grave-garden",
+  "version": "v1-overscale",
+  "sourceCommit": "46a568f0cae5628a71f12d9ae65c89fa0a9a6cb1",
+  "seed": "0x6752444e",
+  "width": 160,
+  "height": 360,
+  "frames": [
+    {
+      "id": "opening",
+      "fixture": "opening",
+      "offset": 12,
+      "file": "01-opening.png",
+      "sha256": "d82a548f61bcbc944967703671779ebee34907c48c0c42d7322d0404e821a96d"
+    },
+    {
+      "id": "formation",
+      "fixture": "formation",
+      "offset": 12,
+      "file": "02-formation.png",
+      "sha256": "fec2ee98c7d1c19c6c2ca9269bbadc44711d9dd46bd8841373067525908bfb84"
+    },
+    {
+      "id": "warning",
+      "fixture": "warning",
+      "offset": 12,
+      "file": "03-warning.png",
+      "sha256": "088b3aa664b874acd1a7b6793d8fd496021093b9e48cabf3ea238e81b47ec937"
+    },
+    {
+      "id": "danger",
+      "fixture": "danger",
+      "offset": 12,
+      "file": "04-danger.png",
+      "sha256": "6b62617ebcdc0983fa387752c445a699deee2b4cdb63fea5c31e0c7e9b3ee49b"
+    },
+    {
+      "id": "anticipation",
+      "fixture": "save-anticipation",
+      "offset": 6,
+      "file": "05-anticipation.png",
+      "sha256": "197cebb309efac3bce666fdca9f6e1291828c08a5feb34a1114babc00c00994d"
+    },
+    {
+      "id": "payoff",
+      "fixture": "save-payoff",
+      "offset": 6,
+      "file": "06-payoff.png",
+      "sha256": "cae37921cfa0aabe5ab5f6c0a37afdcde7f418e3f5fa5f0f9f1399cce429402b"
+    },
+    {
+      "id": "later-original",
+      "fixture": "later",
+      "offset": 12,
+      "file": "07-later.png",
+      "sha256": "dabfe73c03aedbc004ccc3b461cf39231026e25c5fcfc82131cc8ca131d90623"
+    },
+    {
+      "id": "later",
+      "fixture": "later",
+      "offset": 35,
+      "file": "09-later-volley.png",
+      "sha256": "5a5c4ae5538e1fbca04e6953740a05dba378f5c733dba040479244425e9f5b59"
+    },
+    {
+      "id": "apex",
+      "fixture": "apex",
+      "offset": 6,
+      "file": "08-apex.png",
+      "sha256": "b6cd87093d886de34bedbf159888ced393fa7c4ccb18f91440e670b186bd944f"
+    }
+  ],
+  "contactSheet": {
+    "file": "contact-sheet.png",
+    "sha256": "cfe1b750269d5f7e395469643202c06b740aef2d6170e3d61bee29831b759371"
+  }
+}
