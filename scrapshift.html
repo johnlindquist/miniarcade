@@ -455,7 +455,7 @@ function blast(x,y,source,damage,radius,kind){
 }
 function wreckCar(victim,source,kind){
   if(victim.dead>0)return;
-  victim.hp=0;victim.dead=112;victim.lives=Math.max(0,victim.lives-1);victim.deaths++;deaths++;wrecks++;wreckSlow=18;
+  victim.hp=0;victim.dead=112;victim.lives=Math.max(0,victim.lives-1);victim.deaths++;deaths++;wrecks++;
   const killer=source&&source!==victim?source:(victim.lastHitT>0?cars[victim.lastHit]:null);
   if(killer&&killer!==victim){killer.kills++;killer.retarget=0;
     feed.unshift({text:killer.name+' WRECKED '+victim.name,c:killer.c,t:150});

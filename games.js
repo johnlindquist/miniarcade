@@ -13,5 +13,6 @@
   {id:'blockmine',title:'BLOCK MINE',label:'block mine',tagline:'dig · craft · slay the golem',tone:'bm'},
   {id:'webslam',title:'WEB SLAM',label:'web slam',tagline:"swing · serve · send 'em",tone:'ws'},
   {id:'deadline-deck',title:'DEADLINE DECK',label:'deadline deck',tagline:'throw · grind · beat the press',tone:'dd'},
-  {id:'scrapshift',title:'SCRAP SHIFT',label:'scrap shift',tagline:'ram · arm · outlast',tone:'ss'}
+  {id:'scrapshift',title:'SCRAP SHIFT',label:'scrap shift',tagline:'ram · arm · outlast',tone:'ss'},
+  {id:'misregister',title:'MISREGISTER',label:'misregister',tagline:'vault · align · print',tone:'mr'}
 ]));

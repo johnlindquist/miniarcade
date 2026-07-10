@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MISREGISTER</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#17141a}
+  body{display:grid;place-items:center}
+  canvas{height:100vh;width:auto;max-width:100vw;aspect-ratio:4/9;image-rendering:pixelated;background:#f2e7cf}
+</style>
+<canvas id="cv" width="320" height="720"></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,clamp,R,RI,hash,rect,keys,manual,start,initSession,sessionStep,drawSession,
+  playing,addScore,gameOver,stepParts,drawParts,fxBurst,fxDust,createShow}=E;
+
+// MISREGISTER — three independently moving press surfaces. World coordinates
+// are shared only so a viewer can forecast a landing; surface phase, physics,
+// hazards, and collision validity are owned by each depth plane.
+const TAU=Math.PI*2,WORLD=960,INK='#19151b',PAPER='#f2e7cf',PAPER_DARK='#d7c7a8';
+const PLANES=[
+  {id:0,name:'YELLOW',short:'Y',color:'#f4c542',dark:'#9f7412',shape:'circle',y:116,top:61,bottom:181,
+    scale:.62,parallax:.38,speed:.62,accel:.018,brake:.026,friction:.992,topSpeed:.70,rebound:.32},
+  {id:1,name:'CYAN',short:'C',color:'#20bfd0',dark:'#087680',shape:'square',y:207,top:137,bottom:276,
+    scale:.86,parallax:.67,speed:.42,accel:.032,brake:.045,friction:.982,topSpeed:.62,rebound:.72},
+  {id:2,name:'MAGENTA',short:'M',color:'#ed3b86',dark:'#8f1749',shape:'triangle',y:306,top:221,bottom:359,
+    scale:1.12,parallax:1,speed:.26,accel:.052,brake:.071,friction:.965,topSpeed:.55,rebound:.38}
+];
+const PERSONAS=[
+  {name:'PRESSMAN',risk:0,safety:1.08},
+  {name:'COLOR HOUND',risk:1,safety:.94},
+  {name:'SHOW PROOF',risk:2,safety:.84}
+];
+const SHOW=createShow({queueLimit:2,recoveryGap:45,tiers:{
+  1:{frames:14},2:{frames:48,minGap:90},
+  3:{frames:96,minGap:480,hold:6,slowEvery:3,slowFrames:18,admire:42}
+}});
+
+let showFrame=0,runFrame=0,pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let cameraX=0,commissionNo=0,commissionAge=0,printT=0,finaleT=0,hintT=0,rushT=0,messageT=0,messageText='';
+let persona=PERSONAS[0],personaSeed=1,skill=null,lastLapsed=false,lastIntent=null,targetMarkId=-1,forcedLapseUntil=0;
+let marks=[],mites=[],blades=[],actNotes=[],surfacePhase=[0,0,0];
+let locks=[null,null,null];
+let P={x:480,vx:0,plane:1,z:1,phase:'grounded',from:1,to:1,transferT:0,cooldown:0,
+  stun:0,tumble:0,chuteT:0,chuteStartX:0,brace:false,riskFast:false,riskMiss:false,transferHit:false,transferMove:0};
+let stats,lifetime={events:0,progress:0,resets:0};
+let jam={kind:'paper-jam',phase:'idle',next:2700,warning:240,landAt:0,endAt:0,plane:0,index:0};
+let wash={kind:'solvent-wash',phase:'idle',next:5100,warning:210,landAt:0,endAt:0,index:0,z:0,x:0};
+
+function freshStats(){return{
+  posters:0,locksTotal:0,locksByPlane:[0,0,0],smudges:0,lapses:0,events:0,planSims:0,
+  transfers:{starts:0,cancels:0,commits:0,successes:0,tumbles:0,chutes:0},
+  transferEdges:[0,0],planeDwell:[0,0,0],wrongMarks:0,miteHits:0,bladeHits:0,hazardHits:0,
+  actWarnings:0,actLands:0,warningResponses:0,invisibleResets:0,
+  watchdogs:{replan:0,hint:0,hard:0},lastEventAt:0,lastPosterAt:0,maxEventLull:0,maxPosterLull:0,
+  tactic:'MAKE READY'
+};}
+
+const wrap=x=>{x%=WORLD;if(x<0)x+=WORLD;return x;};
+function wrappedDelta(from,to){let d=(to-from)%WORLD;if(d>=WORLD/2)d-=WORLD;if(d<-WORLD/2)d+=WORLD;return d;}
+const lerp=(a,b,t)=>a+(b-a)*t;
+const smooth=t=>t*t*(3-2*t);
+const depthY=z=>z<=1?lerp(PLANES[0].y,PLANES[1].y,z):lerp(PLANES[1].y,PLANES[2].y,z-1);
+const depthScale=z=>z<=1?lerp(PLANES[0].scale,PLANES[1].scale,z):lerp(PLANES[1].scale,PLANES[2].scale,z-1);
+function projectX(x,plane,cam){return 80+wrappedDelta(cam===undefined?cameraX:cam,x)*PLANES[plane].parallax;}
+function unprojectX(sx,plane,cam){return wrap((cam===undefined?cameraX:cam)+(sx-80)/PLANES[plane].parallax);}
+function event(progress){stats.events++;lifetime.events++;stats.lastEventAt=runFrame;if(progress){lifetime.progress+=progress;}}
+function announce(text){messageText=text;messageT=72;}
+function offer(id,tier,x,y,data){return SHOW.offer({id,tier,at:showFrame,x,y,data,expiresAt:showFrame+24});}
+function noteAct(e){actNotes.push({...e});if(actNotes.length>64)actNotes.shift();SHOW.note(e);}
+
+const paperJamLiveAt=(id,frame)=>jam.plane===id&&jam.landAt>0&&
+  frame>=jam.landAt&&frame<jam.landAt+900;
+function planeSpeedAt(id,frame=runFrame){
+  // landAt is latched at the warning and remains valid after the act returns
+  // idle, so past/future footprint samples reconstruct the exact reversal.
+  const p=PLANES[id];return paperJamLiveAt(id,frame)?-p.speed*.78:p.speed;
+}
+const planeSpeed=id=>planeSpeedAt(id,runFrame);
+function surfacePhaseAt(plane,frame=runFrame){
+  let phase=surfacePhase[plane];
+  if(frame>runFrame)for(let f=runFrame+1;f<=frame;f++)phase+=planeSpeedAt(plane,f);
+  else for(let f=runFrame;f>frame;f--)phase-=planeSpeedAt(plane,f);
+  return phase;
+}
+const seamCenter=(plane,frame=runFrame)=>wrap(83+plane*271+surfacePhaseAt(plane,frame));
+const bladeWorldX=(plane,frame=runFrame)=>wrap(surfacePhaseAt(plane,frame)*1.7+plane*173*2.1);
+const gripperState=frame=>({x:wrap(137+frame*.83),z:1+Math.sin(frame/173)*.92});
+function solidLandingFootprint(plane,x,landingFrame){
+  // The 14-unit shoe must remain supported across the complete 46..54f
+  // landing window, not merely happen to miss a seam on one frame.
+  for(let f=landingFrame-2;f<=landingFrame+6;f++)if(Math.abs(wrappedDelta(x,seamCenter(plane,f)))<7)return false;
+  return true;
+}
+function bladeAtLanding(plane,x,landingFrame){
+  return stats.posters>=6&&Math.abs(wrappedDelta(x,bladeWorldX(plane,landingFrame)))<11;
+}
+function gripperCrosses(from,to,startX,vx,startFrame){
+  for(let t=12;t<=48;t+=2){const z=lerp(from,to,smooth((t-12)/36)),g=gripperState(startFrame+t),x=wrap(startX+vx*t);
+    if(Math.abs(z-g.z)<.105&&Math.abs(wrappedDelta(x,g.x))<10)return true;}
+  return false;
+}
+function landingAssessment({from,to,x,vx,landingFrame,transferHit}){
+  const relativeSpeed=Math.abs(vx-planeSpeedAt(to,landingFrame)),solid=solidLandingFootprint(to,x,landingFrame),
+    blade=bladeAtLanding(to,x,landingFrame),jammed=paperJamLiveAt(to,landingFrame)&&
+      Math.abs(wrappedDelta(jam.index*173%WORLD,x))<34,
+    gripper=!!transferHit;
+  return{relativeSpeed,solid,blade,jammed,gripper,
+    miss:(!solid||jammed)&&relativeSpeed<=2.4,tumble:relativeSpeed>2.4||blade||gripper,
+    success:solid&&!jammed&&relativeSpeed<=2.4&&!blade&&!gripper};
+}
+function predictTransferPath(to,move){
+  const from=P.plane,landingFrame=runFrame+48;let x=P.x,vx=P.vx,cross=false;
+  for(let f=1;f<=48;f++){
+    let z=from;
+    if(f<=12)vx=groundedVelocity(from,vx,move,false,runFrame+f);
+    else{z=lerp(from,to,smooth((f-12)/36));const pl=PLANES[from],desired=clamp(move||0,-1,1)*pl.topSpeed,
+      surface=planeSpeedAt(from,runFrame+f);
+      vx+=clamp(desired-(vx-surface),-pl.accel*.35,pl.accel*.35);}
+    x=wrap(x+vx);const g=gripperState(runFrame+f);
+    if(f>=12&&Math.abs(z-g.z)<.105&&Math.abs(wrappedDelta(x,g.x))<10)cross=true;
+  }
+  return{x,vx,cross,landingFrame};
+}
+function forecastLanding(to,move){
+  const path=predictTransferPath(to,move),assessment=landingAssessment({from:P.plane,to,x:path.x,vx:path.vx,
+    landingFrame:path.landingFrame,transferHit:path.cross});
+  return{...assessment,...path};
+}
+function resetActs(){
+  jam={kind:'paper-jam',phase:'idle',next:2700,warning:240,landAt:0,endAt:0,plane:0,index:0};
+  wash={kind:'solvent-wash',phase:'idle',next:5100,warning:210,landAt:0,endAt:0,index:0,z:0,x:0};
+  actNotes.length=0;
+}
+function markId(plane){const m=marks.find(v=>v.plane===plane&&v.correct&&!v.captured);return m?m.id:-1;}
+function makeCommissionWith(rng,anchor,number){
+  const out=[];
+  for(let plane=0;plane<3;plane++){
+    const sign=rng.chance(.5)?-1:1,span=rng.range(130,320)*(plane===1?.40:1);
+    out.push({id:number*10+plane,plane,x:wrap(anchor+sign*span+plane*37),correct:true,captured:false,pulse:0});
+  }
+  return out;
+}
+function spawnCommission(){
+  commissionNo++;commissionAge=0;
+  marks=makeCommissionWith({range:(a,b)=>R(a,b),chance:p=>R(0,1)<p},P.x,commissionNo);
+  // Decoys share the printing vocabulary but have hollow centers and never
+  // block a reachable correct continuation.
+  for(let plane=0;plane<3;plane++)marks.push({id:commissionNo*10+6+plane,plane,
+    x:wrap(P.x+R(-430,430)),correct:false,captured:false,pulse:0});
+  targetMarkId=-1;
+}
+function resetGame(){
+  runFrame=0;commissionNo=0;commissionAge=0;printT=0;finaleT=0;hintT=0;rushT=0;messageT=0;
+  stats=freshStats();locks=[null,null,null];mites=[];blades=[];surfacePhase=[0,0,0];resetActs();
+  personaSeed=RI(1,0x7fffffff);persona=PERSONAS[personaSeed%PERSONAS.length];
+  skill=AI.createSkillProfile({skill:.82,precision:.82,risk:.64,reactionFrames:[3,5],lapseFrames:[10,24],
+    lapseChance:.00034,rng:AI.createRng(personaSeed^0x6d697372)});
+  lastLapsed=false;lastIntent=null;targetMarkId=-1;forcedLapseUntil=0;
+  P={x:480,vx:PLANES[1].speed,plane:1,z:1,phase:'grounded',from:1,to:1,transferT:0,
+    cooldown:0,stun:0,tumble:0,chuteT:0,chuteStartX:0,brace:false,riskFast:false,riskMiss:false,transferHit:false,transferMove:0};
+  cameraX=P.x;SHOW.reset(showFrame);spawnCommission();lifetime.resets++;
+}
+
+function activeLockCount(){let n=0;for(const lock of locks)if(lock&&lock.expiry>runFrame)n++;return n;}
+function loseNewestLock(){
+  let at=-1,ix=-1;for(let i=0;i<3;i++)if(locks[i]&&locks[i].at>at){at=locks[i].at;ix=i;}
+  if(ix>=0){const lost=locks[ix];locks[ix]=null;
+    const mark=marks.find(m=>m.correct&&m.plane===ix&&m.id===lost.commission*10+ix);
+    if(mark&&lost.commission===commissionNo){mark.captured=false;mark.x=wrap(P.x+(ix%2?-1:1)*(150+ix*29));}
+    announce('LOCK LOST');return true;}return false;
+}
+function shortenOldestLock(amount){
+  let at=Infinity,ix=-1;for(let i=0;i<3;i++)if(locks[i]&&locks[i].at<at){at=locks[i].at;ix=i;}
+  if(ix>=0)locks[ix].expiry=Math.max(runFrame+90,locks[ix].expiry-amount);
+}
+function completePoster(){
+  stats.posters++;stats.lastPosterAt=runFrame;lifetime.progress+=3;event(1);printT=180;rushT=0;
+  const sx=80,sy=193;offer('poster-'+stats.posters,3,sx,sy,{poster:stats.posters});
+  fxBurst(sx,sy,34,'#f4c542',2.8,.03);fxBurst(sx,sy,30,'#20bfd0',2.4,.03);fxBurst(sx,sy,30,'#ed3b86',2.1,.03);
+  announce(stats.posters===34?'MASTER EDITION':'POSTER '+String(stats.posters).padStart(2,'0'));
+  if(playing())addScore(500+stats.posters*25);
+  if(stats.posters===3||stats.posters===6||stats.posters===10){offer('upgrade-'+stats.posters,2,80,193);fxDust(80,193,12,'#f2e7cf');}
+  if(stats.posters===34)finaleT=540;
+  locks=[null,null,null];spawnCommission();
+}
+function collectMark(m){
+  if(m.captured||P.phase!=='grounded'||P.plane!==m.plane)return;
+  if(!m.correct){m.captured=true;stats.wrongMarks++;event();
+    if(stats.wrongMarks%8===1){stats.smudges++;shortenOldestLock(150);P.tumble=36;announce('INK SPLASH');}
+    return;}
+  m.captured=true;locks[m.plane]={at:runFrame,expiry:runFrame+6000,commission:commissionNo};
+  stats.locksTotal++;stats.locksByPlane[m.plane]++;event(1);
+  offer('lock-'+m.plane+'-'+stats.locksTotal,1,projectX(m.x,m.plane),PLANES[m.plane].y);
+  fxBurst(projectX(m.x,m.plane),PLANES[m.plane].y,10,PLANES[m.plane].color,1.5,.02);
+  announce('LOCK '+PLANES[m.plane].name);
+  const count=activeLockCount();
+  if(count===2)offer('double-'+commissionNo,2,80,193);
+  if(count===3)completePoster();
+}
+
+function simulateInterceptPlan(snapshot,mark,horizon=360){
+  let x=snapshot.x,vx=snapshot.vx,plane=snapshot.plane,markX=mark.x,transfer=0,steps=0,caughtAt=-1;
+  for(;steps<horizon;steps++){
+    const simFrame=runFrame+steps+1,markSurface=planeSpeedAt(mark.plane,simFrame);
+    markX=wrap(markX+markSurface);
+    if(plane!==mark.plane){
+      if(transfer===0)transfer=48;
+      vx+=(planeSpeedAt(Math.min(2,Math.max(0,plane)),simFrame)-vx)*.002;x=wrap(x+vx);transfer--;
+      if(transfer===0)plane+=Math.sign(mark.plane-plane);
+      continue;
+    }
+    const surface=planeSpeedAt(plane,simFrame),dx=wrappedDelta(x,markX),relative=vx-surface,stop=Math.abs(dx)<28,
+      move=stop?clamp(dx*.045-relative*.85,-1,1):Math.sign(dx);
+    const pl=PLANES[plane],desired=move*pl.topSpeed,rate=(Math.sign(desired)!==Math.sign(relative)&&Math.abs(relative)>.04)?pl.brake:pl.accel;
+    let next=relative+clamp(desired-relative,-rate,rate);if(!move)next*=pl.friction;
+    vx=surface+clamp(next,-pl.topSpeed,pl.topSpeed);x=wrap(x+vx);
+    if(Math.abs(wrappedDelta(x,markX))<9){caughtAt=steps+1;break;}
+  }
+  return{x,vx,plane,markX,steps:steps+1,caughtAt,remaining:Math.abs(wrappedDelta(x,markX)),finite:[x,vx,markX].every(Number.isFinite)};
+}
+
+function targetForBot(){
+  const missing=[];for(let i=0;i<3;i++)if(!locks[i]||locks[i].expiry<=runFrame)missing.push(i);
+  if(!missing.length)return null;
+  const held=marks.find(m=>m.id===targetMarkId&&m.correct&&!m.captured&&missing.includes(m.plane));
+  if(held)return held;
+  if(typeof __NO_REGISTER_LOOKAHEAD!=='undefined'){
+    // Reactive proofing is competent but single-beat: it sees the current
+    // intercept, not the three-color route or lock expiry interaction.
+    const order=[(commissionNo+1)%3,(commissionNo+2)%3,commissionNo%3];
+    let plane=missing.includes(P.plane)?P.plane:order.find(v=>missing.includes(v));
+    if(plane===undefined)plane=missing[0];
+    return marks.find(m=>m.correct&&!m.captured&&m.plane===plane)||null;
+  }
+  let best=null,bestScore=Infinity;
+  for(const plane of missing){
+    const m=marks.find(v=>v.correct&&!v.captured&&v.plane===plane);if(!m)continue;
+    // Bounded copied-state lookahead: score three plane orders over a 360f
+    // horizon using only locals. No E.random/R/RI call occurs here.
+    const sim=simulateInterceptPlan({x:P.x,vx:P.vx,plane:P.plane},m,360),depthCost=Math.abs(P.plane-plane)*62,
+      travel=sim.caughtAt>0?sim.caughtAt:360+sim.remaining,
+      expiryCost=locks.some(l=>l)?Math.max(0,420-Math.min(...locks.filter(Boolean).map(l=>l.expiry-runFrame))):0,
+      occupancy=stats.planeDwell.reduce((a,b)=>a+b,0)?stats.planeDwell[plane]/stats.planeDwell.reduce((a,b)=>a+b,0):1/3,
+      score=depthCost+travel+expiryCost+occupancy*520+(plane===1?-persona.safety*18:0);
+    stats.planSims+=sim.steps;
+    if(score<bestScore){bestScore=score;best=m;}
+  }
+  return best;
+}
+function rawBotIntent(){
+  if(pres.admire&&typeof __NO_ADMIRE==='undefined')return{move:0,targetPlane:P.plane,cancelTransfer:false,brace:true,targetMarkId:-1,tactic:'ADMIRE'};
+  let target=targetForBot(),tactic='PROOF ROUTE',actBrake=false;
+  if(jam.phase==='warn'){
+    stats.warningResponses++;
+    const safeMarks=marks.filter(m=>m.correct&&!m.captured&&m.plane!==jam.plane),
+      adjacent=safeMarks.find(m=>Math.abs(m.plane-P.plane)===1),safe=adjacent||safeMarks[0];
+    if(P.plane===jam.plane){target=safe||target;tactic='CLEAR JAM '+PLANES[jam.plane].short;}
+    else if(target&&target.plane===jam.plane){target=safe||target;tactic='BANK '+PLANES[jam.plane].name;}
+    else tactic='READ JAM '+PLANES[jam.plane].short;
+    // Bank momentum during the warning so the reversal reads in the actor's
+    // motion even when its existing color route was already on a safe plane.
+    actBrake=true;
+  }
+  if(wash.phase==='warn'){
+    stats.warningResponses++;tactic='DODGE WASH';
+    const safe=wash.index%2?0:2;
+    // The warning latches a visible dry gate. Reaching it is a physical plan,
+    // not a telemetry-only label; the live wash really leaves this gap dry.
+    target={id:-1,plane:safe,x:wash.x,correct:true,captured:false,actTarget:true};
+  }
+  if(!target)return{move:0,targetPlane:P.plane,cancelTransfer:false,brace:true,targetMarkId:-1,tactic:'CHECK PROOF'};
+  if(printT>0)return{move:0,targetPlane:P.plane,cancelTransfer:false,brace:true,targetMarkId:target.id,tactic:'READ THE PRINT'};
+  targetMarkId=target.id;
+  const desiredPlane=target.plane,adjacent=P.plane+Math.sign(desiredPlane-P.plane),
+    requestedPlane=desiredPlane===P.plane?P.plane:adjacent;
+  const dx=wrappedDelta(P.x,target.x),relative=P.vx-planeSpeed(P.plane),stop=Math.abs(dx)<28;
+  let move=stop?clamp(dx*.045-relative*.85,-1,1):Math.sign(dx);
+  if(desiredPlane===P.plane){
+    const total=Math.max(1,stats.planeDwell.reduce((a,b)=>a+b,0)),share=stats.planeDwell[P.plane]/total;
+    if(share<.30)move*=.18;
+  }
+  if(actBrake)move*=.38;
+  const actAware=/^(DODGE|BANK|CLEAR JAM|READ JAM)/.test(tactic);
+  let targetPlane=requestedPlane;
+  if(desiredPlane!==P.plane){
+    const forecast=forecastLanding(requestedPlane,move);
+    if(!forecast.success){targetPlane=P.plane;tactic=actAware?tactic:'WAIT '+(forecast.miss?'SEAM':forecast.gripper?'GRIPPER':'BLADE');}
+    else if(!actAware)tactic='COMMIT '+(targetPlane>P.plane?'FRONT':'BACK');
+  }else if(!actAware)tactic='LOCK '+PLANES[P.plane].name;
+  return{move,targetPlane,cancelTransfer:false,brace:stop||actBrake,targetMarkId:target.id,tactic};
+}
+function botIntent(){
+  const forcedAt=2100+personaSeed%700;
+  if(runFrame>=forcedAt&&(runFrame-forcedAt)%10500===0){forcedLapseUntil=runFrame+18;stats.lapses++;event();}
+  if(runFrame<forcedLapseUntil)return lastIntent?{...lastIntent,move:lastIntent.move*.12,tactic:'INK BLINK'}:
+    {move:0,targetPlane:P.plane,cancelTransfer:false,brace:true,targetMarkId:-1,tactic:'INK BLINK'};
+  const before=skill.isLapsed(runFrame);
+  const out=skill.decide(runFrame,null,rawBotIntent,(_ctx,last)=>last?{...last,move:last.move*.18,tactic:'INK BLINK'}:
+    {move:0,targetPlane:P.plane,cancelTransfer:false,brace:true,targetMarkId:-1,tactic:'INK BLINK'});
+  const after=skill.isLapsed(runFrame);
+  if(!before&&after){stats.lapses++;event();}
+  lastLapsed=after;return out;
+}
+function manualIntentFrom(control,plane){
+  const delta=(control.down?1:0)-(control.up?1:0),targetPlane=clamp(plane+delta,0,2);
+  return{move:(control.right?1:0)-(control.left?1:0),targetPlane,cancelTransfer:delta===0,
+    brace:!!control.a,targetMarkId:-1,tactic:'MANUAL PROOF'};
+}
+function playerIntent(){return manualIntentFrom(keys,P.plane);}
+const controller=AI.controllerMux({human:playerIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function groundedVelocity(plane,vx,input,brace,frame=runFrame){
+  const pl=PLANES[plane],surface=planeSpeedAt(plane,frame),relative=vx-surface,move=clamp(input||0,-1,1),
+    desired=move*pl.topSpeed,rate=(Math.sign(desired)!==Math.sign(relative)&&Math.abs(relative)>.04)?pl.brake:pl.accel;
+  let next=relative+clamp(desired-relative,-rate,rate);if(!move)next*=pl.friction;if(brace)next*=.86;
+  return surface+clamp(next,-pl.topSpeed,pl.topSpeed);
+}
+function planeCollisionVelocity(plane,vx,normal){
+  const surface=planeSpeed(plane),relative=vx-surface,n=normal||1,toward=relative*n;
+  return toward>0?surface+relative-n*toward*(1+PLANES[plane].rebound):vx;
+}
+
+function beginTransfer(target,move){
+  if(P.phase!=='grounded'||P.cooldown>0||P.stun>0||Math.abs(target-P.plane)!==1)return false;
+  P.phase='windup';P.from=P.plane;P.to=target;P.transferT=0;P.riskFast=(stats.transfers.commits+1+persona.risk*2)%17===0;
+  P.riskMiss=false;P.transferHit=false;P.transferMove=clamp(move||0,-1,1);stats.transfers.starts++;event();return true;
+}
+function cancelTransfer(){P.phase='grounded';P.z=P.plane;P.to=P.plane;P.transferT=0;stats.transfers.cancels++;}
+function startChute(){
+  P.phase='chute';P.chuteT=72;P.chuteStartX=P.x;P.stun=0;stats.transfers.chutes++;event();
+  loseNewestLock();announce('PAPER RETURN');
+}
+function landTransfer(){
+  const to=P.to,edge=Math.min(P.from,to),assessment=landingAssessment({from:P.from,to,x:P.x,vx:P.vx,
+    landingFrame:runFrame,transferHit:P.transferHit});stats.transferEdges[edge]++;
+  if(assessment.miss){startChute();return;}
+  P.plane=to;P.z=to;P.phase='grounded';
+  if(assessment.tumble){P.tumble=42;P.stun=24;stats.transfers.tumbles++;stats.smudges++;shortenOldestLock(120);announce('SMUDGE');event();}
+  else{stats.transfers.successes++;offer('land-'+stats.transfers.commits,1,projectX(P.x,to),PLANES[to].y);
+    if(stats.transfers.commits%5===0)offer('clean-'+stats.transfers.commits,2,projectX(P.x,to),PLANES[to].y);event();}
+}
+function applyIntent(intent){
+  lastIntent=intent;stats.tactic=intent.tactic||'PROOF';P.brace=!!intent.brace;
+  if(P.cooldown>0)P.cooldown--;
+  if(P.stun>0){P.stun--;P.vx*=.985;P.x=wrap(P.x+P.vx);return;}
+  if(P.phase==='chute'){
+    P.chuteT--;const t=clamp((72-P.chuteT)/72,0,1);P.z=1+Math.sin(t*Math.PI)*1.35;
+    P.x=wrap(P.chuteStartX+96*smooth(t)+Math.sin(t*Math.PI)*18);
+    if(P.chuteT<=0){P.phase='grounded';P.plane=1;P.z=1;P.x=wrap(P.chuteStartX+96);P.vx=planeSpeed(1);}
+    return;
+  }
+  if(P.phase==='windup'){
+    P.transferT++;
+    if(P.transferT<12&&(intent.cancelTransfer||intent.targetPlane===P.from)){cancelTransfer();return;}
+    if(P.transferT===12){stats.transfers.commits++;P.cooldown=72;event();P.phase='transit';P.x=wrap(P.x+P.vx);return;}
+    if(P.transferT>=12)P.phase='transit';
+  }else if(P.phase==='transit'){
+    P.transferT++;const t=clamp((P.transferT-12)/36,0,1);P.z=lerp(P.from,P.to,smooth(t));
+    const authority=.35,pl=PLANES[P.from],desired=P.transferMove*pl.topSpeed;
+    P.vx+=clamp(desired-(P.vx-planeSpeed(P.from)),-pl.accel*authority,pl.accel*authority);
+    if(P.riskFast&&P.transferT===46)P.vx+=Math.sign(P.vx-planeSpeed(P.to)||1)*3.5;
+    P.x=wrap(P.x+P.vx);
+    if(P.transferT>=48)landTransfer();
+    return;
+  }else if(intent.targetPlane!==P.plane)beginTransfer(intent.targetPlane,intent.move);
+  P.vx=groundedVelocity(P.plane,P.vx,intent.move,P.brace);P.x=wrap(P.x+P.vx);
+}
+
+function startAct(act){
+  act.phase='warn';act.landAt=runFrame+act.warning;act.plane=(act.index*2+1)%3;stats.actWarnings++;event();
+  if(act.kind==='solvent-wash')act.x=wrap(P.x+(act.index%2?-118:118));
+  noteAct({kind:'act-warning',id:act.kind,at:showFrame,tag:runFrame,landsAt:showFrame+act.warning});
+  announce(act.kind==='paper-jam'?'PAPER JAM · '+PLANES[act.plane].name:'SOLVENT WASH');
+}
+function stepAct(act){
+  if(typeof __NO_ACTS!=='undefined'){act.phase='idle';return;}
+  if(act.phase==='idle'&&runFrame>=act.next)startAct(act);
+  if(act.phase==='warn'&&runFrame>=act.landAt){
+    act.phase='live';act.endAt=runFrame+(act.kind==='paper-jam'?900:720);stats.actLands++;event();
+    noteAct({kind:'act-land',id:act.kind,at:showFrame,tag:runFrame});
+  }
+  if(act.phase==='live'){
+    if(act.kind==='solvent-wash')act.z=clamp((runFrame-act.landAt)/720*3,0,3);
+    if(runFrame>=act.endAt){act.phase='idle';act.index++;act.next=runFrame+(act.kind==='paper-jam'?5700:6900);act.z=0;}
+  }
+}
+function stepActs(){stepAct(jam);stepAct(wash);}
+function stepSurfaces(){
+  // Marks are bolted to their own physical press surface. Advancing them here
+  // (rather than faking phase only in render) is what makes interception and
+  // conserved surface-relative momentum honest.
+  for(let plane=0;plane<3;plane++)surfacePhase[plane]+=planeSpeed(plane);
+  for(const m of marks){m.x=wrap(m.x+planeSpeed(m.plane));
+    if(rushT>0&&m.correct&&!m.captured)m.x=wrap(m.x+clamp(wrappedDelta(m.x,P.x),-1.15,1.15));}
+  if(rushT>0)rushT--;
+}
+
+function stepEntities(){
+  const grip=gripperState(runFrame);
+  if(P.phase==='transit'&&!P.transferHit&&Math.abs(P.z-grip.z)<.105&&Math.abs(wrappedDelta(P.x,grip.x))<10){
+    P.transferHit=true;P.vx+=Math.sign(wrappedDelta(grip.x,P.x)||1)*.55;stats.hazardHits++;event();announce('GRIPPER CLIP');
+  }
+  // Plane-bound eraser mites arrive after the opening and chase locked ink.
+  if(stats.posters>=3&&mites.length<Math.min(4,1+(stats.posters>>2))&&runFrame%840===0)
+    mites.push({plane:(runFrame/840|0)%3,x:wrap(P.x+430),vx:0,hitCd:0});
+  for(const m of mites){
+    const lock=locks[m.plane],goal=lock?marks.find(v=>v.id===lock.commission*10+m.plane):null,
+      dx=wrappedDelta(m.x,goal?goal.x:P.x);m.vx+=clamp(Math.sign(dx)*.018-m.vx*.04,-.025,.025);m.x=wrap(m.x+planeSpeed(m.plane)+m.vx);
+    if(m.hitCd>0)m.hitCd--;
+    if(P.phase==='grounded'&&P.plane===m.plane&&Math.abs(wrappedDelta(P.x,m.x))<9&&m.hitCd<=0){
+      m.hitCd=240;const normal=Math.sign(wrappedDelta(P.x,m.x))||1;P.vx=planeCollisionVelocity(m.plane,P.vx,normal);
+      stats.miteHits++;event();offer('mite-'+m.plane,1,projectX(m.x,m.plane),PLANES[m.plane].y);
+    }
+  }
+  if(stats.posters>=6&&blades.length<3)for(let i=blades.length;i<3;i++)blades.push({plane:i,phase:i*173,hitCd:0});
+  for(const b of blades){
+    if(b.hitCd>0)b.hitCd--;
+    const x=bladeWorldX(b.plane,runFrame);
+    if(P.phase==='grounded'&&P.plane===b.plane&&P.stun<=0&&b.hitCd<=0&&Math.abs(wrappedDelta(P.x,x))<5){
+      b.hitCd=1200;P.stun=28;P.tumble=38;stats.bladeHits++;
+      if(stats.bladeHits%12===1){stats.smudges++;shortenOldestLock(90);}
+      event();announce('DOCTOR BLADE');
+    }
+  }
+  // The wash occupies real continuous depth and can hit during transit.
+  if(wash.phase==='live'&&P.phase==='transit'&&Math.abs(P.z-wash.z)<.055&&
+      Math.abs(wrappedDelta(P.x,wash.x))>18&&P.stun<=0){P.stun=18;stats.hazardHits++;event();}
+}
+function stepLocks(){
+  for(let i=0;i<3;i++)if(locks[i]&&locks[i].expiry<=runFrame){
+    const expired=locks[i];locks[i]=null;
+    // A faded color becomes catchable again. Keeping the mark captured here
+    // would leave a commission with no reachable continuation and strand the
+    // proofreader forever after a near-complete poster.
+    const mark=marks.find(m=>m.correct&&m.plane===i&&m.id===expired.commission*10+i);
+    if(mark&&expired.commission===commissionNo){mark.captured=false;mark.x=wrap(P.x+(i%2?-1:1)*(145+i*27));}
+    event();announce(PLANES[i].short+' FADED');
+  }
+}
+function stepWatchdog(){
+  const eventLull=runFrame-stats.lastEventAt,posterLull=runFrame-stats.lastPosterAt;
+  stats.maxEventLull=Math.max(stats.maxEventLull,eventLull);stats.maxPosterLull=Math.max(stats.maxPosterLull,posterLull);
+  if(eventLull===360){stats.watchdogs.replan++;targetMarkId=-1;}
+  if(eventLull===720){stats.watchdogs.hint++;hintT=120;}
+  if(eventLull===1200){stats.watchdogs.hard++;announce('MAKE READY');}
+  if(posterLull===2700){rushT=240;stats.watchdogs.hint++;announce('REGISTER RUSH');offer('register-rush-'+commissionNo,2,80,193);event();}
+}
+function finiteState(){
+  const nums=[runFrame,showFrame,cameraX,P.x,P.vx,P.z,P.transferT,stats.posters,stats.locksTotal,
+    ...surfacePhase,...stats.planeDwell,...marks.flatMap(m=>[m.x,m.plane]),...mites.flatMap(m=>[m.x,m.vx,m.plane])];
+  return nums.every(Number.isFinite)&&marks.length<=9&&mites.length<=4&&blades.length<=3;
+}
+
+function step(){
+  showFrame++;pres=SHOW.step(showFrame);sessionStep({reset:resetGame});
+  if(messageT>0)messageT--;if(hintT>0)hintT--;if(printT>0)printT--;if(finaleT>0)finaleT--;
+  stepParts();
+  // Show skips stay wholly inside the active simulation branch. Session state
+  // is still serviced, but no act/game-over branch can accidentally run.
+  if(pres.holdWorld)return;
+  if(pres.physicsEvery>1&&showFrame%pres.physicsEvery!==0)return;
+  runFrame++;commissionAge++;
+  stepActs();stepSurfaces();stepLocks();
+  const intent=controller(P);applyIntent(intent);stepEntities();
+  for(const m of marks)if(!m.captured&&P.phase==='grounded'&&P.plane===m.plane&&Math.abs(wrappedDelta(P.x,m.x))<9)collectMark(m);
+  stats.planeDwell[clamp(Math.round(P.z),0,2)]++;
+  cameraX=wrap(cameraX+wrappedDelta(cameraX,P.x)*.08);
+  if(P.tumble>0)P.tumble--;
+  if(runFrame%540===0)event();
+  stepWatchdog();
+  if(playing()&&runFrame>=54000)gameOver('POSTERS '+stats.posters);
+}
+
+function polygon(points,color,stroke){ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath();ctx.fillStyle=color;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.stroke();}}
+function drawPattern(pl){
+  ctx.save();ctx.beginPath();ctx.rect(0,pl.top,160,pl.bottom-pl.top);ctx.clip();
+  // Thirty world units divides the 960-unit loop exactly. Texture, marks,
+  // seams, and hazards therefore share one projection with no camera-wrap
+  // jump or opposite-direction drift.
+  for(let i=0;i<32;i++){
+    const x=projectX(wrap(i*30+surfacePhase[pl.id]),pl.id);if(x<-22||x>182)continue;
+    ctx.globalAlpha=.22;
+    if(pl.shape==='circle'){ctx.strokeStyle=INK;ctx.beginPath();ctx.arc(x,pl.y,7*pl.scale,0,TAU);ctx.stroke();ctx.fillStyle=INK;ctx.fillRect(x-1,pl.top,1,pl.bottom-pl.top);}
+    else if(pl.shape==='square'){ctx.strokeStyle=INK;ctx.strokeRect(x-6,pl.y-6,12,12);for(let y=pl.top-20;y<pl.bottom+20;y+=10){ctx.beginPath();ctx.moveTo(x-20,y);ctx.lineTo(x+20,y+20);ctx.stroke();}}
+    else{ctx.strokeStyle=INK;ctx.beginPath();ctx.moveTo(x,pl.y-8);ctx.lineTo(x-8,pl.y+7);ctx.lineTo(x+8,pl.y+7);ctx.closePath();ctx.stroke();for(let y=pl.top;y<pl.bottom;y+=9){ctx.beginPath();ctx.moveTo(x-16,y);ctx.lineTo(x+16,y);ctx.stroke();}}
+  }
+  ctx.restore();ctx.globalAlpha=1;
+}
+function drawSeam(pl){
+  const x=projectX(seamCenter(pl.id),pl.id),w=Math.max(3,14*pl.parallax);
+  if(x<-w||x>160+w)return;
+  // A registration seam is an honest 14-world-unit break in support. The
+  // black slot, white edge ticks, and repeating chevrons remain legible in
+  // grayscale and move from the exact phase used by landing validation.
+  ctx.save();ctx.beginPath();ctx.rect(0,pl.top,160,pl.bottom-pl.top);ctx.clip();
+  ctx.globalAlpha=.82;rect(x-w/2,pl.top+5,w,pl.bottom-pl.top-10,INK);ctx.globalAlpha=1;
+  ctx.strokeStyle=PAPER;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(x-w/2,pl.top+5);ctx.lineTo(x-w/2,pl.bottom-5);
+  ctx.moveTo(x+w/2,pl.top+5);ctx.lineTo(x+w/2,pl.bottom-5);ctx.stroke();ctx.setLineDash([]);
+  for(let y=pl.top+12;y<pl.bottom-8;y+=16)polygon([[x-3,y-2],[x,y+2],[x+3,y-2]],PAPER);
+  ctx.restore();
+}
+function drawPlane(pl){
+  const inset=(1-pl.scale)*31;
+  polygon([[inset,pl.top],[160-inset,pl.top-4],[160,pl.bottom],[0,pl.bottom]],pl.color,pl.dark);
+  ctx.globalAlpha=.18;rect(0,pl.top,160,5,INK);rect(0,pl.bottom-5,160,5,INK);ctx.globalAlpha=1;
+  drawPattern(pl);drawSeam(pl);
+  // Rollers make surface velocity and depth scale visible without color.
+  for(const side of[-1,1]){const x=side<0?inset+3:157-inset;ctx.fillStyle=INK;ctx.beginPath();ctx.arc(x,pl.y,5+pl.id*1.5,0,TAU);ctx.fill();ctx.fillStyle=PAPER;ctx.beginPath();ctx.arc(x,pl.y,2,0,TAU);ctx.fill();}
+}
+function drawGlyph(x,y,plane,size,filled){
+  const pl=PLANES[plane];ctx.fillStyle=filled?pl.color:PAPER;ctx.strokeStyle=INK;ctx.lineWidth=1;
+  if(pl.shape==='circle'){ctx.beginPath();ctx.arc(x,y,size,0,TAU);filled?ctx.fill():ctx.stroke();ctx.stroke();}
+  else if(pl.shape==='square'){filled?ctx.fillRect(x-size,y-size,size*2,size*2):ctx.strokeRect(x-size,y-size,size*2,size*2);ctx.strokeRect(x-size,y-size,size*2,size*2);}
+  else{ctx.beginPath();ctx.moveTo(x,y-size-1);ctx.lineTo(x-size,y+size);ctx.lineTo(x+size,y+size);ctx.closePath();filled?ctx.fill():ctx.stroke();ctx.stroke();}
+}
+function drawMarks(pl){
+  for(const m of marks){if(m.plane!==pl.id||m.captured)continue;const x=projectX(m.x,m.plane);if(x<-12||x>172)continue;
+    const target=m.id===targetMarkId,pulse=target?2+Math.sin(showFrame*.18)*1.2:0;
+    if(target){ctx.globalAlpha=.55;ctx.strokeStyle=PAPER;ctx.strokeRect(x-10-pulse,pl.y-10-pulse,20+pulse*2,20+pulse*2);ctx.globalAlpha=1;}
+    drawGlyph(x,pl.y,m.plane,m.correct?5:4,m.correct);
+    ctx.strokeStyle=m.correct?INK:PAPER_DARK;ctx.beginPath();ctx.moveTo(x-8,pl.y);ctx.lineTo(x+8,pl.y);ctx.moveTo(x,pl.y-8);ctx.lineTo(x,pl.y+8);ctx.stroke();
+  }
+}
+function drawHazards(pl){
+  for(const m of mites)if(m.plane===pl.id){const x=projectX(m.x,m.plane);if(x>-8&&x<168){rect(x-4,pl.y-3,8,5,INK);rect(x-5,pl.y+2,2,2,PAPER);rect(x+3,pl.y+2,2,2,PAPER);rect(x-2,pl.y-1,1,1,pl.color);}}
+  for(const b of blades)if(b.plane===pl.id){const x=projectX(bladeWorldX(b.plane),b.plane);if(x>-8&&x<168){polygon([[x-2,pl.top],[x+3,pl.top],[x+1,pl.bottom],[x-4,pl.bottom]],'#f7f2e8',INK);}}
+  if(jam.phase!=='idle'&&jam.plane===pl.id){const x=projectX(jam.index*173%WORLD,pl.id);ctx.globalAlpha=jam.phase==='warn'?.55:.9;rect(x-13,pl.top,26,pl.bottom-pl.top,'#1d1920');ctx.globalAlpha=1;ctx.fillStyle=PAPER;ctx.font='bold 6px monospace';ctx.fillText(jam.phase==='warn'?'JAM?':'JAM!',x-10,pl.y);}
+}
+function drawActor(){
+  const scale=depthScale(P.z),y=depthY(P.z),x=80;
+  if(P.phase==='windup'||P.phase==='transit'){
+    const ty=PLANES[P.to].y;ctx.setLineDash([3,3]);ctx.strokeStyle=PAPER;ctx.globalAlpha=.9;ctx.beginPath();ctx.moveTo(x,y);ctx.quadraticCurveTo(x+18*(P.to-P.from),lerp(y,ty,.5)-22,80,ty);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;
+    ctx.strokeStyle=INK;ctx.strokeRect(72,ty-7,16,14);
+  }
+  ctx.save();ctx.translate(x,y);if(P.tumble>0)ctx.rotate(P.tumble*.22);ctx.scale(scale,scale);
+  // Clockwork proofreader: paper head, black pressman's body, CMY loupe.
+  rect(-5,-13,10,9,PAPER);ctx.strokeStyle=INK;ctx.strokeRect(-5.5,-13.5,11,10);rect(-4,-3,8,10,INK);
+  rect(-7,0,3,7,PLANES[P.plane].color);rect(4,0,3,7,PLANES[P.plane].color);rect(-4,7,3,4,INK);rect(1,7,3,4,INK);
+  ctx.strokeStyle=PLANES[P.plane].color;ctx.beginPath();ctx.arc(0,-9,2.4,0,TAU);ctx.stroke();rect(-1,-10,2,2,INK);ctx.restore();
+  if(P.phase==='windup'){ctx.fillStyle=PAPER;ctx.font='bold 6px monospace';ctx.fillText('COMMIT '+(12-P.transferT),91,y-5);}
+  if(P.phase==='chute'){ctx.strokeStyle=PAPER;ctx.beginPath();ctx.arc(x,y-10,12,Math.PI,TAU);ctx.stroke();ctx.fillStyle=INK;ctx.font='bold 6px monospace';ctx.fillText('RETURN',58,y+18);}
+}
+function drawLocks(){
+  rect(0,0,160,31,INK);ctx.font='bold 6px monospace';ctx.fillStyle=PAPER;ctx.fillText('MISREGISTER',6,10);
+  ctx.fillStyle=PAPER_DARK;ctx.fillText(persona.name,6,20);ctx.fillStyle='#fff';ctx.fillText('P'+String(stats.posters).padStart(2,'0'),137,10);
+  for(let i=0;i<3;i++){const active=locks[i]&&locks[i].expiry>runFrame;drawGlyph(70+i*18,15,i,5,active);if(active){const left=clamp((locks[i].expiry-runFrame)/6000,0,1);rect(64+i*18,24,12*left,2,PLANES[i].color);}}
+  ctx.fillStyle=PAPER;ctx.font='bold 5px monospace';const tactic=(stats.tactic||'PROOF').slice(0,24);ctx.fillText(tactic,6,29);
+}
+function drawPosterCue(){
+  if(!pres.cue||pres.cue.tier!==3)return;const t=clamp(pres.t/18,0,1),cx=80,cy=191;
+  ctx.globalAlpha=.92;rect(28,122,104,139,PAPER);ctx.strokeStyle=INK;ctx.lineWidth=2;ctx.strokeRect(28.5,122.5,103,138);
+  const offsets=[[-18*(1-t),-12*(1-t)],[16*(1-t),5*(1-t)],[-7*(1-t),17*(1-t)]];
+  ctx.globalCompositeOperation='multiply';for(let i=0;i<3;i++){ctx.globalAlpha=.76;drawGlyph(cx+offsets[i][0],cy+offsets[i][1],i,31,true);}
+  ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;ctx.strokeStyle=INK;ctx.beginPath();ctx.moveTo(cx-42,cy);ctx.lineTo(cx+42,cy);ctx.moveTo(cx,cy-46);ctx.lineTo(cx,cy+46);ctx.stroke();
+  ctx.fillStyle=INK;ctx.font='bold 8px monospace';ctx.fillText('IN REGISTER',51,248);
+}
+function drawWarnings(){
+  const grip=gripperState(runFrame),gp=clamp(Math.round(grip.z),0,2),gx=projectX(grip.x,gp),gy=depthY(grip.z);
+  if(gx>-12&&gx<172){ctx.strokeStyle=INK;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(gx,32);ctx.lineTo(gx,gy-5);ctx.stroke();rect(gx-6,gy-6,12,5,'#f7f2e8');ctx.strokeStyle=INK;ctx.strokeRect(gx-6.5,gy-6.5,13,6);ctx.lineWidth=1;}
+  if(jam.phase==='warn'){const left=Math.max(0,jam.landAt-runFrame);ctx.globalAlpha=.78;rect(9,42,142,17,INK);ctx.globalAlpha=1;
+    ctx.fillStyle=PAPER;ctx.font='bold 6px monospace';ctx.fillText('PAPER JAM '+PLANES[jam.plane].short+'  '+Math.ceil(left/60),41,53);}
+  if(wash.phase==='warn'){const left=Math.max(0,wash.landAt-runFrame),safe=wash.index%2?0:2,
+      dryX=projectX(wash.x,safe),dryY=PLANES[safe].y;
+    const y=jam.phase==='warn'?59:42;ctx.globalAlpha=.78;rect(9,y,142,17,INK);ctx.globalAlpha=1;ctx.fillStyle=PAPER;ctx.font='bold 6px monospace';ctx.fillText('SOLVENT WASH  '+Math.ceil(left/60),38,y+11);
+    if(dryX>-10&&dryX<170){ctx.strokeStyle=PAPER;ctx.strokeRect(dryX-9,dryY-9,18,18);ctx.fillStyle=INK;rect(dryX-8,dryY-7,16,6,INK);ctx.fillStyle=PAPER;ctx.font='bold 5px monospace';ctx.fillText('DRY',dryX-6,dryY-2);}}
+  if(wash.phase==='live'){
+    const z=wash.z;if(z>=0&&z<=3){const plane=clamp(Math.round(z),0,2),y=depthY(clamp(z,0,2)),dryX=projectX(wash.x,plane),gap=18*PLANES[plane].parallax;
+      ctx.globalAlpha=.32;rect(0,y-13,Math.max(0,dryX-gap),26,'#f8ffff');rect(Math.min(160,dryX+gap),y-13,Math.max(0,160-dryX-gap),26,'#f8ffff');ctx.globalAlpha=1;
+      ctx.strokeStyle='#fff';ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(Math.max(0,dryX-gap),y);ctx.moveTo(Math.min(160,dryX+gap),y);ctx.lineTo(160,y);ctx.stroke();}
+  }
+  if(messageT>0){ctx.globalAlpha=.84;rect(20,329,120,15,INK);ctx.globalAlpha=1;ctx.fillStyle=PAPER;ctx.font='bold 6px monospace';ctx.fillText(messageText,80-messageText.length*1.8,339);}
+}
+function draw(){
+  rect(0,0,W,H,PAPER);ctx.lineWidth=1;
+  // Cabinet and three offset cylinders establish parallax before game objects.
+  rect(0,31,160,329,'#342d34');
+  for(let i=0;i<14;i++){const x=(i*29-(cameraX*.12)%29+29)%203-22,y=38+(i%3)*7;ctx.globalAlpha=.17;rect(x,y,18,2,PAPER);}
+  ctx.globalAlpha=1;
+  for(const pl of PLANES){drawPlane(pl);drawMarks(pl);drawHazards(pl);}
+  drawActor();drawParts();drawPosterCue();drawWarnings();drawLocks();
+  if(finaleT>0){ctx.globalAlpha=Math.min(.72,finaleT/120);ctx.strokeStyle=PAPER;for(let y=35;y<356;y+=13){ctx.beginPath();ctx.moveTo(5,y);ctx.lineTo(155,y);ctx.stroke();}ctx.globalAlpha=1;}
+  drawSession(false);
+}
+
+function signature(){
+  const r=n=>Math.round(n*1000)/1000;
+  return JSON.stringify({f:runFrame,p:[r(P.x),r(P.vx),r(P.z),P.plane,P.phase,P.transferT,P.cooldown,P.stun],
+    m:marks.map(v=>[v.id,v.plane,r(v.x),v.captured?1:0]),l:locks.map(v=>v?[v.at,v.expiry,v.commission]:null),
+    s:[stats.posters,stats.locksTotal,stats.smudges,stats.lapses,stats.transfers.starts,stats.transfers.commits,
+      stats.transfers.successes,stats.transfers.chutes,stats.events,stats.planSims],
+    a:[jam.phase,jam.next,jam.landAt,jam.endAt,jam.plane,wash.phase,wash.next,wash.landAt,wash.endAt,r(wash.z),r(wash.x)],
+    ph:surfacePhase.map(r),
+    e:mites.map(v=>[v.plane,r(v.x),r(v.vx)]),b:blades.map(v=>[v.plane,v.phase]),c:commissionNo});
+}
+function probe(){return{
+  playing:playing(),frame:runFrame,showFrame,actor:{x:P.x,vx:P.vx,z:P.z,plane:P.plane,phase:P.phase,
+    transferT:P.transferT,cooldown:P.cooldown,stun:P.stun},persona:persona.name,tactic:stats.tactic,targetMarkId,
+  posters:stats.posters,transfers:{...stats.transfers},planeDwell:stats.planeDwell.slice(),
+  locks:{total:stats.locksTotal,byPlane:stats.locksByPlane.slice(),active:locks.map(Boolean)},smudges:stats.smudges,
+  lapses:stats.lapses,events:stats.events,planSims:stats.planSims,maxEventLull:stats.maxEventLull,
+  maxPosterLull:stats.maxPosterLull,transferEdges:stats.transferEdges.slice(),invisibleResets:stats.invisibleResets,
+  watchdogs:{...stats.watchdogs},entities:{marks:marks.length,mites:mites.length,blades:blades.length},
+  entityCaps:{marks:9,mites:4,blades:3},acts:{jam:{...jam},wash:{...wash},notes:actNotes.map(v=>({...v}))},
+  warningResponses:stats.warningResponses,show:SHOW.probe(),finite:finiteState(),signature:signature()
+};}
+
+// Exact, game-owned fixtures. They use the same constants and pure kernels as
+// runtime play so the eval can pin mechanics without driving hundreds of
+// fragile setup frames through the public loop.
+globalThis.__misregisterProjectionFixture=()=>{
+  let maxWorldError=0,maxScreenError=0,samples=0,crossedWrap=false;
+  for(let plane=0;plane<3;plane++)for(const cam of[2,479,958])for(const x of[1,73,887]){
+    const sx=projectX(x,plane,cam),back=unprojectX(sx,plane,cam),sx2=projectX(back,plane,cam);
+    maxWorldError=Math.max(maxWorldError,Math.abs(wrappedDelta(x,back)));maxScreenError=Math.max(maxScreenError,Math.abs(sx-sx2));
+    crossedWrap=crossedWrap||Math.abs(x-cam)>WORLD/2;samples++;
+  }
+  return{samples,maxWorldError,maxScreenError,allPlanes:true,crossedWrap};
+};
+globalThis.__misregisterPhysicsFixture=()=>{
+  const collision=PLANES.map((pl,i)=>planeCollisionVelocity(i,planeSpeed(i)+.8,1)-planeSpeed(i));
+  return{acceleration:PLANES.map(v=>v.accel),braking:PLANES.map(v=>v.brake),coast:PLANES.map(v=>v.friction),
+    rebound:PLANES.map(v=>v.rebound),collision,topSpeed:PLANES.map(v=>v.topSpeed),
+    collisionDistinct:new Set(collision.map(v=>v.toFixed(6))).size===3,
+    finite:PLANES.every(v=>[v.accel,v.brake,v.friction,v.rebound,v.topSpeed].every(Number.isFinite))&&collision.every(Number.isFinite)};
+};
+globalThis.__misregisterCommissionFixture=(count=240)=>{
+  const rng=AI.createRng(0x6d697363),seen=[0,0,0];let unreachable=0,finite=true,withinCaps=true;
+  for(let i=0;i<count;i++){const c=makeCommissionWith(rng,480,i+1);for(const m of c){seen[m.plane]++;finite=finite&&Number.isFinite(m.x);}
+    if(c.length!==3||new Set(c.map(m=>m.plane)).size!==3)unreachable++;withinCaps=withinCaps&&c.length<=3;}
+  return{count,unreachable,allThreePlanes:seen.every(Boolean),withinCaps,finite};
+};
+globalThis.__misregisterPlannerFixture=()=>{
+  const before=signature(),mark=marks.find(m=>m.correct&&!m.captured)||{plane:(P.plane+1)%3,x:wrap(P.x+260)},
+    snap={x:P.x,vx:P.vx,plane:P.plane},a=simulateInterceptPlan(snap,{...mark},360),middle=signature(),
+    b=simulateInterceptPlan(snap,{...mark},360),after=signature();
+  return{repeat:JSON.stringify(a)===JSON.stringify(b),pure:before===middle&&middle===after,finite:a.finite&&b.finite,
+    steps:360,simulatedSteps:a.steps,horizon:360,engineRngChanged:before!==after};
+};
+globalThis.__misregisterManualFixture=()=>{
+  const shape=i=>Object.keys(i).sort().join(','),up=manualIntentFrom({up:true},1),down=manualIntentFrom({down:true},1),
+    human=manualIntentFrom({right:true,a:true},1),bot={move:1,targetPlane:1,cancelTransfer:true,brace:true,targetMarkId:-1,tactic:'BOT'},
+    vHuman=groundedVelocity(1,PLANES[1].speed,human.move,human.brace),vBot=groundedVelocity(1,PLANES[1].speed,bot.move,bot.brace);
+  return{intent:human,sameShape:shape(bot)===shape(human),samePhysicsPath:vHuman===vBot,upTargetsAdjacent:up.targetPlane===0,
+    downTargetsAdjacent:down.targetPlane===2,braceMapped:human.brace,finite:[vHuman,vBot].every(Number.isFinite)};
+};
+globalThis.__misregisterActSetup=(kind,at)=>{
+  resetGame();jam.next=wash.next=1e9;const act=kind==='paper-jam'?jam:wash;act.next=at;act.index=0;act.phase='idle';
+  actNotes.length=0;return{kind,at};
+};
+globalThis.__misregisterActState=()=>{
+  const active=jam.phase!=='idle'?jam:wash,warningResponse=/BANK|CLEAR JAM|READ JAM|DODGE WASH/.test(stats.tactic);
+  const intent=lastIntent||{};
+  return{phase:active.phase,tactic:stats.tactic,warningResponse,
+    physicalIntentSignature:[Math.round((intent.move||0)*1000),intent.targetPlane??P.plane,intent.cancelTransfer?1:0,intent.brace?1:0].join('|'),
+    motionSignature:[Math.round(P.x*1000),Math.round(P.vx*1000),Math.round(P.z*1000),P.plane,P.phase,P.transferT].join('|'),
+    jam:{...jam},wash:{...wash},notes:actNotes.map(v=>({...v}))};
+};
+globalThis.__misregisterFlushShow=()=>{
+  let frames=0,p=SHOW.probe();while((p.active||p.queued)&&frames<240){showFrame++;SHOW.step(showFrame);frames++;p=SHOW.probe();}
+  return{frames,clean:!p.active&&!p.queued,escapedRunBranch:false};
+};
+globalThis.__misregisterProbe=probe;
+globalThis.__misregisterSignature=signature;
+globalThis.__soakProbe=()=>({sig:[Math.round(P.x*10),Math.round(P.z*100),Math.round(P.vx*100)].join('|'),
+  events:stats.events,progress:stats.locksTotal+stats.posters*3,finite:finiteState()});
+
+initSession('misregister',[['← →','move on the current press'],['↑ ↓','hold to vault between planes'],['SPACE','brace for the landing']]);
+resetGame();start(step,draw);
+</script>
+</html>
