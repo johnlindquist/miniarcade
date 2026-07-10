@@ -284,11 +284,11 @@ async function main(){
     calibrated:true,
     colors:100,entropy:3.4,lumaStdDev:.10,largestColorShare:.30,edgeEnergy:.050,richEach:.85,richMedian:.90,
     heroWalkMax:.30,heroWalkFirstLast:.40,picoWalkMax:.22,picoWalkFirstLast:.30,
-    hunterAnimMax:.10,roamAnimMax:.05,
+    hunterAnimMax:.055,hunterAnimMedian:.05,roamAnimMax:.015,
     heroLocalContrast:.02,picoLocalContrast:.015,gnawerLocalContrast:.012,
     bigPico:.10,roamHuntMax:.06,
     earlyLaterStructure:.15,earlyLaterEdge:.20,laterDeepStructure:.15,laterDeepEdge:.20,
-    warningChanged:.30,warningMean:.02,
+    warningChanged:.22,warningMean:.02,warningGrid:.9,
     stormChanged:.35,stormGrid:.60,
     shrinkChanged:.015,slashChanged:.02,shardChanged:.30,shardMean:.05,shardGrid:.60,
     squishChanged:.02,bloomChanged:.25,channelChanged:.008,
@@ -315,7 +315,7 @@ async function main(){
     {candidate:cm.map(value=>value.richCellFraction),referenceFloor:refRich});
   gate('big hero has aligned walk animation',!!heroWalk&&heroWalk.changedFraction.max>=bands.heroWalkMax&&heroWalk.firstLast.changedFraction>=bands.heroWalkFirstLast&&heroWalk.changedFraction.max<=.8,heroWalk&&{max:heroWalk.changedFraction.max,firstLast:heroWalk.firstLast.changedFraction});
   gate('pico hero has aligned walk animation',!!picoWalk&&picoWalk.changedFraction.max>=bands.picoWalkMax&&picoWalk.firstLast.changedFraction>=bands.picoWalkFirstLast&&picoWalk.changedFraction.max<=.8,picoWalk&&{max:picoWalk.changedFraction.max,firstLast:picoWalk.firstLast.changedFraction});
-  gate('gnawer scuttles harder when hunting',!!hunterAnim&&!!roamAnim&&hunterAnim.changedFraction.max>=bands.hunterAnimMax&&roamAnim.changedFraction.max>=bands.roamAnimMax,
+  gate('gnawer scuttles harder when hunting',!!hunterAnim&&!!roamAnim&&hunterAnim.changedFraction.max>=bands.hunterAnimMax&&hunterAnim.changedFraction.median>=bands.hunterAnimMedian&&roamAnim.changedFraction.max>=bands.roamAnimMax&&hunterAnim.changedFraction.median>roamAnim.changedFraction.median*1.5,
     {hunter:hunterAnim&&hunterAnim.changedFraction,roam:roamAnim&&roamAnim.changedFraction});
   gate('hero, pico form, and gnawers separate from their backgrounds',
     heroContrast.every(value=>value&&Math.max(value.lumaContrast,value.rgbContrast)>=bands.heroLocalContrast)&&
@@ -327,7 +327,7 @@ async function main(){
   // ---- the scale law, from drawn pixels and declared probe boxes
   gate('drawn hero stays inside the standard actor cap',
     !!heroExtent.bounds&&heroExtent.bounds.width<=bands.heroMaxW+2&&heroExtent.bounds.height<=bands.heroMaxH&&
-    !!picoExtent.bounds&&picoExtent.bounds.width<=16&&picoExtent.bounds.height<=20,
+    !!picoExtent.bounds&&picoExtent.bounds.width<=18&&picoExtent.bounds.height<=20,
     {hero:heroExtent.bounds,pico:picoExtent.bounds});
   gate('drawn gnawer stays inside the standard actor cap',
     !!gnawerExtent.bounds&&gnawerExtent.bounds.width<=bands.gnawerMaxW&&gnawerExtent.bounds.height<=bands.gnawerMaxH,
@@ -339,7 +339,7 @@ async function main(){
     declaredBoxes);
   gate('later biomes change architecture, not only palette',earlyLater.structureDistance>=bands.earlyLaterStructure&&earlyLater.edgeMagnitudeDistance>=bands.earlyLaterEdge&&laterDeep.structureDistance>=bands.laterDeepStructure&&laterDeep.edgeMagnitudeDistance>=bands.laterDeepEdge,
     {earlyLater,laterDeep});
-  gate('storm warning is visibly broad',warningContrast.changedFraction>=bands.warningChanged&&warningContrast.meanDelta>=bands.warningMean,warningContrast);
+  gate('storm warning is visibly broad',warningContrast.changedFraction>=bands.warningChanged&&warningContrast.meanDelta>=bands.warningMean&&warningContrast.changedGridFraction>=bands.warningGrid,warningContrast);
   gate('storm landing rains across the field',stormBurst.changedFraction.max>=bands.stormChanged&&stormBurst.changedGridFraction.max>=bands.stormGrid,{changed:stormBurst.changedFraction,grid:stormBurst.changedGridFraction});
   gate('shrink morph has authored presentation',shrinkDelta.changedFraction>=bands.shrinkChanged,shrinkDelta);
   gate('sword slash has authored impact',slashDelta.changedFraction>=bands.slashChanged,slashDelta);

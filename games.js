@@ -20,5 +20,6 @@
   {id:'grave-garden',title:'GRAVE GARDEN',label:'grave garden',tagline:'plant · fortify · survive',tone:'gg'},
   {id:'swarm-keeper',title:'SWARM KEEPER',label:'swarm keeper',tagline:'lead · build · bring them home',tone:'sk'},
   {id:'star-salvage',title:'STAR SALVAGE',label:'star salvage',tagline:'break · tether · haul it home',tone:'sv'},
-  {id:'neon-getaway',title:'NEON GETAWAY',label:'neon getaway',tagline:'swerve · swap · lose the heat',tone:'ng'}
+  {id:'neon-getaway',title:'NEON GETAWAY',label:'neon getaway',tagline:'swerve · swap · lose the heat',tone:'ng'},
+  {id:'pico-cap',title:'PICO CAP',label:'pico cap',tagline:'shrink · slash · restore the glades',tone:'pc'}
 ]));

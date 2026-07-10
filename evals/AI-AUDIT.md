@@ -475,6 +475,67 @@ warnings instead of deleting the dilemma.
 Permanent switches: `__NO_GREED_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
+## Spinoff addition: PICO CAP (2026-07-10)
+
+**PICO CAP** is a mechanic-level spinoff of a shrinking-hero adventure: a
+pocket knight collects five sun shards per glade, restores the shrine, and
+advances through four authored biomes (seed glade, creek hollow, hearth
+house, moon shrine). Mushroom rings toggle him between BIG — sword slashes
+kill gnawer beetles, chops clear brambles — and PICO, the only size that fits
+through wall cracks into sealed shard pockets, but the size that gnawers hunt
+and rain knocks down. Size is a real planning dimension, not a costume.
+
+- **Two-scale state-graph planning** (`__NO_SIZE_PLAN` restores a
+  threat-blind, longest-route baseline with periodic hesitation) runs
+  Dijkstra over (cell × size) with pad-toggle edges priced at morph time
+  plus ring cooldown, gnawer-threat costs on pico steps, storm penalties,
+  and goal hysteresis. An earlier draft ping-ponged between sizes at one
+  ring for 75 seconds; keeping routes across toggles plus hysteresis and
+  honest toggle pricing removed it (progress stalls fell from 74s to ≤46s
+  worst-case over twelve seeds). Across eight permanent paired ten-minute
+  seeds the planner wins 8/8, aggregate 5,206 vs 755 on
+  glades×30 + shards×3 − squishes×5; the baseline still finishes 3–12
+  glades, so the panel measures a working policy, not a corpse.
+- **Human-flavored control.** Three personas (BRAVE hunts gnawers, SNEAKY
+  overweights threat, GREEDY overshoots for loot) rotate per glade;
+  `AI.skillProfile` adds reaction delay and visible "..." daydream lapses
+  behind `__NO_LAPSE`, seeded from the run seed so lapses land differently
+  every run (3–9 per ten minutes, asserted >0 and ablated to 0). Human and
+  bot share one `{dx,dy,act,target}` intent through `AI.controllerMux`.
+- **Acts.** A rainstorm telegraphs for 240 frames — rolling front, blown
+  leaves, beckoning rings, countdown — then rains for 480. Before it lands a
+  pico hero routes to a ring and grows; gnawers shelter homeward; a small
+  hero caught in the open is visibly soaked and stunned. If every remaining
+  goal is big-unreachable the bot commits to one hysteresis-locked rain
+  dive instead of freezing (an earlier draft stood still for a full storm).
+  Paired `__NO_ACTS` fixtures first diverge during the warning.
+- **Payoff ladder.** Tier 1 slash/shrink/grow/squish/soak, tier 2 shard and
+  shrine bloom, tier 3 GLADE RESTORED after a 3-second channel beam. Tier
+  frequencies are strictly ordered and tier-3 cues consume exactly 6 hold
+  and ≤24 slow frames; `__NO_ADMIRE` gates only the bot pause and
+  `__NO_PAYOFF_FX` is a perfect same-seed no-op. Squish is a visible bounce
+  plus stun — no teleport rescues anywhere.
+- **Watchability calibration.** Twelve fixed ten-minute seeds
+  (`0x9c100 + i*97`) restored 15..19 glades with 80..96 shards, 50..75
+  slashes, 13..31 squishes, 24..34 shrinks, 16..27 grows, 3..12 soaks, and
+  2,200..2,391 events; the worst event lull was 217 frames and the worst
+  progress lull 2,181. Soak asserts still ≤3s, quiet ≤5s, stall ≤45s plus
+  per-seed floors on glades, shards, shrinks, slashes, brambles, and a
+  both-sided squish band.
+- **Authored world and visual proof.** Hedge, slate, floorboard, and carved
+  moonstone biomes rebuild composition (fixtures re-carve the maze so the
+  structure gates compare real layouts, not palettes). The discovered
+  real-pixel eval measures the actor-scale law from drawn pixels — portrait
+  diffs cap the hero at ≤22×32, pico at ≤18×20, gnawers at ≤20×32,
+  shrine ≤24 wide, combined footprint <20%, scent range ≥5 tiles — beside
+  walk/scuttle animation bursts, hunt-vs-roam agitation ordering, biome
+  structure distances, storm breadth, payoff impact deltas, a MACHINE
+  HUNT / BLOCK MINE contact sheet, and a hash-bound six-category review
+  receipt.
+
+Permanent switches: `__NO_SIZE_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
+`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

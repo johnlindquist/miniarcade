@@ -1,71 +1,74 @@
-# MINI/ARCADE
+# SIDE/QUEST runtime
 
-The source for [miniarcade.dev](https://miniarcade.dev): Eighteen self-playing,
-portrait arcade games built for the 4:9 side column beside 4:3 video.
+Nineteen self-playing 160×360 games designed for the 4:9 side column beside 4:3 video.
 
-This repository is the canonical home for the games and the Vercel production
-pipeline. It was split from the original `youtube-slides/here-now` bundle so
-game releases no longer depend on here.now publishing.
+## Layers
 
-## Run locally
+- `engine.js` owns the fixed 60 Hz clock, input/session routing, effects, recording, profiling, preview scheduling, and deterministic runtime RNG.
+- `autoplay.js` is a headless, dependency-free behavior toolkit. It owns reusable selection, steering, memory, watchdog, lookahead, skill, and pathfinding mechanics—but no game policy or universal intent type.
+- Each game owns sensors, tactics, its intent schema, physics, rendering, and story rules.
+- `games.js` is the gallery/recording/eval manifest.
+- `evals/harness.js` boots the browser-first games deterministically without rendering.
 
-```sh
-npm run dev
-```
-
-Open <http://localhost:8765>. The landing page is an accordion carousel:
-desktop hover or keyboard focus expands a full 4:9 preview, touch devices
-swipe between full cards, and every card is one big click target that opens
-its game. Open a game to use its controls or record a clip.
-
-Useful game query parameters:
-
-- `?seed=42` replays the deterministic engine RNG stream.
-- `?profile=1` collects stage timing through `E.profileReport()`.
-- `?record=60` turbo-renders a 60-second WebM at exact 60fps timestamps.
-- `?record=60&speed=1` records in realtime through `MediaRecorder`.
-
-## Verify
-
-```sh
-npm test
-```
-
-The dependency-free suite discovers every `evals/*-eval.js` file and checks the
-shared runtime, carousel contract, game mechanics, deterministic autoplay,
-manual controls, rendering, and long simulated runs.
-
-## Architecture
-
-- `index.html` is the MINI/ARCADE carousel and recording launcher.
-- `games.js` is the shared game manifest.
-- `engine.js` owns the fixed 60Hz clock, input/session routing, effects,
-  recording, profiling, preview scheduling, and deterministic runtime RNG.
-- `autoplay.js` provides reusable, dependency-free AI behavior primitives.
-- Each game is a standalone HTML file with a 320x720 backing canvas and a
-  160x360 logical viewport.
-- `evals/harness.js` boots the browser-first games deterministically without
-  rendering a real DOM.
-
-The controller boundary is:
+The preferred controller boundary is:
 
 ```text
 sense(game state) -> human or bot controller -> game-owned intent -> game physics
 ```
 
+## Run and record
+
+Serve this directory over HTTP, then open `index.html`:
+
+```sh
+python3 -m http.server 8765 --directory here-now
+```
+
+Gallery cards render at 30 fps and pause when horizontally offscreen. Opening a game directly runs it at 60 fps.
+
+Useful query parameters:
+
+- `?seed=42` replays the engine RNG stream.
+- `?profile=1` collects stage timing through `E.profileReport()`.
+- `?record=60` turbo-renders a 60-second WebM at exact 60 fps timestamps.
+- `?record=60&speed=1` records in realtime through `MediaRecorder`.
+
+## Verify
+
+Run every discovered eval suite in parallel:
+
+```sh
+node here-now/evals/run-all.js
+```
+
+Individual simulations accept or print their replay seeds where applicable. The shared harness can advance simulation without traversing draw code:
+
+```js
+const {bootGame} = require('./evals/harness');
+const game = bootGame('surfers', {seed: 42});
+game.frames(36000, false); // ten simulated minutes, zero canvas calls
+```
+
 ## Add a game
 
-1. Create a 320x720 backing canvas and include `engine.js` plus `autoplay.js`
-   before the game script.
+1. Create a 320×720 backing canvas and include `engine.js` plus `autoplay.js` before the game script.
 2. Keep simulation and rendering in separate `step` and `render` functions.
-3. Return game-owned intents from both human and bot controllers and apply them
-   through one physics path.
+3. Return game-owned intents from both human and bot controllers; apply them through one physics path.
 4. Add the page metadata to `games.js`.
-5. Add competence, drama, progress, and manual-control fixtures under `evals/`.
-6. Run `npm test` and verify both the carousel preview and direct game page.
+5. Add deterministic competence, drama, progress, and manual-control fixtures under `evals/`.
+6. Add a real-pixel `evals/<game>-visual-eval.js`: fixed-seed native-size captures,
+   distinct environment/level checkpoints, animation and payoff bursts, a contact
+   sheet against MACHINE HUNT and BLOCK MINE, and a current visual-review receipt.
+   Mock canvas-call counts do not satisfy this gate.
+7. Run `node here-now/evals/run-all.js`, inspect the rendered 160×360 contact sheet,
+   and browser-check both the gallery preview and direct page. If browser inspection
+   is unavailable, visual approval remains unverified and the game does not publish.
 
-## Deploy
+## Performance rules
 
-Vercel deploys the `main` branch of `johnlindquist/miniarcade` to
-`miniarcade.dev`. There is no build step or runtime service; the repository root
-is the static deployment.
+- Keep Canvas and DOM calls in JavaScript. Use cached layers or batched sprites before considering a new renderer.
+- Keep render-only randomness off the simulation RNG stream so preview, direct, headless, and recording modes remain replay-equivalent.
+- Keep hot world state numeric and packed; avoid string keys inside collision or pathfinding loops.
+- Use Workers for asynchronous generation or planning that can tolerate a versioned snapshot.
+- A future WASM backend should accept coarse typed buffers (`findRoutesBatch`, `simulateCandidates`) and return compact results. Never cross the boundary per entity, tile, callback, or draw call.
+- Preserve exact-frame recording. WebCodecs `realtime` latency mode may drop frames and is not the default here.
