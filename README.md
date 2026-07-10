@@ -13,9 +13,10 @@ game releases no longer depend on here.now publishing.
 npm run dev
 ```
 
-Open <http://localhost:8765>. The landing page is a responsive grid of
-live 4:9 previews: every card is one big click target that opens its game,
-on any screen size. Open a game to use its controls or record a clip.
+Open <http://localhost:8765>. The landing page is an accordion carousel:
+desktop hover or keyboard focus expands a full 4:9 preview, touch devices
+swipe between full cards, and every card is one big click target that opens
+its game. Open a game to use its controls or record a clip.
 
 Useful game query parameters:
 
@@ -36,7 +37,7 @@ manual controls, rendering, and long simulated runs.
 
 ## Architecture
 
-- `index.html` is the MINI/ARCADE gallery grid and recording launcher.
+- `index.html` is the MINI/ARCADE carousel and recording launcher.
 - `games.js` is the shared game manifest.
 - `engine.js` owns the fixed 60Hz clock, input/session routing, effects,
   recording, profiling, preview scheduling, and deterministic runtime RNG.
@@ -61,7 +62,7 @@ sense(game state) -> human or bot controller -> game-owned intent -> game physic
    through one physics path.
 4. Add the page metadata to `games.js`.
 5. Add competence, drama, progress, and manual-control fixtures under `evals/`.
-6. Run `npm test` and verify both the gallery preview and direct game page.
+6. Run `npm test` and verify both the carousel preview and direct game page.
 
 ## Deploy
 
