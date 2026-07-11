@@ -28,6 +28,7 @@ const pads=[
 function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:false,boosting:false,launch:0,spinV:0,
   drift:0,drifting:false,driftHeld:false,wasDrifting:false,slip:0, // rear-grip break + tail-out posture
   av:0,avLast:0, // slide yaw rate: the body carries rotational inertia mid-drift
+  recover:0,crunchSpin:0, // crumpled off a hard wall hit: staggering, low authority
   driftAge:0,skid:[], // presentation: swing telemetry + rubber laid by the rear wheels
   demoImmune:0,respawn:null,
   profile:null,skill:null,
@@ -37,7 +38,7 @@ function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:f
     anchorX:0,anchorY:0,anchorF:0,escapeUntil:0,escapeRev:true},
   stats:{driftStarts:0,driftFrames:0,driftBoostOuts:0,boostFrames:0,
     lineupDrifts:0,lineupTouches:0,wallSaves:0,wallCrashes:0,
-    hardTurns:0,hardTurnDrifts:0,slideFlips:0,
+    hardTurns:0,hardTurnDrifts:0,slideFlips:0,crunches:0,
     challengeStarts:0,challengeDistanceSum:0,demoAttempts:0,demos:0,lapses:0}};}
 const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
 let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
@@ -115,31 +116,9 @@ const SHOW=createShow({tiers:{
   3:{frames:85,slowEvery:3,slowFrames:85}
 }});
 let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
-// Environment act: a telegraphed crosswind chapter, scheduled on match time
-// (clock only runs during live play, so goal replays never eat the warning).
-// Direction is latched per act from the score parity — deterministic, no RNG,
-// so __NO_ACTS A/B runs stay stream-identical.
-const WIND_ACTS=[{warn:2700,land:2940,end:4740},{warn:6900,land:7140,end:8940}];
-const WIND_ACCEL=0.012;
-let windPhase='calm',windDir=1,windAx=0,windActIx=0;
-function stepWind(){
-  if(typeof __NO_ACTS!=='undefined'){windPhase='calm';windAx=0;return;}
-  const a=WIND_ACTS[windActIx];
-  if(!a||state==='over'){windPhase='calm';windAx=0;return;}
-  const t=180*60-clock;
-  if(t<a.warn){windPhase='calm';windAx=0;}
-  else if(t<a.land){
-    if(windPhase==='calm'){windDir=(score[0]+score[1]+windActIx)%2?-1:1;
-      SHOW.note({kind:'act-warning',id:'wind',at:frame,tag:t,landsAt:frame+(a.land-t)});}
-    windPhase='warn';windAx=0;
-  }else if(t<a.end){
-    if(windPhase!=='live')SHOW.note({kind:'act-land',id:'wind',at:frame,tag:t});
-    windPhase='live';windAx=WIND_ACCEL*windDir;
-  }else{
-    windPhase='calm';windAx=0;windActIx++;
-    SHOW.note({kind:'act-end',id:'wind',at:frame,tag:t});
-  }
-}
+// The crosswind act was removed by owner directive (2026-07-11): the drama
+// engine here is the cars themselves — drifting, demos, and momentum. The
+// rounds/matches ARE this game's acts.
 const driveController=AI.controllerMux({
   human:playerDrive,ai:decide,manual:c=>c.i===0&&(playing()||manual())
 });
@@ -160,7 +139,7 @@ function kickoffPos(){
     // hard-clear demo + drift transients so a demolition on a scoring frame
     // can never leak a dead car or stale respawn across the goal replay
     c.demoImmune=0;c.respawn=null;c.drift=0;c.drifting=false;c.driftHeld=false;c.slip=0;c.sup=false;
-    c.av=0;c.avLast=0;
+    c.av=0;c.avLast=0;c.recover=0;c.crunchSpin=0;
     c.driftAge=0;c.skid.length=0;
     const ai=c.ai;ai.driftUntil=0;ai.driftMinUntil=0;ai.driftCooldown=0;ai.boostOutUntil=0;ai.boostOutCounted=true;
     ai.demoTarget=-1;ai.demoUntil=0;ai.demoConsiderAt=0;
@@ -182,7 +161,6 @@ function resetGame(){ // fresh match for a new run (player or attract)
   matchNo++;assignProfiles(); // personalities persist for the whole match
   for(const c of cars)c.ai.demoCooldown=0; // stats stay cumulative per boot
   kickoffPos();state='countdown';stateT=100;
-  windPhase='calm';windDir=1;windAx=0;windActIx=0;
   SHOW.reset(frame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 }
 
@@ -192,7 +170,6 @@ function predictBall(frames){
   // Pure math on locals: reads no RNG, so replays stay stream-identical.
   let x=ball.x,y=ball.y,vx=ball.vx,vy=ball.vy;
   for(let i=0;i<frames;i++){
-    vx+=windAx; // live crosswind bends the read exactly like ballStep
     x+=vx;y+=vy;vx*=0.985;vy*=0.985;
     if(x<FL.x0+ball.r){x=FL.x0+ball.r;vx=Math.abs(vx)*0.8;}
     if(x>FL.x1-ball.r){x=FL.x1-ball.r;vx=-Math.abs(vx)*0.8;}
@@ -282,9 +259,6 @@ function decideLegacy(c){ // pre-personality bot, byte-for-byte: the A/B floor
       tx=bp.x-gx/gl*9;ty=bp.y-gy/gl*9;
     }else{ // hold the mouth, shadowing where the ball is heading
       tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,bp.x));
-      // crosswind response: shade toward the downwind post — during the
-      // warning as pre-positioning, harder once the wind is live
-      if(windPhase!=='calm')tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,tx+windDir*(windPhase==='live'?8:5)));
       ty=atkUp?Math.min(326,ownY-12):Math.max(34,ownY+12);
       if(c.boost<40){ // sip a pad on the way home
         let bp=null,bd=44;
@@ -385,7 +359,6 @@ function decideProfiled(c){ // personality-parameterized planner (private RNG on
         c.stats.challengeStarts++;c.stats.challengeDistanceSum+=toBall;}
     }else{
       tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,bp.x));
-      if(windPhase!=='calm')tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,tx+windDir*(windPhase==='live'?8:5)));
       // patrol sweep: a goalie parked dead-still in the mouth is a motion-
       // contract stall — sweep the line instead (deterministic, no RNG)
       tx=Math.max(FL.gx0+6,Math.min(FL.gx1-6,tx+Math.sin((frame+c.i*37)*0.07)*9));
@@ -551,7 +524,12 @@ function playerDrive(c){ // arrows/WASD steer+throttle, space boosts, x/z drifts
     drifting:keys.b||keys.c}; // same intent field the bots use
 }
 function advanceCar(c,d){ // one physics path: human and bot intents land here
-  c.boosting=d.boosting&&c.boost>0;
+  // crumpled off a hard wall hit: no boost, weak thrust, mushy steering, and
+  // an impact stagger to straighten out — momentum is the game, losing it to
+  // a wall must visibly cost a recovery
+  const crunched=c.recover>0;
+  if(crunched)c.recover--;
+  c.boosting=d.boosting&&c.boost>0&&!crunched;
   const sp0=Math.hypot(c.vx,c.vy);
   // power drift: break rear grip so the body yaws ~1.9x faster than the
   // velocity vector while momentum carries through. Needs speed, throttle and
@@ -566,7 +544,7 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
   // body around, so yaw carries inertia — counter-steer takes real frames and
   // the tail cannot wiggle side-to-side around a target. Handbrake feel: one
   // committed slide per direction, adjusted at the front wheels.
-  const steerBase=d.steer*0.068*Math.min(1,sp0*0.9+0.35);
+  const steerBase=d.steer*0.068*Math.min(1,sp0*0.9+0.35)*(crunched?0.5:1);
   if(c.drift<=0||typeof globalThis.__NO_SLIDE_INERTIA!=='undefined'){
     c.a+=steerBase*(1+c.drift*0.90);
     c.av=steerBase;
@@ -581,7 +559,8 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
     if(c.av*c.avLast<0)c.stats.slideFlips++;
     c.avLast=c.av;
   }else c.avLast=0; // compare only within one slide, not across drifts
-  const th=c.boosting?0.15:0.08*d.throttle;
+  const th=(c.boosting?0.15:0.08*d.throttle)*(crunched?0.4:1);
+  if(crunched){c.a+=c.crunchSpin;c.crunchSpin*=0.88;} // stagger off the wall
   c.vx+=Math.cos(c.a)*th;c.vy+=Math.sin(c.a)*th;
   if(c.boosting){c.boost-=0.45;c.stats.boostFrames++;
     spawn({x:c.x-Math.cos(c.a)*6,y:c.y-Math.sin(c.a)*6,
@@ -621,15 +600,32 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
   const released=!wantsDrift&&c.wasDrifting;
   c.wasDrifting=wantsDrift;
   c.x+=c.vx;c.y+=c.vy;
-  // stats-only: a fast near-normal wall impact is the "unskilled bot" tell
-  // the cornering eval bands down (counter never feeds back into the sim)
+  // a fast near-normal wall impact is the "unskilled bot" tell the cornering
+  // eval bands down — and a CRUNCH: momentum dies against the boards and the
+  // car staggers through a low-authority recovery instead of bouncing away
+  // with a free 40% refund (owner directive 2026-07-11: keeping momentum IS
+  // the game, so losing it to a wall must hurt)
   const wallHit=Math.max(c.x<FL.x0?-c.vx:0,c.x>FL.x1?c.vx:0,
     c.y<FL.y0+2?-c.vy:0,c.y>FL.y1-2?c.vy:0);
   if(wallHit>1.5)c.stats.wallCrashes++;
-  if(c.x<FL.x0){c.x=FL.x0;c.vx*=-0.4;}
-  if(c.x>FL.x1){c.x=FL.x1;c.vx*=-0.4;}
-  if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy*=-0.4;}
-  if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy*=-0.4;}
+  // playing the ball against the boards is a legit line — the ball cushions
+  // the contact. The crunch punishes open-field mistakes: a hard, square hit
+  // with nothing there but wall.
+  const crunch=typeof globalThis.__NO_CRUNCH==='undefined'&&wallHit>1.7&&c.recover<=0&&
+    Math.hypot(ball.x-c.x,ball.y-c.y)>=16;
+  if(crunch){
+    c.recover=22;c.stats.crunches++;
+    const tang=(c.x<FL.x0||c.x>FL.x1)?c.vy:c.vx; // scrubbed slide sets the stagger
+    c.crunchSpin=Math.max(-0.09,Math.min(0.09,tang*0.06))||0.05;
+    c.drift=0;c.av=0; // any slide dies with the impact
+    fxBurst(c.x,c.y,12,'#aab4c2',1.8); // panels + dust (sim-inert fxRng)
+    fxBurst(c.x,c.y,5,'#ffd166',1.1);
+  }
+  const nb=crunch?-0.12:-0.4,tb=crunch?0.55:1;
+  if(c.x<FL.x0){c.x=FL.x0;c.vx*=nb;c.vy*=tb;}
+  if(c.x>FL.x1){c.x=FL.x1;c.vx*=nb;c.vy*=tb;}
+  if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy*=nb;c.vx*=tb;}
+  if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy*=nb;c.vx*=tb;}
   // ---- drift presentation (sim-inert: no engine RNG, nothing reads back) ----
   c.driftAge=wantsDrift?c.driftAge+1:0;
   const rearX=c.x-fx*5,rearY=c.y-fy*5,rxv=-fy,ryv=fx;
@@ -691,7 +687,6 @@ function carStep(c){
   }
 }
 function ballStep(){
-  ball.vx+=windAx;
   ball.x+=ball.vx;ball.y+=ball.vy;
   ball.vx*=0.985;ball.vy*=0.985;
   const inMouth=ball.x>FL.gx0&&ball.x<FL.gx1;
@@ -806,6 +801,7 @@ function respawnCar(c){
   c.x=r.x;c.y=r.y;c.a=r.a;c.vx=0;c.vy=0;c.boost=34;c.dead=0;c.respawn=null;
   c.demoImmune=DEMO_GRACE;
   c.drift=0;c.drifting=false;c.slip=0;c.sup=false;c.driftAge=0;c.skid.length=0;
+  c.av=0;c.avLast=0;c.recover=0;c.crunchSpin=0;
   c.ai.demoTarget=-1;c.ai.demoUntil=0;c.ai.driftUntil=0;c.ai.boostOutUntil=0;
   if(c.skill)c.skill.reset();
 }
@@ -947,28 +943,6 @@ function drawField(){
     }
     ctx.globalAlpha=1;
   }
-  drawWind();
-}
-function drawWind(){ // telegraphed crosswind: drifting chevrons, blink on warn
-  if(windPhase==='calm')return;
-  const live=windPhase==='live';
-  if(!live&&Math.floor(frame/14)%2)return; // warning blinks
-  ctx.fillStyle=live?'#9fe8ff':'#ffd166';
-  ctx.globalAlpha=live?0.4:0.5;
-  const off=((frame*(live?0.9:0.35)*windDir)%28+28)%28;
-  for(const y of[120,250]){
-    for(let x=-28;x<W+28;x+=28){
-      const ax=Math.round(x+off);
-      if(ax<FL.x0+4||ax>FL.x1-10)continue;
-      if(windDir>0){rect(ax,y-3,2,2,ctx.fillStyle);rect(ax+2,y-1,2,2,ctx.fillStyle);rect(ax,y+1,2,2,ctx.fillStyle);}
-      else{rect(ax+2,y-3,2,2,ctx.fillStyle);rect(ax,y-1,2,2,ctx.fillStyle);rect(ax+2,y+1,2,2,ctx.fillStyle);}
-    }
-  }
-  const s=windDir>0?'CROSSWIND >>':'<< CROSSWIND';
-  ctx.font='bold 6px monospace';
-  ctx.globalAlpha=live?0.55:0.9;
-  ctx.fillText(s,(W-s.length*3.6)/2,213);
-  ctx.globalAlpha=1;
 }
 const PROFILE_ACCENT={ROTATOR:'#2de2e6',BALANCED:'#ffffff',PRESSER:'#ffd166',MANIAC:'#ff5a8a'};
 function drawCar(c){
@@ -1119,7 +1093,6 @@ function step(){
   }
   sessionStep({reset:resetGame});
   pres=SHOW.step(frame);
-  stepWind();
   if(state==='countdown'){stateT--;
     // rolling start: engines bite on "GO" wind-up and the pack creeps at the
     // ball — race-start anticipation, and the kickoff pause never freezes

@@ -29,6 +29,21 @@ globalThis.__goalFixture=()=>{
   resetGame();state='play';Object.assign(ball,{x:80,y:FL.y0-11,vx:0,vy:-1});ballStep();
   return{score:[...score],state,launch:cars.map(c=>c.launch)};
 };
+globalThis.__crunchFixture=speed=>{
+  // aim square at the right wall and drive into it; report the impact ledger
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:FL.x1-30,y:180,a:0,vx:speed,vy:0,boost:0,dead:0,launch:0,
+    drift:0,av:0,recover:0,crunchSpin:0});
+  ball.x=80;ball.y=180; // ball far away: this is an open-field mistake
+  let pre=0;
+  for(let i=0;i<40&&c.x<FL.x1;i++){
+    pre=Math.hypot(c.vx,c.vy);
+    advanceCar(c,{steer:0,throttle:speed>1.5?1:0,boosting:false,drifting:false});
+  }
+  return{pre,post:Math.hypot(c.vx,c.vy),recover:c.recover,
+    spin:c.crunchSpin,crunches:c.stats.crunches};
+};
 globalThis.__wiggleFixture=()=>{
   // build a committed right slide, then slam full opposite lock: a sliding
   // car carries yaw inertia — the tail must NOT whip instantly to the left
@@ -119,45 +134,19 @@ if(travel<10)fail(`manual throttle/steering moved only ${travel.toFixed(1)}px`);
 if(after.car.boost>=before.car.boost||!after.car.boosting)fail('manual boost was not applied');
 if(!after.finite)fail('manual drive produced non-finite state');
 
-console.log('4) crosswind act + show ladder: telegraphed, wind-true, bots pre-position');
+console.log('4) show ladder: tier discipline + goal replays');
+// the crosswind act was removed by owner directive (2026-07-11): the match
+// structure (kickoffs, demos, match point) IS this game's act timeline
 {
   const FOOT=`
-;globalThis.__wind=()=>({phase:windPhase,dir:windDir,ax:windAx});
-globalThis.__showP=()=>SHOW.probe();globalThis.__showE=()=>SHOW.events();
-globalThis.__cars=()=>cars.map(c=>[Math.round(c.x*10),Math.round(c.y*10)]);
+;globalThis.__showP=()=>SHOW.probe();
 globalThis.__goals={t:0};const __g1=goal;goal=t=>{globalThis.__goals.t++;return __g1(t);};`;
   const a=bootGame('rocket',{seed:0x710602,footer:FOOT});
-  const b=bootGame('rocket',{seed:0x710602,footer:FOOT});
-  b.sandbox.__NO_ACTS=1;
-  let warnSamples=0,liveSamples=0,warnAxLeak=false,divergedInWarn=false;
-  for(let f=0;f<21600;f+=30){
-    a.frames(30,false);b.frames(30,false);
-    const w=a.sandbox.__wind();
-    if(w.phase==='warn'){warnSamples++;if(w.ax!==0)warnAxLeak=true;
-      if(JSON.stringify(a.sandbox.__cars())!==JSON.stringify(b.sandbox.__cars()))divergedInWarn=true;}
-    else if(w.phase==='live')liveSamples++;
-  }
-  const ev=a.sandbox.__showE(),p=a.sandbox.__showP();
-  const winds=[];let pendWind=null;
-  for(const e of ev){
-    if(e.kind==='act-warning'&&e.id==='wind')pendWind=e;
-    else if(e.kind==='act-land'&&e.id==='wind'&&pendWind){
-      winds.push({t:e.tag-pendWind.tag,frames:e.frame-pendWind.frame});pendWind=null;}
-  }
-  console.log(`  ${winds.length} wind acts landed (telegraphs ${winds.map(x=>x.t).join(',')} match-frames), `+
-    `warn/live samples ${warnSamples}/${liveSamples}, goals A ${a.sandbox.__goals.t} vs no-acts B ${b.sandbox.__goals.t}`);
-  console.log(`  ladder: opportunities ${JSON.stringify(p.offeredByTier)}, presented ${JSON.stringify(p.shownByTier)}, `+
-    `slow-mo ${p.slowedFrames}f over ${p.shownByTier[3]||0} goal replays`);
-  if(winds.length<2)fail(`only ${winds.length} telegraphed wind acts landed in 6 minutes`);
-  for(const x of winds){
-    if(x.t<180||x.t>300)fail(`wind telegraph ${x.t} match-frames outside 180..300`);
-    if(x.frames<x.t)fail(`wind landed after only ${x.frames} wall frames (< ${x.t} planned)`);
-  }
-  if(warnSamples<4)fail(`warning phase barely observable (${warnSamples} samples)`);
-  if(warnAxLeak)fail('wind force applied during the warning phase — telegraph must not strike early');
-  if(!divergedInWarn)fail('bots ignored the crosswind warning: no pre-positioning before landfall');
-  if(a.sandbox.__goals.t<10||a.sandbox.__goals.t>30)fail(`goals with acts ${a.sandbox.__goals.t} outside 10..30`);
-  if(b.sandbox.__goals.t<10||b.sandbox.__goals.t>30)fail(`goals without acts ${b.sandbox.__goals.t} outside 10..30`);
+  a.frames(21600,false);
+  const p=a.sandbox.__showP();
+  console.log(`  goals ${a.sandbox.__goals.t}; ladder: opportunities ${JSON.stringify(p.offeredByTier)}, `+
+    `presented ${JSON.stringify(p.shownByTier)}, slow-mo ${p.slowedFrames}f over ${p.shownByTier[3]||0} goal replays`);
+  if(a.sandbox.__goals.t<10||a.sandbox.__goals.t>30)fail(`goals ${a.sandbox.__goals.t} outside 10..30`);
   const o=p.offeredByTier;
   if(!((o[1]||0)>(o[2]||0)&&(o[1]||0)>(o[3]||0)))fail(`tier-1 opportunities not dominant (${JSON.stringify(o)})`);
   if((p.shownByTier[3]||0)<1)fail('no goal replay presented through the kernel');
@@ -396,6 +385,36 @@ console.log('8) demolitions v2: impact geometry, respawn contract, legacy branch
   if(lg.sandbox.__demoFixture('headon').vDead!==0)
     fail('legacy branch demolished a supersonic victim — old rules must survive under __NO_DEMOS');
   console.log('  __NO_DEMOS reproduces the legacy supersonic-only rules');
+}
+
+console.log('10) wall crunch: momentum dies against the boards, recovery costs');
+{
+  const g=bootGame('rocket',{seed:0x710470,footer:FOOTER});
+  const hard=g.sandbox.__crunchFixture(2.3);
+  const soft=g.sandbox.__crunchFixture(1.0);
+  console.log(`  head-on at ${hard.pre.toFixed(2)}: kept ${(hard.post/hard.pre*100).toFixed(0)}% speed, `+
+    `recover ${hard.recover}f, stagger ${hard.spin.toFixed(3)}; graze at ${soft.pre.toFixed(2)}: recover ${soft.recover}f`);
+  if(hard.crunches<1||hard.recover<=0)fail('hard wall impact did not crunch');
+  if(hard.post>hard.pre*0.35)fail(`crunched car kept ${(hard.post/hard.pre*100).toFixed(0)}% of its speed — the wall must eat momentum`);
+  if(hard.spin===0)fail('crunch applied no recovery stagger');
+  if(soft.recover!==0||soft.crunches!==hard.crunches)fail('a gentle wall touch must NOT crunch');
+  g.sandbox.__NO_CRUNCH=1;
+  const off=g.sandbox.__crunchFixture(2.3);
+  if(off.recover!==0)fail('__NO_CRUNCH still crunched');
+  if(off.post<off.pre*0.35)fail('__NO_CRUNCH did not restore the legacy 40% bounce');
+  // same-seed A/B: the punishment is sim-visible and bots still live in-band
+  const a=bootGame('rocket',{seed:0x710471,footer:FOOTER});
+  const b=bootGame('rocket',{seed:0x710471,footer:FOOTER});
+  b.sandbox.__NO_CRUNCH=1;
+  a.frames(21600,false);b.frames(21600,false);
+  const pa=a.sandbox.__probe(),pb=b.sandbox.__probe();
+  const sum=(p,k)=>p.stats.reduce((s2,s)=>s2+s[k],0);
+  console.log(`  A/B: ${sum(pa,'crunches')} crunches with punishment vs ${sum(pb,'crunches')} ablated; `+
+    `goals ${pa.goals[0]+pa.goals[1]} vs ${pb.goals[0]+pb.goals[1]}`);
+  if(sum(pa,'crunches')<5)fail('bots never crunched in 6 minutes — the punishment is unreachable');
+  if(sum(pb,'crunches')!==0)fail('__NO_CRUNCH run still recorded crunches');
+  if(a.sandbox.__sig()===b.sandbox.__sig())fail('wall crunch never changed the sim on its A/B seed');
+  if(!pa.finite)fail('crunch run went non-finite');
 }
 
 console.log('9) motion contract: no dead standing, measured pace');
