@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "game": "kaiju-control",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "3d4e6856232e1e2cc97fdf77f6730c23684ab084af146eb565df923e72279864",
+  "gameSha256": "b0973ad67596b2a7fde0dbb6384db1e29a894cf1f4651300a097bc5c8ae4312d",
+  "seed": "0x4b434954",
+  "checkpoints": [
+    "opening@12",
+    "plan@12",
+    "evacuation@8",
+    "decoy@12",
+    "danger@8",
+    "warning@12",
+    "land@12",
+    "later@12",
+    "recovery@12",
+    "apex@12"
+  ],
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "renderReceipt": {
+    "seed": "0x4b433954",
+    "seconds": 60,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 4822229,
+    "sha256": "1d5a29ceffa5c5124d7c1a07167f5c895a732332857fcec534138e4ac9653e23",
+    "command": "node render/render.js kaiju-control 60 .artifacts/visual/kaiju-control/kaiju-control-final-60s.mp4 --seed 1262696788 --probe --fps 30"
+  },
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 CIVIC-1 remains a 16x17 emergency rig with cab, wheels, facing, alternating suspension, load lights, beacon, repair arm, and hurt/drive/load/repair poses. Tiny civilians retain heads, bodies, separate legs, gait and panic arms. The singular 32x31 drawn kaiju has a crooked tail, plated hips and shoulders, dorsal spines, eye, opening jaw, teeth, alternating stomp, attack recoil and stun color, meeting the reference character floor without enlarging the supporting cast."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The HUD-free city reads as built space: lane markings, crosswalks, sidewalks, warehouse roofs, cargo, tidewall, piers, crane, tram rail, clock plaza, rowhouses, trees, lamps, glass parcels, Crown atrium, monorail, cables and foreground edges create depth and a coherent material hierarchy. Lit windows, dark grids, cracks, rubble and smoke make deterioration and repair persistent, matching MACHINE HUNT's layered terrain and BLOCK MINE's authored, changing world density."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Tideward Harbor reserves a water column for piers and a working crane around low corrugated warehouses; Lantern Row opens the center into a circular clock plaza with tram rails and pitched masonry roofs; Crown Grid replaces that massing with blue glass parcels, a vertical atrium and elevated monorail. Road connections, negative space, landmarks, roof silhouettes, materials and lighting all change, so the progression is structural rather than a palette swap."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned real-pixel bursts verify CIVIC-1 travel and the kaiju's stomp, jaw and attack reaction. Civilian panic, responder loading and repair poses, decoy cross-city signal and expanding rings, 240-frame warning target, surge/aftershock/blackout land, damage smoke, window relight, bilateral city sweeps, distributed building confetti, exact hitstop and slow motion give each signature event anticipation, impact and follow-through at the reference floor."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Mint CIVIC-1 routes and coral kaiju routes remain separately readable over dense parcels, target boxes and chevrons make the forecast explicit, and amber warning/decoy grammar is unambiguous. The responder, civilians, civic buildings and boss measure within their caps, sampled actor footprint is about ten percent, and the kaiju has 80.4 percent visible runway, preserving far more negative space than the release maximum."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Municipal panels, emergency amber, mint rescue, coral threat, cyan power, compact civic icons, parcel materials, disaster scars, route telemetry, act overlays and recovery sweeps share one authored city-crisis grammar. The montage is cohesive beside both references while retaining a distinct emergency-control identity rather than borrowing their wilderness or mining language."
+    }
+  }
+}

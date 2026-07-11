@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KAIJU CONTROL</title>
+<style>
+  html,body{margin:0;height:100%;background:#070b12}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#08101a}
+  canvas:focus-visible{outline:2px solid #ffbe55;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Kaiju Control. An autonomous emergency crew evacuates neighborhoods, repairs the grid, and diverts a giant monster with decoy beacons."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,RI,hash,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,keys,
+  manual,initSession,sessionStep,drawSession,playing,addScore,createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// KAIJU CONTROL — Rampage from the city's side. Every important intention has
+// a route the viewer can read: mint for CIVIC-1, coral for the kaiju. The city
+// is the scorecard; occupied windows go dark, rubble stays, and repaired blocks
+// relight. The singular kaiju is the only actor allowed the 34px set-piece cap.
+const INK='#070b12',CREAM='#fff1cf',GOLD='#ffbe55',MINT='#62e0b4',CYAN='#54d8eb',
+  CORAL='#ff6b5f',RED='#d8424f',VIOLET='#9d82dd',SMOKE='#7d8992';
+const WORLD={x:0,y:42,width:160,height:280},COLS=4,ROWS=7,X=[18,58,102,142],Y=[66,102,138,174,210,246,290];
+const DISTRICTS=[
+  {name:'TIDEWARD HARBOR',code:'HBR',sky:'#132a37',ground:'#263b3e',road:'#18252c',walk:'#53706b',line:'#a9c6b8',
+    wall:'#66483c',wall2:'#93634c',glass:'#7dd9df',accent:'#4fdac2',shadow:'#0a151b',kind:'harbor',hRows:[0,2,4,6]},
+  {name:'LANTERN ROW',code:'OLD',sky:'#251929',ground:'#3e3030',road:'#201c25',walk:'#74544a',line:'#d2b277',
+    wall:'#7a3d38',wall2:'#b0634c',glass:'#ffd07a',accent:'#ff9d5d',shadow:'#120b12',kind:'old',hRows:[1,3,5]},
+  {name:'CROWN GRID',code:'CORE',sky:'#11152c',ground:'#252946',road:'#151929',walk:'#4c5273',line:'#b5bde3',
+    wall:'#394371',wall2:'#6273aa',glass:'#74e4ff',accent:'#bd8cff',shadow:'#080a18',kind:'core',hRows:[0,1,3,5,6]}
+];
+const BUILD_LAYOUTS=[
+  [{id:'clinic',kind:'clinic',label:'HARBOR CLINIC',node:4},{id:'grid',kind:'grid',label:'TIDE SUBSTATION',node:15},
+    {id:'school',kind:'school',label:'DOCK SCHOOL',node:20},{id:'shelter',kind:'shelter',label:'FERRY SHELTER',node:26},
+    {id:'water',kind:'water',label:'PUMP HOUSE',node:7}],
+  [{id:'clinic',kind:'clinic',label:'ROW CLINIC',node:2},{id:'grid',kind:'grid',label:'TRAM SUBSTATION',node:16},
+    {id:'school',kind:'school',label:'LANTERN SCHOOL',node:23},{id:'shelter',kind:'shelter',label:'CLOCK SHELTER',node:25},
+    {id:'water',kind:'water',label:'CISTERN',node:11}],
+  [{id:'clinic',kind:'clinic',label:'SKY CLINIC',node:7},{id:'grid',kind:'grid',label:'CROWN SUBSTATION',node:20},
+    {id:'school',kind:'school',label:'METRO SCHOOL',node:12},{id:'shelter',kind:'shelter',label:'CIVIC BUNKER',node:26},
+    {id:'water',kind:'water',label:'COOLANT WORKS',node:9}]
+];
+const PERSONAS=[
+  {name:'GUARDIAN',evac:1.35,repair:.82,decoy:1.05,precision:.88,risk:.36,color:MINT},
+  {name:'ENGINEER',evac:1.0,repair:1.42,decoy:.88,precision:.91,risk:.30,color:CYAN},
+  {name:'TRICKSTER',evac:.94,repair:.84,decoy:1.48,precision:.82,risk:.62,color:GOLD}
+];
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},2:{frames:42,minGap:90},3:{frames:84,minGap:720,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+let showFrame=0,runFrame=0,worldSeed=1,skillSeed=1,district=0,districtClock=0,state='run',transitionT=0;
+let palette=DISTRICTS[0],edges=new Set(),buildings=[],groups=[],hero=null,kaiju=null,decoy=null,decoyCooldown=0;
+let route=[],kaijuRoute=[],task=null,taskSerial=0,planAt=-1e9,profile=null,persona=PERSONAS[0],lastLapsed=false;
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false},texts=[],eventSerial=0,progressSerial=0;
+let lastEventFrame=0,lastProgressFrame=0,visualFixture='',visualTick=0;
+let act={phase:'calm',type:'blackout',warnAt:0,landAt:0,endAt:0,index:0,strikeNode:0},actNotes=[];
+const stats={districts:0,districtsSaved:0,evacuated:0,pickups:0,neighborhoods:0,repairs:0,decoys:0,
+  decoyHits:0,attacks:0,buildingsLost:0,casualties:0,acts:0,actSaves:0,lapses:0,events:0,progress:0,
+  appliedIntents:0,maxEventLull:0,maxProgressLull:0,maxStep:0,invisibleRescues:0};
+
+const node=(r,c)=>r*COLS+c,row=n=>(n/COLS)|0,col=n=>n%COLS,pos=n=>({x:X[col(n)],y:Y[row(n)]});
+const edgeKey=(a,b)=>a<b?a+':'+b:b+':'+a;
+const round=(v,d)=>{const p=Math.pow(10,d||3);return Math.round(v*p)/p};
+const mod=(n,d)=>((n%d)+d)%d;
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),m=s=>Math.round(((pa>>s)&255)*(1-t)+((pb>>s)&255)*t);return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1)};
+const alpha=(a,fn)=>{const old=ctx.globalAlpha;ctx.globalAlpha=a;fn();ctx.globalAlpha=old};
+const poly=(pts,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill()};
+const line=(pts,c,w,dash)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.setLineDash(dash||[]);ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.stroke();ctx.setLineDash([]);ctx.lineWidth=1};
+function say(s,c,x,y,t){texts.push({s,c:c||CREAM,x:x===undefined?80:x,y:y===undefined?55:y,t:t||80});if(texts.length>8)texts.shift()}
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score)}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score)}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+40})}
+
+function buildGraph(){edges=new Set();for(let c=0;c<COLS;c++)for(let r=0;r<ROWS-1;r++)edges.add(edgeKey(node(r,c),node(r+1,c)));
+  for(const r of palette.hRows)for(let c=0;c<COLS-1;c++)edges.add(edgeKey(node(r,c),node(r,c+1)));
+  if(district===0){edges.add(edgeKey(node(1,0),node(1,1)));edges.add(edgeKey(node(5,2),node(5,3)))}
+  if(district===1){edges.add(edgeKey(node(0,1),node(0,2)));edges.add(edgeKey(node(6,1),node(6,2)))}
+  if(district===2){edges.add(edgeKey(node(2,0),node(2,1)));edges.add(edgeKey(node(4,2),node(4,3)))}
+}
+function neighbors(n){const out=[];for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){const q=node(r,c);if(q!==n&&edges.has(edgeKey(n,q)))out.push(q)}return out}
+function findPath(start,goal,avoid){if(start===goal)return[];const open=[start],cost=new Map([[start,0]]),came=new Map();while(open.length){open.sort((a,b)=>cost.get(a)-cost.get(b)||a-b);const n=open.shift();if(n===goal)break;for(const q of neighbors(n)){let extra=1;if(avoid&&kaiju){const danger=[kaiju.node,kaiju.to,...kaijuRoute].indexOf(q);if(danger>=0)extra+=4-danger*.22}const next=cost.get(n)+Math.max(.5,extra);if(next>=(cost.get(q)??Infinity))continue;cost.set(q,next);came.set(q,n);open.push(q)}}if(!came.has(goal))return[];const out=[];for(let n=goal;n!==start;n=came.get(n))out.push(n);return out.reverse()}
+const graphDistance=(a,b)=>findPath(a,b,false).length;
+function buildingCenter(spec){const p=pos(spec.node),side=col(spec.node)%2===0?1:-1;return{x:p.x+side*13,y:p.y-1}}
+function shelter(){return buildings.find(b=>b.kind==='shelter')}
+function gridBuilding(){return buildings.find(b=>b.kind==='grid')}
+function buildingById(id){return buildings.find(b=>b.id===id)}
+function groupById(id){return groups.find(g=>g.id===id)}
+
+function makeDistrict(resetShow){palette=DISTRICTS[district];buildGraph();buildings=BUILD_LAYOUTS[district].map((spec,i)=>{
+    const p=buildingCenter(spec);return{...spec,x:p.x,y:p.y,hp:3,maxHp:3,power:true,flash:0,lost:false,serial:i}});
+  groups=buildings.filter(b=>b.kind==='clinic'||b.kind==='school'||b.kind==='water').map((b,i)=>({id:'ward-'+i,node:b.node,buildingId:b.id,
+    total:4,remaining:4,picked:false,evacuated:false,panic:0}));
+  const home=shelter(),hp=pos(home.node);hero={node:home.node,from:home.node,to:home.node,x:hp.x,y:hp.y,moveT:0,moveDur:0,face:-1,
+    cargo:0,cargoIds:[],actionT:0,brace:false,stun:0,intent:null,lastX:hp.x,lastY:hp.y,pose:'idle'};
+  const first=groups[0],spawn=district%2?node(6,3):node(0,3),kp=pos(spawn);kaiju={node:spawn,from:spawn,to:spawn,x:kp.x,y:kp.y,
+    moveT:0,moveDur:0,face:-1,stun:0,attackT:0,roarT:0,targetKind:'building',targetId:first.buildingId,step:0};
+  decoy=null;decoyCooldown=0;route=[];kaijuRoute=[];task=null;planAt=-1e9;districtClock=0;state='run';transitionT=0;visualTick=0;
+  persona=PERSONAS[mod(worldSeed+district,PERSONAS.length)];setKaijuTarget(buildingById(first.buildingId));resetAct();
+  if(resetShow)SHOW.reset(showFrame);
+}
+function resetAct(){const types=['surge','aftershock','blackout'];Object.assign(act,{phase:'calm',type:types[district],warnAt:showFrame+1800,
+    landAt:showFrame+2040,endAt:showFrame+2760,index:district,strikeNode:gridBuilding().node})}
+function resetRun(full){worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;district=0;eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;actNotes=[];
+  texts=[];visualFixture='';lastLapsed=false;for(const k in stats)stats[k]=0;profile=skillProfile({rng:createRng(skillSeed),skill:.82,precision:.88,
+    risk:.48,recovery:.9,reactionFrames:[3,7],lapseChance:.00072,lapseFrames:[14,30]});makeDistrict(full)}
+
+function validTarget(t){if(!t)return false;if(t.kind==='evac'){const g=groupById(t.targetId);return g&&g.remaining>0&&!g.picked}
+  if(t.kind==='drop')return hero.cargo>0;if(t.kind==='repair'){const b=buildingById(t.targetId);return b&&!b.lost&&(b.hp<3||!b.power)}
+  if(t.kind==='decoy')return!decoy&&decoyCooldown<=0;if(t.kind==='brace')return act.phase==='warn';return t.kind==='patrol'}
+function decoyNode(){let best=hero.node,bestScore=-Infinity;for(let n=0;n<ROWS*COLS;n++){const near=Math.min(...buildings.map(b=>graphDistance(n,b.node))),
+    score=graphDistance(kaiju.node,n)*9+near*17-graphDistance(hero.node,n)*5;if(near>=2&&score>bestScore){bestScore=score;best=n}}return best}
+function kaijuEta(n){return(kaiju.moveT||0)+graphDistance(kaiju.to,n)*132}
+function actPlanNode(){return mod(worldSeed+district*3,4)===0?node(3,(district+1)%COLS):act.strikeNode}
+function taskObject(kind,targetId,n,tactic,score){return{kind,targetId,node:n,tactic,score:score||0,serial:taskSerial+1}}
+function reactiveTask(){if(hero.cargo)return taskObject('drop',shelter().id,shelter().node,'RUN TO THE SHELTER');
+  const repair=buildings.filter(b=>!b.lost&&(b.hp<3||!b.power)&&graphDistance(hero.node,b.node)<=2).sort((a,b)=>graphDistance(hero.node,a.node)-graphDistance(hero.node,b.node))[0];
+  if(repair)return taskObject('repair',repair.id,repair.node,'PATCH THE NEAREST BLOCK');
+  const evac=groups.filter(g=>g.remaining>0&&!g.picked).sort((a,b)=>graphDistance(hero.node,a.node)-graphDistance(hero.node,b.node)||a.id.localeCompare(b.id))[0];
+  if(evac)return taskObject('evac',evac.id,evac.node,'PICK UP THE CLOSEST WARD');
+  if(!decoy&&decoyCooldown<=0&&kaijuRoute.length<=2)return taskObject('decoy','reactive',decoyNode(),'DROP A PANIC BEACON');
+  const broken=buildings.filter(b=>!b.lost&&(b.hp<3||!b.power)).sort((a,b)=>graphDistance(hero.node,a.node)-graphDistance(hero.node,b.node))[0];
+  return broken?taskObject('repair',broken.id,broken.node,'RESTORE THE BLOCK'):taskObject('patrol','shelter',shelter().node,'HOLD THE SAFE CORRIDOR')}
+function smartTask(){if(hero.cargo)return taskObject('drop',shelter().id,shelter().node,'CLEAR THE EVAC CORRIDOR',9999);
+  if(act.phase==='warn'){const n=actPlanNode(),miss=n!==act.strikeNode;return taskObject('brace',gridBuilding().id,n,miss?'CLEAR THE EVAC UNDERPASS':act.type==='surge'?'SEAL THE FLOOD GRID':act.type==='aftershock'?'BRACE THE SUBSTATION':'KEEP THE LIGHTS ON',9200)}
+  const live=groups.filter(g=>g.remaining>0&&!g.picked),threatened=live.map(g=>{const b=buildingById(g.buildingId),eta=kaijuEta(b.node),response=graphDistance(hero.node,g.node)*24+52+graphDistance(g.node,shelter().node)*24+50;
+    return{g,b,eta,response,urgency:(2400/(eta+120)+g.remaining*1.8)*persona.evac}}).sort((a,b)=>b.urgency-a.urgency||a.g.id.localeCompare(b.g.id))[0];
+  if(threatened&&!decoy&&decoyCooldown<=0&&threatened.eta<threatened.response+520)return taskObject('decoy','forecast',decoyNode(),'TURN THE KAIJU AWAY',8000*persona.decoy);
+  if(threatened&&threatened.eta>threatened.response-80)return taskObject('evac',threatened.g.id,threatened.g.node,'EVACUATE '+threatened.b.label,7000+threatened.urgency);
+  const repairs=buildings.filter(b=>!b.lost&&(b.hp<3||!b.power)).map(b=>({b,score:(b.kind==='grid'?260:100)*persona.repair+kaijuEta(b.node)*-.04-graphDistance(hero.node,b.node)*8})).sort((a,b)=>b.score-a.score);
+  if(repairs.length)return taskObject('repair',repairs[0].b.id,repairs[0].b.node,repairs[0].b.power?'REBUILD '+repairs[0].b.label:'RELIGHT '+repairs[0].b.label,repairs[0].score);
+  if(threatened)return taskObject('evac',threatened.g.id,threatened.g.node,'MOVE BEFORE IMPACT',6000+threatened.urgency);
+  if(!decoy&&decoyCooldown<=0&&kaijuRoute.length<=4)return taskObject('decoy','forecast',decoyNode(),'DRAW IT TO OPEN GROUND',4000*persona.decoy);
+  return taskObject('patrol','shelter',shelter().node,'WATCH THE TELEGRAPH',0)}
+function chooseTask(){return typeof globalThis.__NO_TRIAGE_PLAN==='undefined'?smartTask():reactiveTask()}
+function setTask(next){task=next;taskSerial++;if(task)task.serial=taskSerial;route=task?findPath(hero.node,task.node,typeof globalThis.__NO_TRIAGE_PLAN==='undefined'):[];planAt=runFrame;hero.actionT=0;hero.brace=false}
+function rawBotIntent(){if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'&&kaiju.attackT<=0)return{next:-1,action:false,brace:false,targetId:'city',targetKind:'admire',tactic:'WATCH THE WINDOWS RELIGHT'};
+  if(!validTarget(task)||(task.kind!=='brace'&&runFrame-planAt>=75))setTask(chooseTask());if(!task)return{next:-1,action:false,brace:false,targetId:'none',targetKind:'patrol',tactic:'SCAN THE CITY'};
+  if(hero.node===task.node)return{next:-1,action:true,brace:task.kind==='brace',targetId:task.targetId,targetKind:task.kind,tactic:task.tactic};
+  if(!route.length||route[0]===hero.node)route=findPath(hero.node,task.node,typeof globalThis.__NO_TRIAGE_PLAN==='undefined');
+  return{next:route[0]??-1,action:false,brace:false,targetId:task.targetId,targetKind:task.kind,tactic:task.tactic}}
+function lapseIntent(context,last){const base=last||rawBotIntent();return{next:-1,action:false,brace:false,targetId:base.targetId,targetKind:base.targetKind,tactic:'SECOND-GUESS THE MAP'}}
+function botIntent(){if(typeof globalThis.__NO_LAPSE!=='undefined'){lastLapsed=false;return rawBotIntent()}const before=profile.isLapsed(runFrame),intent=profile.decide(runFrame,null,rawBotIntent,lapseIntent),after=profile.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();say('... RECHECKING ROUTE',GOLD,80,58,55)}lastLapsed=after;return intent||rawBotIntent()}
+function humanIntent(){const ns=neighbors(hero.node),dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0);let next=-1,best=-Infinity;
+  for(const n of ns){const a=pos(n),score=(a.x-pos(hero.node).x)*dx+(a.y-pos(hero.node).y)*dy;if(score>best&&score>0){best=score;next=n}}
+  return{next,action:!!(keys.a||keys.b||keys.c),brace:!!keys.c,targetId:task?task.targetId:'manual',targetKind:task?task.kind:'manual',tactic:'MANUAL DISPATCH'}}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function startHeroMove(n){if(!neighbors(hero.node).includes(n))return;hero.from=hero.node;hero.to=n;hero.moveDur=24;hero.moveT=24;hero.face=pos(n).x>=hero.x?1:-1;hero.pose='drive';hero.actionT=0}
+function applyIntent(intent){hero.intent=intent;stats.appliedIntents++;if(hero.stun>0||hero.moveT>0)return intent;if(intent.next>=0)startHeroMove(intent.next);else if(intent.action)performAction(intent);else{hero.actionT=0;hero.pose='idle'}return intent}
+function performAction(intent){if(!task||hero.node!==task.node){hero.actionT=0;return}hero.actionT++;hero.pose=task.kind==='repair'||task.kind==='brace'?'repair':task.kind==='evac'||task.kind==='drop'?'load':'deploy';
+  if(task.kind==='evac'&&hero.actionT>=48){const g=groupById(task.targetId);if(g&&g.remaining){hero.cargo+=g.remaining;hero.cargoIds.push(g.id);g.picked=true;g.remaining=0;stats.pickups++;markEvent(15);markProgress(1);offer('pickup',1,hero.x,hero.y,'CIVILIANS ABOARD');fxDust(hero.x,hero.y,8,MINT);say('WARD ABOARD',MINT,hero.x,hero.y-18,55)}setTask(chooseTask())}
+  else if(task.kind==='drop'&&hero.actionT>=52){const n=hero.cargo;for(const id of hero.cargoIds){const g=groupById(id);if(g&&!g.evacuated){g.evacuated=true;stats.neighborhoods++}}hero.cargo=0;hero.cargoIds=[];stats.evacuated+=n;markEvent(50);markProgress(n);offer('ward-safe',2,hero.x,hero.y,'NEIGHBORHOOD SAFE');fxBurst(hero.x,hero.y,20,MINT,2.1,.02);say(n+' CIVILIANS SAFE',GOLD,80,64,95);setTask(chooseTask())}
+  else if(task.kind==='repair'&&hero.actionT>=78){const b=buildingById(task.targetId);if(b&&!b.lost){const wasDark=!b.power||b.hp<2;b.hp=3;b.power=true;b.flash=50;stats.repairs++;markEvent(20);markProgress(1);offer('repair',wasDark&&b.kind==='grid'?2:1,b.x,b.y,wasDark?'BLOCK RELIT':'REPAIR COMPLETE');fxBurst(b.x,b.y,14,CYAN,1.7);say('POWER RESTORED',CYAN,b.x,b.y-18,70)}setTask(chooseTask())}
+  else if(task.kind==='decoy'&&hero.actionT>=42){const p=pos(task.node);decoy={id:'beacon-'+(++stats.decoys),node:task.node,x:p.x,y:p.y,t:1900};markEvent(12);markProgress(1);offer('decoy',1,p.x,p.y,'DECOY ONLINE');fxBurst(p.x,p.y,12,GOLD,1.6);setKaijuTarget(decoy);setTask(chooseTask())}
+  else if(task.kind==='brace'&&hero.actionT>=34&&!hero.brace){hero.brace=true;markEvent();offer('brace',1,hero.x,hero.y,'GRID BRACED');say('GRID CREW READY',CYAN,hero.x,hero.y-18,80)}}
+function stepHero(){hero.lastX=hero.x;hero.lastY=hero.y;if(hero.stun>0){hero.stun--;hero.pose='hurt';return}if(hero.moveT>0){hero.moveT--;const a=pos(hero.from),b=pos(hero.to),t=1-hero.moveT/hero.moveDur,e=t*t*(3-2*t);hero.x=a.x+(b.x-a.x)*e;hero.y=a.y+(b.y-a.y)*e;
+    if(hero.moveT===0){hero.node=hero.to;hero.x=b.x;hero.y=b.y;if(route[0]===hero.node)route.shift()}const d=Math.hypot(hero.x-hero.lastX,hero.y-hero.lastY);stats.maxStep=Math.max(stats.maxStep,d);return}applyIntent(controller())}
+
+function setKaijuTarget(target){if(!target)return;kaiju.targetKind=target===decoy?'decoy':'building';kaiju.targetId=target.id;kaijuRoute=findPath(kaiju.node,target.node,false);if(!kaijuRoute.length&&kaiju.node!==target.node)kaijuRoute=[target.node]}
+function chooseKaijuTarget(){if(decoy)return decoy;let pool=buildings.filter(b=>b.kind!=='shelter'&&!b.lost&&graphDistance(kaiju.node,b.node)>=3);if(!pool.length)pool=buildings.filter(b=>b.kind!=='shelter'&&!b.lost);pool.sort((a,b)=>{
+    const ga=groups.find(g=>g.buildingId===a.id),gb=groups.find(g=>g.buildingId===b.id),sa=(ga?ga.remaining*90:0)+a.hp*12+graphDistance(kaiju.node,a.node)*4,
+      sb=(gb?gb.remaining*90:0)+b.hp*12+graphDistance(kaiju.node,b.node)*4;return sb-sa||a.id.localeCompare(b.id)});return pool[0]||shelter()}
+function attackBuilding(b){kaiju.attackT=90;kaiju.roarT=45;stats.attacks++;markEvent();b.hp=Math.max(0,b.hp-1);b.power=false;b.flash=70;shake(6);offer('impact',1,b.x,b.y,b.hp?'BLOCK DAMAGED':'BLOCK LOST');fxBurst(b.x,b.y,24,CORAL,2.5,.04);
+  const g=groups.find(g=>g.buildingId===b.id);if(g&&g.remaining>0){const lost=Math.min(g.remaining,b.hp===0?2:1);g.remaining-=lost;stats.casualties+=lost;g.panic=120}
+  if(b.hp===0&&!b.lost){b.lost=true;stats.buildingsLost++;say('CRITICAL BLOCK LOST',CORAL,80,64,100)}setKaijuTarget(chooseKaijuTarget())}
+function hitDecoy(){stats.decoyHits++;markEvent(35);markProgress(2);offer('decoy-hit',2,decoy.x,decoy.y,'KAIJU DIVERTED');fxBurst(decoy.x,decoy.y,28,GOLD,2.7,.02);say('DECOY TAKEN',GOLD,80,64,95);kaiju.stun=150;kaiju.roarT=80;decoy=null;decoyCooldown=480;setKaijuTarget(chooseKaijuTarget())}
+function stepKaiju(){if(kaiju.attackT>0)kaiju.attackT--;if(kaiju.roarT>0)kaiju.roarT--;if(kaiju.stun>0){kaiju.stun--;return}const target=kaiju.targetKind==='decoy'?decoy:buildingById(kaiju.targetId);if(!target){setKaijuTarget(chooseKaijuTarget());return}
+  if(kaiju.moveT>0){kaiju.moveT--;const a=pos(kaiju.from),b=pos(kaiju.to),t=1-kaiju.moveT/kaiju.moveDur,e=t*t*(3-2*t);kaiju.x=a.x+(b.x-a.x)*e;kaiju.y=a.y+(b.y-a.y)*e;
+    if(kaiju.moveT===0){kaiju.node=kaiju.to;kaiju.x=b.x;kaiju.y=b.y;if(kaijuRoute[0]===kaiju.node)kaijuRoute.shift()}return}
+  if(kaijuRoute.length){const n=kaijuRoute[0];kaiju.from=kaiju.node;kaiju.to=n;kaiju.moveDur=(act.phase==='live'?108:132);kaiju.moveT=kaiju.moveDur;kaiju.face=pos(n).x>=kaiju.x?1:-1;kaiju.step++;return}
+  if(kaiju.node===target.node){if(target===decoy)hitDecoy();else attackBuilding(target)}else setKaijuTarget(target)}
+
+function stepAct(){if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return}if(act.phase==='calm'&&showFrame>=act.warnAt){act.phase='warn';act.landAt=showFrame+240;act.endAt=act.landAt+720;task=null;route=[];
+    const n={kind:'act-warning',id:act.type,at:showFrame,tag:district,landsAt:showFrame+240};actNotes.push(n);SHOW.note(n);say(act.type==='surge'?'SURGE GATES RISING':act.type==='aftershock'?'AFTERSHOCK INBOUND':'CASCADE BLACKOUT',GOLD,80,59,150)}
+  else if(act.phase==='warn'&&showFrame>=act.landAt){act.phase='live';stats.acts++;const n={kind:'act-land',id:act.type,at:showFrame,tag:district};actNotes.push(n);SHOW.note(n);const saved=hero.node===act.strikeNode&&hero.brace;
+    if(saved){stats.actSaves++;markProgress(2);offer('act-save',2,hero.x,hero.y,'GRID HOLDS');fxBurst(hero.x,hero.y,24,CYAN,2.4);say('TRIAGE HOLDS',MINT,80,60,100)}else{const grid=gridBuilding();grid.power=false;grid.hp=Math.max(1,grid.hp-1);grid.flash=90;const other=buildings.find(b=>b.kind==='water'&&!b.lost);if(other){other.power=false;if(act.type==='aftershock')other.hp=Math.max(1,other.hp-1)}markEvent();say('CITY SYSTEMS HIT',CORAL,80,60,95)}shake(5);task=null;route=[]}
+  else if(act.phase==='live'&&showFrame>=act.endAt){act.phase='spent';offer('act-clear',1,hero.x,hero.y,'FRONT PASSES');task=null;route=[]}}
+function districtCondition(){const standing=buildings.filter(b=>!b.lost).length,evac=groups.filter(g=>g.evacuated).length;return{standing,evac,score:standing*2+evac}}
+function finishDistrict(){if(state!=='run')return;const c=districtCondition();stats.districts++;if(c.standing>=4&&c.evac>=2)stats.districtsSaved++;markEvent(150);markProgress(5);offer('district-safe',3,80,170,c.standing>=4?'DISTRICT SURVIVES':'DISTRICT SCARRED');fxBurst(80,170,42,c.standing>=4?GOLD:CORAL,3.2,.025);for(const b of buildings)if(!b.lost)fxBurst(b.x,b.y,9,b.power?MINT:GOLD,1.8,.015);state='transition';transitionT=150;say(c.standing>=4?'NEIGHBORHOODS HOLD':'EVAC ROUTES HOLD',c.standing>=4?GOLD:CORAL,80,82,140)}
+function stepWorld(){runFrame++;visualTick++;if(state==='transition'){if(--transitionT<=0){district=(district+1)%DISTRICTS.length;makeDistrict(false)}return}districtClock++;if(decoyCooldown>0)decoyCooldown--;if(decoy&&--decoy.t<=0){decoy=null;decoyCooldown=180;setKaijuTarget(chooseKaijuTarget())}
+  stepHero();stepKaiju();for(const b of buildings)if(b.flash>0)b.flash--;for(const g of groups)if(g.panic>0)g.panic--;if(districtClock>=6000)finishDistrict()}
+function step(){showFrame++;sessionStep({reset:()=>resetRun(true)});stepAct();pres=SHOW.step(showFrame);if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();stepParts();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0)}
+
+// ---- authored city renderer ---------------------------------------------------
+function drawBackdrop(){rect(0,0,W,H,palette.sky);if(palette.kind==='harbor'){
+    rect(119,42,41,280,'#12384a');for(let y=48;y<320;y+=13){const off=((showFrame>>3)+y)%9;rect(123+off,y,25,1,y%26?'#2b6870':'#75c8c6')}rect(116,42,5,280,'#8b8065');
+    for(let i=0;i<4;i++){const x=8+i*32,h=18+i%2*9;rect(x,42-h,24,h,mix(palette.sky,INK,.25));rect(x+4,46-h,2,3,palette.glass)}}
+  else if(palette.kind==='old'){for(let i=0;i<7;i++){const x=i*25-7,h=20+(i%3)*8;poly([[x,42],[x,42-h],[x+9,42-h-6],[x+18,42-h],[x+18,42]],i%2?'#4c2b35':'#59363a');rect(x+4,34-h,3,3,palette.glass)}
+    ctx.strokeStyle='#a56a52';ctx.beginPath();ctx.arc(80,176,38,0,7);ctx.stroke()}
+  else{for(let i=0;i<8;i++){const x=i*22-6,h=28+(i%4)*13;rect(x,42-h,17,h,i%2?'#20284e':'#29345e');for(let yy=46-h;yy<39;yy+=7)for(let xx=x+3;xx<x+14;xx+=5)if(hash(xx,yy+i)>.35)rect(xx,yy,2,2,i%3?palette.glass:VIOLET)}alpha(.10,()=>rect(0,42,W,60,VIOLET))}}
+function drawRoads(){rect(0,42,W,280,palette.ground);for(const key of edges){const[a,b]=key.split(':').map(Number),p=pos(a),q=pos(b),x=Math.min(p.x,q.x),y=Math.min(p.y,q.y);
+    if(p.x===q.x){rect(x-5,y,11,Math.abs(q.y-p.y)+1,palette.walk);rect(x-3,y,7,Math.abs(q.y-p.y)+1,palette.road);for(let yy=y+6;yy<Math.max(p.y,q.y);yy+=12)rect(x,yy,1,4,palette.line)}
+    else{rect(x,y-5,Math.abs(q.x-p.x)+1,11,palette.walk);rect(x,y-3,Math.abs(q.x-p.x)+1,7,palette.road);for(let xx=x+7;xx<Math.max(p.x,q.x);xx+=13)rect(xx,y,5,1,palette.line)}}
+  for(let n=0;n<ROWS*COLS;n++){const p=pos(n);rect(p.x-4,p.y-4,9,9,palette.road);for(let i=-3;i<=3;i+=3){rect(p.x+i,p.y-6,1,2,palette.line);rect(p.x+i,p.y+5,1,2,palette.line)}}
+  if(palette.kind==='harbor'){for(const r of[2,4]){const p=pos(node(r,3));rect(119,p.y-5,39,11,'#6e6557');for(let x=122;x<158;x+=7)rect(x,p.y-3,3,7,'#a99777')}}
+  if(palette.kind==='old'){line([[13,174],[147,174]],'#b78358',2);line([[13,178],[147,178]],'#6e413b',1);for(let x=17;x<147;x+=9)rect(x,172,2,8,'#9b7656')}
+  if(palette.kind==='core'){rect(0,151,W,4,'#202846');rect(0,152,W,1,palette.glass);for(let x=7;x<W;x+=25){rect(x,148,17,7,'#3e4b7a');rect(x+3,149,3,2,palette.glass)}}}
+function drawParcels(){for(let r=0;r<ROWS-1;r++)for(let c=0;c<COLS-1;c++){
+  const left=X[c]+7,right=X[c+1]-7,top=Y[r]+7,bottom=Y[r+1]-7,w=right-left,h=bottom-top,cx=(left+right)>>1,cy=(top+bottom)>>1,v=hash(c+r*7+district*31,worldSeed%997);
+  if(palette.kind==='old'&&c===1&&(r===2||r===3))continue;
+  if(palette.kind==='core'&&c===1&&r<=2)continue;
+  if(buildings.some(b=>b.x>left-6&&b.x<right+6&&b.y>top-7&&b.y<bottom+7))continue;
+  rect(left+2,top+3,w-2,h-1,palette.shadow);
+  if(palette.kind==='harbor'){
+    if(v>.73){rect(left,top,w,h,'#315b55');for(let x=left+3;x<right;x+=6)poly([[x,bottom-1],[x+2,top+2],[x+4,bottom-1]],'#3f7566');rect(cx-2,cy-2,5,5,'#9fc8af')}
+    else{rect(left,top,w,h,v>.38?'#5c5149':'#46535a');rect(left+1,top+1,w-2,3,v>.38?'#9c7055':'#70828a');for(let y=top+5;y<bottom-2;y+=5)line([[left+2,y],[right-2,y]],'#2d373c',1);for(let i=0;i<3;i++){const x=left+3+i*7;rect(x,bottom-5,5,4,i%2?'#b76b45':'#cf9a48')}}
+  }else if(palette.kind==='old'){
+    if(v>.68){rect(left,top,w,h,'#43553e');for(let i=0;i<4;i++){const x=left+4+(i%2)*10,y=top+4+((i/2)|0)*8;rect(x-1,y,2,5,'#3b2923');poly([[x-5,y],[x,y-7],[x+5,y]],i%2?'#527a50':'#6b8c54')}rect(cx-4,cy-3,8,6,'#6e8f91');rect(cx-2,cy-2,4,2,CYAN)}
+    else{rect(left,top,w,h,v>.35?'#72443e':'#5b3a3b');poly([[left,top+4],[cx,top-3],[right,top+4]],v>.35?'#a75443':'#74404a');rect(left+3,top+5,5,6,'#33252a');rect(right-8,top+5,5,6,'#33252a');rect(cx-2,bottom-6,4,6,'#2b2023');rect(left+4,top+6,2,3,palette.glass);rect(right-7,top+6,2,3,palette.glass)}
+  }else{
+    if(v>.76){rect(left,top,w,h,'#30385c');for(let x=left+3;x<right-2;x+=5)for(let y=top+3;y<bottom-2;y+=5)rect(x,y,2,2,(x+y)%3?palette.glass:VIOLET);rect(cx-4,cy-3,8,6,'#59658e');rect(cx-2,cy-2,4,2,CYAN)}
+    else{rect(left,top,w,h,v>.35?'#364573':'#2b355d');poly([[left,top],[right-4,top],[right,bottom],[left+4,bottom]],v>.35?'#4d5f91':'#3e4b7c');for(let x=left+3;x<right-2;x+=5)rect(x,top+3,2,h-6,(x+c)%2?'#74b7cf':'#6677a5');rect(cx-4,cy-2,8,4,'#202844');rect(cx-2,cy-1,4,2,MINT)}
+  }
+}}
+function drawDistrictLandmark(){if(palette.kind==='harbor'){
+    rect(124,72,26,3,'#9b8264');line([[128,72],[128,119]],'#6c765f',2);line([[128,75],[151,90]],'#91a37e',2);line([[151,90],[151,112]],'#c1b27a',1);poly([[148,112],[154,112],[152,118],[150,118]],GOLD);
+  }else if(palette.kind==='old'){
+    alpha(.7,()=>{ctx.fillStyle='#6b5147';ctx.beginPath();ctx.arc(80,174,25,0,7);ctx.fill()});ctx.strokeStyle='#d09c68';ctx.beginPath();ctx.arc(80,174,22,0,7);ctx.stroke();for(let a=0;a<8;a++){const q=a*Math.PI/4;line([[80+Math.cos(q)*7,174+Math.sin(q)*7],[80+Math.cos(q)*21,174+Math.sin(q)*21]],'#8c6a52',1)}
+    rect(76,158,8,24,'#3f3030');rect(74,158,12,4,'#b0644e');rect(77,151,6,8,'#6e413d');ctx.fillStyle=CREAM;ctx.beginPath();ctx.arc(80,155,2.5,0,7);ctx.fill();line([[80,155],[80,153],[82,155]],'#332329',1);rect(68,188,24,3,'#815946');for(let x=70;x<92;x+=5)rect(x,186,2,2,palette.glass);
+  }else{
+    rect(66,75,29,66,'#151a35');poly([[68,77],[91,77],[95,137],[66,137]],'#394c7d');for(let y=81;y<132;y+=8)for(let x=71;x<92;x+=6)rect(x,y,3,4,(x+y)%4?palette.glass:VIOLET);
+    rect(70,70,21,8,'#202a50');rect(74,67,13,5,'#52669a');ctx.strokeStyle=CYAN;ctx.beginPath();ctx.arc(80,70,6+Math.sin(showFrame*.04),0,7);ctx.stroke();rect(74,111,16,4,'#171d39');rect(78,109,8,8,MINT);rect(80,110,4,6,'#243f42');
+  }}
+function drawCityProps(){for(let i=0;i<18;i++){const n=(i*7+district*3)%(ROWS*COLS),p=pos(n),sx=p.x+(i%2?9:-10),sy=p.y+(i%3-1)*7;if(sx<4||sx>156)continue;
+    if(palette.kind==='harbor'){rect(sx-2,sy-4,4,8,'#5f716b');rect(sx-1,sy-7,2,4,GOLD);line([[sx+3,sy+4],[sx+8,sy-7]],'#3f4c4b',1)}
+    else if(palette.kind==='old'){rect(sx-1,sy,2,5,'#36241e');poly([[sx-5,sy],[sx,sy-8],[sx+5,sy]],i%2?'#446f55':'#5d7d4c');rect(sx+6,sy-6,2,7,'#4b3030');rect(sx+5,sy-8,4,3,palette.glass)}
+    else{rect(sx-1,sy-7,2,10,'#343d62');rect(sx-3,sy-8,6,2,palette.glass);if((showFrame/18+i|0)%3===0)rect(sx-2,sy-9,4,1,CREAM)}}}
+function actorAllowed(id){const s=globalThis.__KC_VISUAL_ONLY_ACTOR;return s===undefined||s===null||s==='all'||s===id}
+function drawBuilding(b){if(!actorAllowed('building-'+b.id))return;const x=Math.round(b.x),y=Math.round(b.y),dark=!b.power||b.lost,wall=b.flash&&showFrame%8<4?CREAM:dark?mix(palette.wall,INK,.45):palette.wall;
+  alpha(.35,()=>rect(x-10,y+9,21,2,INK));rect(x-11,y-11,22,22,palette.shadow);rect(x-10,y-10,20,20,wall);rect(x-8,y-8,16,16,dark?mix(palette.wall2,INK,.5):palette.wall2);
+  if(b.kind==='clinic'){rect(x-3,y-11,6,4,CREAM);rect(x-1,y-12,2,6,CORAL);rect(x-3,y-10,6,2,CORAL)}
+  else if(b.kind==='grid'){for(let i=-6;i<=6;i+=6){rect(x+i-1,y-12,3,7,'#35424c');rect(x+i,y-13,1,3,CYAN)}rect(x-6,y+3,12,5,'#28343b')}
+  else if(b.kind==='school'){poly([[x-10,y-8],[x,y-13],[x+10,y-8]],dark?'#4b3233':'#b4594e');rect(x-2,y+3,4,7,'#3a2627')}
+  else if(b.kind==='shelter'){poly([[x-11,y-5],[x,y-13],[x+11,y-5]],'#55796d');rect(x-6,y-3,12,12,'#28473e');rect(x-2,y+1,4,8,MINT)}
+  else{rect(x-5,y-13,10,4,'#70848a');rect(x-3,y-9,6,3,CYAN);rect(x-6,y+4,12,4,'#34464a')}
+  if(!dark)for(let yy=-5;yy<=3;yy+=8)for(let xx=-6;xx<=4;xx+=5)rect(x+xx,y+yy,2,3,(xx+yy+district)%3?palette.glass:GOLD);
+  else for(let yy=-5;yy<=3;yy+=8)for(let xx=-6;xx<=4;xx+=5)rect(x+xx,y+yy,2,3,'#161a20');
+  if(b.hp<3){line([[x-7,y-7],[x-2,y-2],[x-5,y+4],[x+1,y+8]],'#211419',1);if(b.lost){rect(x-9,y+5,5,5,'#241c1e');rect(x+4,y+2,6,8,'#1b171a')}}}
+function drawDamage(){for(const b of buildings)if(b.hp<3){const age=(showFrame+b.serial*17)%44;alpha(.22,()=>{rect(b.x-5+(age%7),b.y-20-age*.12,5,4,SMOKE);rect(b.x+1-(age%5),b.y-25-age*.08,7,5,mix(SMOKE,INK,.3))});if(b.lost){for(let i=0;i<5;i++)rect(b.x-10+i*4,b.y+9+(i%2),3,2,i%2?'#463737':'#2d2728')}}}
+function drawGroup(g,index){if(!actorAllowed(g.id)||g.remaining<=0)return;const p=pos(g.node),panic=g.panic>0||kaiju.targetId===g.buildingId;for(let i=0;i<g.remaining;i++){const dx=(i%2)*5-4,dy=((i/2)|0)*6-3,bob=((showFrame>>3)+i+index)&1,c=i%3===0?GOLD:i%3===1?MINT:CREAM;
+    rect(p.x+dx-1,p.y+dy-4-bob,3,3,i%2?'#c68d70':'#8d5f52');rect(p.x+dx-2,p.y+dy-1-bob,5,5,c);rect(p.x+dx-2,p.y+dy+4-bob,2,3,'#26303a');rect(p.x+dx+1,p.y+dy+4-(bob?0:1),2,3,'#26303a');
+    if(panic){rect(p.x+dx-4,p.y+dy-2,2,1,CORAL);rect(p.x+dx+3,p.y+dy-2,2,1,CORAL)}}}
+function drawHero(){if(!actorAllowed('civic-1'))return;const x=Math.round(hero.x),y=Math.round(hero.y),f=hero.face,drive=hero.moveT>0,wheel=(showFrame>>2)&1,repair=hero.pose==='repair',load=hero.cargo>0;
+  alpha(.35,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(x,y+7,8,2,0,0,7);ctx.fill()});rect(x-7,y-5,14,10,'#193a42');rect(x-6,y-6,10,8,'#2f7580');rect(x+f*2,y-5,4,4,CYAN);
+  rect(x-8,y-4+(wheel?1:0),3,4,'#0b1117');rect(x+5,y-4+(wheel?0:1),3,4,'#0b1117');rect(x-8,y+3-(wheel?1:0),3,4,'#0b1117');rect(x+5,y+3-(wheel?0:1),3,4,'#0b1117');
+  rect(x-4,y-8,3,2,CORAL);rect(x+1,y-8,3,2,CYAN);rect(x-5,y+1,10,2,CREAM);if(load){rect(x-5,y-4,4,5,GOLD);rect(x+1,y-4,4,5,MINT)}
+  if(repair){line([[x+f*5,y-3],[x+f*8,y-7],[x+f*9,y-5]],CYAN,1);rect(x+f*9-1,y-6,2,2,CREAM)}if(hero.pose==='deploy')rect(x+f*7,y-7,2,8,GOLD)}
+function drawKaiju(){if(!actorAllowed('kaiju'))return;const x=Math.round(kaiju.x),y=Math.round(kaiju.y),f=kaiju.face,gait=(showFrame>>4)&1,attack=kaiju.attackT>0,roar=kaiju.roarT>0,stun=kaiju.stun>0,hide=stun?'#657577':'#315b55',mid=stun?'#7f8d88':'#5f8a70';
+  ctx.save();ctx.translate(x,y+(gait?0:1));ctx.scale(f,1);alpha(.42,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,10,16,2,0,0,7);ctx.fill()});
+  // Crooked tail, heavy hips, plated shoulders, and a forward jaw make the
+  // silhouette read as one animal rather than a large abstract token.
+  poly([[-17,8],[-13,3],[-9,1],[-7,-7],[-1,-12],[7,-9],[10,-4],[9,6],[5,10],[-5,11],[-8,7],[-12,10]],hide);
+  poly([[-9,0],[-7,-9],[-2,-14],[5,-12],[9,-7],[7,2],[2,6],[-5,5]],mid);
+  for(let i=0;i<4;i++){const sx=-7+i*4;poly([[sx,-9],[sx+2,-18+(i%2)*2],[sx+4,-9]],i%2?CYAN:'#a0c48e')}
+  // Head and readable expression.
+  poly([[3,-11],[10,-13],[15,-9],[16,-4],[12,0],[5,-1]],'#6f987c');rect(7,-10,2,2,roar?CREAM:GOLD);
+  if(roar){rect(10,-6,6,5,'#181318');rect(11,-5,5,1,CORAL);rect(11,-2,1,2,CREAM);rect(14,-2,1,2,CREAM)}else{rect(11,-6,5,3,'#3c6256');rect(13,-5,3,1,'#17231f')}
+  // Alternating stomp and attack recoil.
+  const reach=attack?3:0;rect(4,-1,4,8,'#426f62');rect(7,5+reach,7,3,'#31564e');rect(-6,-1,4,8,'#426f62');rect(-11,5-reach,7,3,'#31564e');
+  rect(-7,6+(gait?1:0),6,6,'#294a48');rect(3,6+(gait?0:1),7,6,'#294a48');rect(-8,10+(gait?1:0),7,2,'#172c2d');rect(4,10+(gait?0:1),8,2,'#172c2d');ctx.restore()}
+function drawDecoy(){if(!decoy)return;const pulse=8+(showFrame%42)*.28;alpha(.13,()=>{rect(decoy.x-1,43,2,278,GOLD);rect(1,decoy.y-1,158,2,GOLD)});alpha(.22,()=>{ctx.strokeStyle=GOLD;ctx.beginPath();ctx.arc(decoy.x,decoy.y,pulse,0,7);ctx.stroke();ctx.beginPath();ctx.arc(decoy.x,decoy.y,pulse*.55,0,7);ctx.stroke()});if(!actorAllowed(decoy.id))return;const x=Math.round(decoy.x),y=Math.round(decoy.y);rect(x-5,y+4,10,3,'#292d35');poly([[x-4,y+4],[x,y-7],[x+4,y+4]],'#6b5940');rect(x-1,y-8,2,10,GOLD);rect(x-4,y-6,8,2,CORAL);rect(x-2,y-10,4,3,CREAM)}
+function drawRoutes(){if(globalThis.__KC_HIDE_ROUTE)return;if(route.length&&task){const pts=[[hero.x,hero.y],...route.map(n=>{const p=pos(n);return[p.x,p.y]})];line(pts,act.phase==='warn'?GOLD:MINT,1,[3,3]);const q=pos(task.node);ctx.strokeStyle=act.phase==='warn'?GOLD:MINT;ctx.strokeRect(q.x-5.5,q.y-5.5,11,11)}
+  if(kaijuRoute.length){const pts=[[kaiju.x,kaiju.y],...kaijuRoute.map(n=>{const p=pos(n);return[p.x,p.y]})];line(pts,CORAL,1,[2,4]);for(let i=1;i<pts.length;i+=2){const p=pts[i];poly([[p[0]-2,p[1]-2],[p[0]+3,p[1]],[p[0]-2,p[1]+2]],CORAL)}}}
+function drawAct(){if(act.phase==='calm'||act.phase==='spent')return;const p=pos(act.strikeNode),pulse=.35+.25*Math.sin(showFrame*.18);if(act.phase==='warn'){alpha(.08+pulse*.06,()=>rect(0,42,W,280,GOLD));
+    for(let i=0;i<5;i++){const r=9+i*7+((showFrame-act.warnAt)*.12%7);alpha(.18,()=>{ctx.strokeStyle=GOLD;ctx.beginPath();ctx.arc(p.x,p.y,r,0,7);ctx.stroke()})}rect(29,49,102,14,'rgba(8,9,14,.9)');ctx.fillStyle=GOLD;ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.fillText((act.type==='surge'?'SURGE':act.type==='aftershock'?'AFTERSHOCK':'BLACKOUT')+' // '+Math.ceil((act.landAt-showFrame)/60),80,59);ctx.textAlign='left'}
+  else{alpha(.10,()=>rect(0,42,W,280,act.type==='blackout'?VIOLET:CORAL));if(act.type==='surge')for(let y=48;y<322;y+=18){const x=(showFrame*1.4+y*3)%160;rect(x,y,18,1,CYAN)}
+    else if(act.type==='aftershock')for(let y=54;y<318;y+=24){rect(0,y,W,1,y%48?CORAL:GOLD)}else for(let i=0;i<9;i++){const x=8+i*19;rect(x,48,1,270,i%2?VIOLET:'#29325b')}}}
+function drawPayoff(){if(!pres.cue)return;if(pres.cue.tier===3){alpha(.10,()=>rect(0,42,W,280,GOLD));ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,44.5,155,275);const sweep=4+mod(Math.floor(pres.t*3.4),152);alpha(.34,()=>{rect(sweep,48,2,266,GOLD);rect(W-sweep-2,48,2,266,MINT)});for(let i=0;i<16;i++){const x=7+hash(i,pres.cue.startAt||showFrame)*146,y=55+hash(i+33,showFrame>>2)*245;rect(x,y,2,3,i%2?GOLD:MINT)}}}
+function drawForeground(){rect(0,318,W,5,INK);for(let x=0;x<W;x+=16)poly([[x,318],[x+8,312],[x+16,318]],palette.shadow);rect(0,42,3,278,palette.shadow);rect(157,42,3,278,INK);
+  if(palette.kind==='harbor'){rect(151,48,3,255,'#5d665b');for(let y=54;y<300;y+=15)line([[151,y],[158,y+8]],'#91a08a',1)}else if(palette.kind==='old'){for(const x of[5,151]){rect(x,48,2,258,'#3f2627');for(let y=55;y<300;y+=21)rect(x-2,y,6,3,palette.glass)}}else{line([[2,57],[158,92]],'#343d67',2);for(let x=12;x<155;x+=24)rect(x,58+x*.22,3,3,palette.glass)}}
+function conditionLabel(){const c=districtCondition();return c.standing===5?'CITY STABLE':c.standing>=4?'CITY STRAINED':c.standing>=3?'CITY WOUNDED':'CITY FALLING'}
+function drawHud(){rect(0,0,W,42,INK);rect(4,4,152,18,'#111b25');rect(6,6,3,14,palette.accent);ctx.fillStyle=CREAM;ctx.font='bold 9px monospace';ctx.fillText('KAIJU CONTROL',13,14);ctx.font='5px monospace';ctx.fillStyle=palette.accent;ctx.fillText(palette.name+' // '+palette.code,13,20);
+  rect(4,25,152,14,'#111923');ctx.fillStyle='#80919e';ctx.fillText('CITY',8,31);ctx.fillStyle=conditionLabel()==='CITY STABLE'?MINT:conditionLabel()==='CITY FALLING'?CORAL:GOLD;ctx.font='bold 6px monospace';ctx.fillText(conditionLabel(),8,37);ctx.fillStyle='#80919e';ctx.font='5px monospace';ctx.fillText('EVAC',88,31);ctx.fillStyle=CREAM;ctx.font='bold 6px monospace';ctx.fillText(stats.evacuated+' SAFE',88,37);ctx.fillStyle=persona.color;ctx.textAlign='right';ctx.fillText(persona.name,152,16);ctx.textAlign='left';
+  rect(0,322,W,38,INK);rect(4,325,152,31,'#101923');rect(7,328,2,23,task&&task.kind==='decoy'?GOLD:MINT);ctx.fillStyle='#758997';ctx.font='5px monospace';ctx.fillText('LIVE TRIAGE',13,334);ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';const tactic=hero.intent&&hero.intent.tactic||task&&task.tactic||'SCAN THE CITY';ctx.fillText(tactic.slice(0,23),13,343);ctx.font='5px monospace';ctx.fillStyle=kaiju.targetKind==='decoy'?GOLD:CORAL;ctx.fillText(kaiju.targetKind==='decoy'?'KAIJU → DECOY':'IMPACT → '+String(kaiju.targetId||'').toUpperCase(),13,351);ctx.textAlign='right';ctx.fillStyle=CYAN;ctx.fillText('C'+hero.cargo+'  D'+stats.decoyHits+'  R'+stats.repairs,151,351);ctx.textAlign='left';
+  if(pres.cue){const c=pres.cue.tier===3?GOLD:pres.cue.tier===2?MINT:CREAM;rect(20,326,120,20,'rgba(6,9,13,.94)');ctx.strokeStyle=c;ctx.strokeRect(20.5,326.5,119,19);ctx.fillStyle=c;ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.fillText(String(pres.cue.tag||pres.cue.id).slice(0,24),80,339);ctx.textAlign='left'}drawSession(false)}
+function drawTransition(){if(state!=='transition')return;const t=transitionT/150;alpha(.72*(1-Math.abs(t-.5)*1.2),()=>rect(0,42,W,280,INK));ctx.fillStyle=transitionT>70?palette.accent:GOLD;ctx.textAlign='center';ctx.font='bold 9px monospace';ctx.fillText(transitionT>70?'DISTRICT REPORT':'NEXT RESPONSE ZONE',80,162);ctx.font='6px monospace';ctx.fillStyle=CREAM;ctx.fillText(conditionLabel(),80,175);ctx.textAlign='left'}
+function render(){drawBackdrop();drawRoads();drawParcels();drawDistrictLandmark();drawCityProps();drawDamage();drawRoutes();for(const b of buildings)drawBuilding(b);for(let i=0;i<groups.length;i++)drawGroup(groups[i],i);drawDecoy();preDraw();drawAct();drawHero();drawKaiju();drawParts();postDraw();drawPayoff();drawForeground();
+  for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/18);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,30,130),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;drawTransition();drawHud()}
+
+// ---- probes and deterministic visual fixtures --------------------------------
+function finite(){return[showFrame,runFrame,district,districtClock,hero.x,hero.y,hero.moveT,hero.actionT,hero.cargo,kaiju.x,kaiju.y,kaiju.moveT,kaiju.stun,
+  ...buildings.flatMap(b=>[b.x,b.y,b.hp,b.flash]),...groups.flatMap(g=>[g.remaining,g.panic]),decoy?decoy.t:0].every(Number.isFinite)}
+function simSignature(){return JSON.stringify({runFrame,worldSeed,skillSeed,district,districtClock,state,transitionT,persona:persona.name,
+  hero:[hero.node,hero.from,hero.to,round(hero.x),round(hero.y),hero.moveT,hero.moveDur,hero.face,hero.cargo,hero.cargoIds,hero.actionT,hero.brace,hero.stun,hero.pose,hero.intent],
+  kaiju:[kaiju.node,kaiju.from,kaiju.to,round(kaiju.x),round(kaiju.y),kaiju.moveT,kaiju.moveDur,kaiju.face,kaiju.stun,kaiju.attackT,kaiju.roarT,kaiju.targetKind,kaiju.targetId,kaiju.step],
+  buildings:buildings.map(b=>[b.id,b.hp,b.power,b.flash,b.lost]),groups:groups.map(g=>[g.id,g.remaining,g.picked,g.evacuated,g.panic]),decoy:decoy&&[decoy.id,decoy.node,decoy.t],decoyCooldown,
+  route,kaijuRoute,task,act:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.strikeNode],stats:{...stats},events:eventSerial,progress:progressSerial})}
+function physicalSignature(){return JSON.stringify([round(hero.x,5),round(hero.y,5),hero.node,hero.to,hero.moveT,hero.intent&&hero.intent.next,hero.intent&&hero.intent.tactic,route.slice(0,5),round(kaiju.x,5),round(kaiju.y,5)])}
+function probe(){return{showFrame,runFrame,worldSeed,skillSeed,district,districtName:palette.name,districtClock,state,persona:persona.name,finite:finite(),
+  hero:{node:hero.node,x:hero.x,y:hero.y,cargo:hero.cargo,pose:hero.pose,intent:hero.intent&&{...hero.intent}},kaiju:{node:kaiju.node,x:kaiju.x,y:kaiju.y,targetKind:kaiju.targetKind,targetId:kaiju.targetId,stun:kaiju.stun},
+  buildings:buildings.map(b=>({id:b.id,kind:b.kind,hp:b.hp,power:b.power,lost:b.lost,node:b.node})),groups:groups.map(g=>({...g})),decoy:decoy&&{...decoy},route:route.slice(),kaijuRoute:kaijuRoute.slice(),task:task&&{...task},
+  act:{phase:act.phase,type:act.type,warnAt:act.warnAt,landAt:act.landAt,endAt:act.endAt,strikeNode:act.strikeNode,notes:actNotes.slice()},stats:{...stats},events:eventSerial,progress:progressSerial,
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),show:SHOW.probe()}}
+function actorProbe(){const out=[{id:'civic-1',kind:'responder',type:hero.pose,box:{x:hero.x-11,y:hero.y-11,width:22,height:22}},
+  {id:'kaiju',kind:'boss',type:kaiju.attackT?'attack':kaiju.stun?'stunned':'walk',box:{x:kaiju.x-17,y:kaiju.y-20,width:34,height:34}}];
+  for(const b of buildings)out.push({id:'building-'+b.id,kind:'structure',type:b.kind,box:{x:b.x-11,y:b.y-13,width:22,height:24}});
+  for(const g of groups)if(g.remaining)out.push({id:g.id,kind:'civilian-group',type:g.panic?'panic':'waiting',box:{x:pos(g.node).x-8,y:pos(g.node).y-9,width:16,height:19}});
+  if(decoy)out.push({id:decoy.id,kind:'structure',type:'decoy',box:{x:decoy.x-6,y:decoy.y-11,width:12,height:18}});return out}
+function visualProbe(){return{fixture:visualFixture,finite:finite(),district,districtName:palette.name,condition:conditionLabel(),act:act.phase,cue:pres.cue&&pres.cue.id,routePoints:route.length+1,kaijuRoutePoints:kaijuRoute.length+1,
+  actors:actorProbe(),layout:{playfield:{...WORLD},approaches:[{id:'kaiju-runway',axis:'y',visibleSpawn:Y[0],contact:Y[5],goal:Y[6],reported:(Y[5]-Y[0])/(Y[6]-Y[0])}]},
+  heroBox:{x:hero.x-11,y:hero.y-11,width:22,height:22},kaijuBox:{x:kaiju.x-17,y:kaiju.y-20,width:34,height:34},buildingBox:buildings[0]?{x:buildings[0].x-11,y:buildings[0].y-13,width:22,height:24}:null,
+  evacuated:stats.evacuated,repairs:stats.repairs,decoy:!!decoy,standing:buildings.filter(b=>!b.lost).length}}
+function placeAt(body,n){const p=pos(n);Object.assign(body,{node:n,from:n,to:n,x:p.x,y:p.y,moveT:0,moveDur:0})}
+function visualPrime(stage){district=stage;palette=DISTRICTS[district];makeDistrict(false);visualFixture='fixture';act.phase='calm';act.warnAt=showFrame+999999;districtClock=1200;texts=[];SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+  placeAt(hero,node(4,1));placeAt(kaiju,node(0,3));setKaijuTarget(buildings.find(b=>b.kind==='school'));task=null;route=[];setTask(smartTask())}
+function setVisualBeat(name){const allowed=['opening','triage-plan','evacuation','decoy','kaiju-danger','warning-calm','warning','act-land','later','recovery','apex','scale-contract'];if(!allowed.includes(name))return false;visualFixture=name;
+  if(name==='later'||name==='recovery'||name==='apex')visualPrime(2);else if(name==='warning-calm'||name==='warning'||name==='act-land')visualPrime(1);else visualPrime(0);visualFixture=name;
+  if(name==='opening'){placeAt(hero,shelter().node);task=null;route=[];setTask(smartTask())}
+  else if(name==='triage-plan'){placeAt(hero,node(5,1));const g=groups[0];setTask(taskObject('evac',g.id,g.node,'EVACUATE '+buildingById(g.buildingId).label));setKaijuTarget(buildingById(g.buildingId))}
+  else if(name==='evacuation'){const g=groups[0];g.remaining=0;g.picked=true;hero.cargo=4;hero.cargoIds=[g.id];placeAt(hero,node(4,2));setTask(taskObject('drop',shelter().id,shelter().node,'CLEAR THE EVAC CORRIDOR'));hero.moveT=12;hero.moveDur=24;hero.from=hero.node;hero.to=route[0]||hero.node}
+  else if(name==='decoy'){const n=node(5,2),p=pos(n);decoy={id:'beacon-visual',node:n,x:p.x,y:p.y,t:9999};stats.decoys=1;setKaijuTarget(decoy);setTask(taskObject('patrol','shelter',shelter().node,'WATCH THE DIVERSION'))}
+  else if(name==='kaiju-danger'){const b=buildings.find(q=>q.kind==='school');placeAt(kaiju,b.node);kaiju.targetId=b.id;kaiju.attackT=80;kaiju.roarT=45;b.hp=1;b.power=false;groups.find(g=>g.buildingId===b.id).panic=120;hero.stun=9999;hero.pose='hurt';task=null;route=[]}
+  else if(name==='warning-calm'||name==='warning'){placeAt(hero,node(3,1));task=null;route=[];if(name==='warning'){act.phase='warn';act.warnAt=showFrame-60;act.landAt=showFrame+180;setTask(taskObject('brace',gridBuilding().id,gridBuilding().node,'BRACE THE SUBSTATION'))}else setTask(smartTask())}
+  else if(name==='act-land'){act.phase='live';act.landAt=showFrame-1;act.endAt=showFrame+700;for(const b of buildings){b.power=false;if(b.kind==='grid'||b.kind==='water')b.hp=1}placeAt(hero,gridBuilding().node);hero.pose='repair';hero.brace=true;task=taskObject('brace',gridBuilding().id,gridBuilding().node,'KEEP THE LIGHTS ON')}
+  else if(name==='later'){for(const b of buildings)b.power=false;buildings[0].lost=true;buildings[0].hp=0;buildings[1].hp=1;buildings[2].lost=true;buildings[2].hp=0;buildings[4].hp=1;for(const g of groups){g.panic=120;if(g.id==='ward-1')g.remaining=1}act.phase='live';act.type='blackout';act.endAt=showFrame+700;setTask(smartTask())}
+  else if(name==='recovery'){for(const b of buildings){b.hp=3;b.power=true;b.lost=false}for(const g of groups){g.remaining=0;g.picked=true;g.evacuated=true}stats.evacuated=12;stats.repairs=4;placeAt(hero,gridBuilding().node);hero.pose='repair';task=taskObject('patrol','shelter',shelter().node,'WATCH THE WINDOWS RELIGHT')}
+  else if(name==='apex'){for(const g of groups){g.remaining=0;g.picked=true;g.evacuated=true}stats.evacuated=12;offer('district-safe',3,80,170,'DISTRICT SURVIVES');fxBurst(80,170,42,GOLD,3.2,.025);for(const b of buildings)fxBurst(b.x,b.y,9,MINT,1.8,.015);task=taskObject('patrol','shelter',shelter().node,'WATCH THE WINDOWS RELIGHT')}
+  else if(name==='scale-contract'){const n=node(5,2),p=pos(n);decoy={id:'beacon-scale',node:n,x:p.x,y:p.y,t:9999};placeAt(hero,node(4,1));placeAt(kaiju,node(0,3));setKaijuTarget(buildings.find(b=>b.kind==='school'));task=null;route=[];setTask(smartTask())}
+  return true}
+function actFixture(){visualFixture='';act.phase='calm';act.warnAt=showFrame+1;act.landAt=showFrame+241;act.endAt=showFrame+961;task=null;route=[];hero.brace=false;placeAt(hero,shelter().node);return probe()}
+
+globalThis.__kaijuControlProbe=probe;
+globalThis.__kaijuControlSignature=simSignature;
+globalThis.__kaijuControlPhysical=physicalSignature;
+globalThis.__kaijuControlVisualProbe=visualProbe;
+globalThis.__kaijuControlSetVisualBeat=setVisualBeat;
+globalThis.__kaijuControlActFixture=actFixture;
+globalThis.__kaijuControlPlannerFixture=()=>{const before=simSignature(),a=smartTask(),mid=simSignature(),b=smartTask(),after=simSignature();return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),task:a,finite:finite()}};
+globalThis.__kaijuControlIntentFixture=()=>{const ai=rawBotIntent(),old={left:keys.left,right:keys.right,up:keys.up,down:keys.down,a:keys.a,b:keys.b,c:keys.c};keys.right=true;const human=humanIntent();Object.assign(keys,old);return{ai,human,aiKeys:Object.keys(ai).sort(),humanKeys:Object.keys(human).sort()}};
+globalThis.__kaijuControlAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture',tier:3},t:1,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const admired=rawBotIntent();globalThis.__NO_ADMIRE=1;const gated=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired,gated}};
+globalThis.__kaijuControlNextRandom=()=>E.random();
+globalThis.__soakProbe=()=>({sig:[Math.round(hero.x*10),Math.round(hero.y*10),hero.node,hero.moveT,Math.round(kaiju.x*10),Math.round(kaiju.y*10),kaiju.node,kaiju.moveT,district,state].join('|'),events:eventSerial,progress:progressSerial,finite:finite()});
+
+initSession('kaiju-control',[["ARROWS / WASD","DISPATCH"],["SPACE / X","WORK"],["ESC","AUTOPILOT"]],{viewer:true});
+resetRun(true);start(step,render);
+</script>
+</html>

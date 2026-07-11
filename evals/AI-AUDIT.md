@@ -706,6 +706,54 @@ occasional disastrous fifth instructions.
 Permanent switches: `__NO_FORECAST`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
+## Disaster-triage addition: KAIJU CONTROL (2026-07-10)
+
+**KAIJU CONTROL** tells a rampage from the city's side. A tiny emergency rig
+publishes its evacuation, repair, grid-bracing, and decoy route while one
+sanctioned set-piece kaiju publishes a separate impact path. Civilians and
+critical buildings remain small; the persistent city state is the scorecard as
+windows darken, rubble and smoke accumulate, and repaired neighborhoods relight.
+
+- **Forecast triage wins without killing the drama.** `__NO_TRIAGE_PLAN`
+  restores an honest nearest-urgent-task policy that can evacuate, repair, and
+  deploy a late decoy but cannot compare response time with kaiju impact time or
+  react to an act warning. Across twelve paired ten-minute seeds the forecast
+  policy won 12/12: aggregate triage score 10,564 vs 9,085 (+16.3%), 864 vs 809
+  civilians evacuated, and zero vs 55 casualties. The baseline remained fully
+  active (18..26 attacks, 10..13 decoy hits, 27..34 repairs), so the panel does
+  not compare against a crippled bot.
+- **Human-flavored emergency command.** Guardian, Engineer, and Trickster
+  personas reweight the same pure task model; a private `AI.skillProfile` RNG
+  adds reaction delay and visible route-recheck lapses behind `__NO_LAPSE`.
+  Human and bot emit the same six-field intent through `AI.controllerMux` and
+  one `applyIntent`/graph-motion path. Planner purity, repeatability, engine-RNG
+  non-consumption, replay/render parity, and payoff-FX simulation no-op are
+  executable fixtures.
+- **Acts change the plan before impact.** Surge, aftershock, and blackout fronts
+  warn for exactly 240 viewer frames. CIVIC-1 physically reroutes on the first
+  warning frame to brace the grid or, on a deterministic honest misread, clear
+  the evacuation underpass. `__NO_ACTS` removes both notes and that route change.
+  Tier order is strict and every district apex consumes exactly 6 hold / 24 slow
+  / 48 admire frames; `__NO_ADMIRE` gates only the bot pause.
+- **Measured watchability.** Thirty fixed ten-minute seeds
+  (`0x6c000 + i*137`) all evacuated 72 civilians and saved five completed
+  districts, with 3..11 kaiju attacks, 21..27 successful diversions, 3..15
+  repairs, 4..6 act saves, 1..9 lapses, 111..124 events, and 101..109 progress
+  marks. All runs were finite with zero invisible rescues, building losses, or
+  casualties; the shipping soaks stayed within 2s still, 16s quiet, and 17s
+  without story progress.
+- **Authored city and scale proof.** Tideward Harbor uses warehouses, tidewall,
+  piers, and a crane; Lantern Row opens around tram rails and a clock plaza;
+  Crown Grid rebuilds around glass parcels, an atrium, and monorail. Real-pixel
+  isolation measures CIVIC-1 at 16x17px, the kaiju at 32x31px, every civic
+  structure at or below 24x24px, sampled combined footprint at about 10.3%, and
+  visible kaiju runway at 80.4%. The hash-bound native montage compares ten
+  semantic beats against MACHINE HUNT and BLOCK MINE, and a final 60-second
+  rendered clip preserves the inspected result.
+
+Permanent switches: `__NO_TRIAGE_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
+`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

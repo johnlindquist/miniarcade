@@ -11,24 +11,24 @@ const fail=m=>{console.error('  FAIL:',m);failed=true;};
 
 console.log(`manifest: ${games.length} unique games`);
 const ids=new Set(games.map(g=>g.id));
-if(games.length!==26||ids.size!==games.length)fail('manifest must contain twenty-six unique game ids');
+if(games.length!==27||ids.size!==games.length)fail('manifest must contain twenty-seven unique game ids');
 for(const game of games)if(!/^[a-z0-9-]+$/.test(game.id)||!game.title||!game.label||!game.tagline||!game.tone)
   fail(`malformed manifest entry: ${JSON.stringify(game)}`);
 
 const index=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
 if(!index.includes('games.js'))fail('gallery does not load the shared manifest');
 if(!index.includes("sidequest:active"))fail('gallery does not manage preview visibility');
-if(!index.includes('Twenty-six tiny, self-playing retro games')||!index.includes('twenty-six tiny games'))
+if(!index.includes('Twenty-seven tiny, self-playing retro games')||!index.includes('twenty-seven tiny games'))
   fail('gallery count copy is stale');
-if(!index.includes('>01 / 26</output>')||index.includes('>01 / 25</output>'))
+if(!index.includes('>01 / 27</output>')||index.includes('>01 / 26</output>'))
   fail('gallery position count is stale');
 if(!index.includes('.ss{--accent:'))fail('Scrap Shift gallery tone is missing');
-for(const tone of ['mb','gs','wr','gg','sk','sv','ng','pc','fc','tp','bb','rc','rr','cc','hh'])if(!index.includes(`.${tone}{--accent:`))fail(`${tone} gallery tone is missing`);
+for(const tone of ['mb','gs','wr','gg','sk','sv','ng','pc','fc','tp','bb','rc','rr','cc','hh','kc'])if(!index.includes(`.${tone}{--accent:`))fail(`${tone} gallery tone is missing`);
 const manifestBytes=fs.readFileSync(path.join(ROOT,'games.js'));
 const manifestHash=crypto.createHash('sha256').update(manifestBytes).digest('hex').slice(0,8);
 if(!index.includes(`games.js?v=${manifestHash}`))fail(`gallery cachebuster does not match games.js (${manifestHash})`);
 const readme=fs.readFileSync(path.join(ROOT,'README.md'),'utf8');
-if(!readme.includes('Twenty-six self-playing'))fail('runtime README count is stale');
+if(!readme.includes('Twenty-seven self-playing'))fail('runtime README count is stale');
 
 console.log('headless smoke: 600 steps plus one render per game');
 for(const [i,game]of games.entries()){
