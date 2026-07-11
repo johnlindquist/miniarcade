@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "game": "robo-rally",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "c16f4675dcaf72b3fc303fec792d28657bdf28714482cf715faf5ae80f7da35c",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "seed": "0xa100",
+  "checkpoints": [
+    "opening@8",
+    "program-reveal@12",
+    "execution@12",
+    "pileup@6",
+    "warning@12",
+    "later@12",
+    "last-card@6",
+    "apex@6"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native size BRASS, NOVA, PATCH, and VEX remain distinct boiler, comet, salvage, and spider silhouettes with separate heads, faces, limbs or wheels, facing, gait, recoil, and panic poses. Their measured extents are 16-19 by 16-20 pixels, matching the references' small-character discipline without reading as tokens."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The HUD-hidden course still reads as a built place: panel seams, embedded lights, side machinery, finish gantry, conveyors, crushers, oil, turrets, pits, fans, and foreground rails create layered industrial space. Foundry stacks, refinery tanks and pipes, and skydock stars and cranes each establish a specific material world."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "EMBER FOUNDRY, ACID REFINERY, and ORBIT SKYDOCK rebuild hazard placement, side silhouettes, landmarks, floor grammar, and negative space rather than applying palette swaps. Opening-to-skydock structure distance measures 0.38001, and the later course is immediately recognizable in the native montage."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The sequence has authored anticipation and follow-through: real queues reveal, paths pulse, cards lock, four racers execute together, limbs cycle, weapons recoil, crushers move, impacts spin bodies, the final laser crosses the board, and the finish opens into a staged banner and three-source confetti. Aligned NOVA frames change 41-52 percent of its crop."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The five exact instructions for all four racers remain readable in the broadcast deck at 160x360, while matching colored numbered paths put intent on the course. Current-register highlights, compact silhouettes, high-value hazards, warning tint, and the uncluttered 5.8-6.6 percent actor footprint preserve forecastability beside video."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Broadcast circuitry, riveted track materials, tiny toy-like racers, hazard lights, instruction glyphs, dashed forecasts, sparks, and checkered course unlocks share one compact retro-industrial language. The three arenas vary mood while keeping the same authored production grammar."
+    }
+  },
+  "renderReceipt": {
+    "seed": "0xa100",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 2541227,
+    "sha256": "9f3715109ab6af34fb06c79acd6fb9a3ff5baf3a1f8e7b9c5cdf3b0aa5013a7b",
+    "command": "node render/render.js robo-rally 30 .artifacts/visual/robo-rally/robo-rally-30s.mp4 --seed 41216 --probe --fps 30"
+  }
+}

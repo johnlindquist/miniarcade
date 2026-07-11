@@ -536,6 +536,58 @@ and rain knocks down. Size is a real planning dimension, not a costume.
 Permanent switches: `__NO_SIZE_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
+## Genre-fusion addition: ROBO RALLY (2026-07-10)
+
+**ROBO RALLY** crosses Mario Kart with programmable robots. Four tiny racers
+publish five real registers in a broadcast deck, project the same queues onto
+the course, then execute together through conveyors, crushers, oil, pits,
+turrets, weapons, and one another. The reveal is the drama engine: a viewer can
+call the collision before the cards lock, while skill-profile misreads preserve
+occasional disastrous fifth instructions.
+
+- **Copied-state pileup forecast** (`__NO_FORECAST` restores the measured
+  hazard-blind program release) scores a fixed library of five-card programs
+  against board geometry, future crusher timing, telegraphed acts, and the
+  other three published queues. It is pure, repeatable, and consumes no engine
+  RNG. Across eight permanent paired five-minute seeds it won 8/8: aggregate
+  score 26,492 vs 6,281 and 249 vs 62 flags, while both policies remained in
+  the same collision, wipeout, lapse, act, event, and progress bands. Register
+  and conveyor outcomes are snapshot-resolved and invariant to racer-array
+  order; a robot struck in a register still completes its already locked card.
+- **One simultaneous physics path.** Human and bot controllers emit the same
+  nine-field register intent through `AI.controllerMux`; `applyIntent` handles
+  every turn, move, brake, and shot before collision arbitration. Four
+  independently seeded `AI.skillProfile` instances provide reaction delay and
+  short visible program misreads behind `__NO_LAPSE`. The four personas are
+  authored silhouettes rather than color swaps: BRASS boiler, NOVA comet,
+  PATCH salvage bot, and VEX spider chassis.
+- **Acts and show discipline.** CRUSHER RUSH and POLARITY FLIP begin only at a
+  program reveal, so the warning changes a real published queue and applied
+  register before it lands. Paired fixtures first diverge at 231f and 183f of
+  their exact 240f warnings. Tier 1 collisions/hazards, tier 2 gates/pileups,
+  and tier 3 course unlocks stay strictly ordered; each apex consumes exactly
+  6 hold / 24 slow / 48 admire frames. `__NO_ADMIRE` gates only the pause and
+  `__NO_PAYOFF_FX` is byte-identical simulation.
+- **Measured watchability.** Twenty fixed ten-minute seeds
+  (`0xa100 + i*137`) produced 56..64 flags, 7..8 course changes, 21..59
+  collision participants, 1..11 physical three-bot pileups, 7..23 wipeouts,
+  2..10 crusher hits, 4..25 oil spins, 8..18 final-card disasters, 20..42
+  lapses, 1,068..1,181 events, and 700..782 progress marks. Shipping soaks
+  stayed finite with zero invisible rescues, at most 5s still, 3s quiet, and
+  6s without progress.
+- **Authored visual proof.** Ember Foundry, Acid Refinery, and Orbit Skydock
+  rebuild side architecture, landmarks, material grammar, hazards, and negative
+  space. The real-pixel gate isolates every racer and placed structure: drawn
+  racers measure 16..19 by 16..20px, crushers 16 by 19..20px, sampled combined
+  footprint is 3.8..6.6%, and the visible approach runway is 72.7%. It also
+  verifies aligned locomotion, program-deck state, a 0.380 course-structure
+  delta, warning/pileup/final-card/apex frames, a native MACHINE HUNT / BLOCK
+  MINE contact sheet, a rendered clip receipt, and a hash-bound six-category
+  semantic review.
+
+Permanent switches: `__NO_FORECAST`, `__NO_ACTS`, `__NO_ADMIRE`,
+`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board
