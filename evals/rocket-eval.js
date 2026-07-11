@@ -306,6 +306,22 @@ globalThis.__straightenFixture=()=>{ // slide, then center the wheel with the
   }
   return{minSpeed,released:rel};
 };
+globalThis.__skidFixture=()=>{ // owner bug 2026-07-11: skid rubber laid
+  // before a goal froze mid-field through the replay (launched cars stop
+  // running advanceCar, and expired marks drew with an ignored negative
+  // alpha). Lay rubber, blast a goal, run the real pipeline: every surviving
+  // sample must still be inside its 34f fade window (+slow-mo overshoot).
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:60,y:180,a:0,vx:2.2,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  for(let i=0;i<12;i++)advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+  const laid=c.skid.length;
+  Object.assign(ball,{x:80,y:FL.y0-11,vx:0,vy:-1});ballStep(); // top goal
+  for(let i=0;i<50;i++)step(); // goal blast, launch tumble, slow-mo replay
+  const ages=cars.flatMap(cc=>cc.skid.map(s=>frame-s.f));
+  return{laid,launched:c.launch>0,maxAge:ages.length?Math.max(...ages):0};
+};
 globalThis.__boostGateFixture=slip=>{ // boost-out means physically caught:
   // an open window must refuse to fire while |slip| says momentum is elsewhere
   resetGame();state='play';
@@ -416,6 +432,15 @@ globalThis.__boostGateFixture=slip=>{ // boost-out means physically caught:
     fail(`straightening with powerslide held bled cruise speed to ${straighten.minSpeed.toFixed(2)}`);
   if(straighten.released<0)
     fail('the drift latch never released after the car straightened out');
+  // skid rubber retires through the goal blast: launched cars must not carry
+  // frozen full-bright marks through the replay (owner bug 2026-07-11)
+  const skidFx=g.sandbox.__skidFixture();
+  console.log(`  goal-blast skids: ${skidFx.laid} samples laid, launched ${skidFx.launched}, `+
+    `oldest surviving ${skidFx.maxAge}f (fade window 34f)`);
+  if(skidFx.laid<10)fail('skid fixture never laid rubber before the goal');
+  if(!skidFx.launched)fail('skid fixture goal never launched the drifting car');
+  if(skidFx.maxAge>36)
+    fail(`a skid sample survived ${skidFx.maxAge}f into the goal replay — stale rubber freezes mid-field again`);
   // same-seed A/B: drift bot vs ablated bot must diverge during live play,
   // and the ablated run must never record a drift start
   const a=bootGame('rocket',{seed:0x710301,footer:FOOTER});
