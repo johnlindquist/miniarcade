@@ -6,54 +6,39 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "1f3dccab1f8ffae0599821979ac6ba3785d3a041c06c1429dced824cc5201b6f",
+  "montageSha256": "90464b0ee8f28fec19a5d2e99eba8d3b6f3a683783c38e06a91332e7dcbd341e",
   "reviewedAt": "2026-07-10",
   "reviewer": "Codex native-size reference review",
-  "pairedBeforeAfter": {
-    "seed": "0x6501",
-    "checkpoints": [
-      1,
-      40,
-      368,
-      432,
-      600,
-      1250,
-      1522,
-      1762,
-      3600
-    ],
-    "montageSha256": "0c6cebd18bbc14bf1edd0a56662645fd92b017735616d7f8a8ab8a8991bbbfff"
-  },
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the courier has a constructed head, coat, arms, alternating legs, facing, weighted side bag, access-card hand, alert lean, close-call streak, and raised-arm delivery pose. Patrol drones have rotors, antenna, lens, chassis, and feet; chase drones compress into a coral armored silhouette with alert fins. Both actor families meet the reference floor."
+      "note": "At 160x360 the courier has a constructed head, coat, arms, gait, facing, weighted bag, a deliberate room-reading scan, pulse posture, alert lean, and delivery pose. Sentries have rotors, antenna, lens, chassis, patrol and coral chase silhouettes, gold cutoff state, and a visibly sparking stun response. Both actor families meet the reference floor."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Vault-steel caps, recessed floor plates, conduit, grilles, glass runs, furnace panels, vents, vault hatch, framed doors, exit hardware, light pools, scan light, fans, and drifting dust create a layered facility without relying on the HUD. The material density and landmark craft meet both reference worlds."
+      "note": "Vault-steel caps, recessed floor plates, circuit traces, rune seals, relay pedestals, laser gates, grilles, glass runs, pipes, vents, light pools, shadows, and room-name stencils make the facility readable without its HUD. The material density and functional landmarks meet both reference worlds."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The same maze fixture visibly becomes Night Deposit, Glass Operations, and Furnace Vault through different wall construction, large glass diagonals, pipe and panel rhythms, lighting, trim, signage, and hardware silhouettes. Natural shifts also recarve the facility, so progression is structural rather than a palette swap and meets the reference floor."
+      "note": "Each shift is three authored chambers with a different purpose and silhouette: ordered rune room, twin-relay room, and guarded inner vault. Later-shift evidence also loads a different blueprint with new wall islands, gate axes, sight lines, materials, lighting, and landmarks, so progression is structural rather than a palette swap."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned captures show courier gait and drone rotor, bob, scan, and alert changes. Loot exposure, access-card ring and door-light sweep, close-call speed lines, sealing shutters, lockdown flash, camera kick, particles, and the staged clean-getaway banner provide anticipation, impact, and aftermath comparable to both references."
+      "note": "Aligned captures show courier gait and sentry rotor, bob, scan, cutoff, chase, and stun changes. Rune pressure lights a circuit, the completed seal opens a gate, relays energize the laser grid, the phase pulse throws a broad counter-ring, and lockdown, close-call, loot, and getaway beats all carry anticipation and aftermath."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Despite dense machinery, dark corridor channels separate traversable space from steel walls. The route uses a dark under-stroke and animated mint core; gold cases, cyan cards, purple doors, mint exit, violet patrol drones, coral chase drones, and the warm courier hold distinct focal roles at native size. HUD hierarchy and payoff banners remain readable beside video."
+      "note": "No computed route or breadcrumb line is rendered. Instead, numbered cyan sigils, violet relays, hardwired circuit traces, gate status lamps, a bracketed current interactable, scan posture, gold cases, mint exit, violet patrols, gold cutoffs, and coral chasers communicate intent and threat at native size."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The industrial pixel construction, inset cyan HUD, restrained zone palettes, recurring steel highlights, surveillance motifs, scan lighting, route grammar, and gold-coral-cyan payoff language form one authored stealth-heist identity. Its cohesion and personality clear the Machine Hunt and Block Mine comparison floor."
+      "note": "Industrial pixel construction, inset cyan HUD, restrained zone palettes, recurring steel highlights, surveillance motifs, rune-to-circuit grammar, sentry state colors, and gold-coral-cyan payoff language form one authored puzzle-heist identity that clears both reference floors."
     }
   }
 }

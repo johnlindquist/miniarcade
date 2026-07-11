@@ -1,44 +1,44 @@
 {
-  "schema": 1,
+  "schema": 2,
   "game": "wingrush",
   "verdict": "pass",
   "references": [
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "86095263631e8643d156f278dd59536c423a46ac7ff55a28b7cef1ad54825767",
+  "montageSha256": "332857c26a525590d39767e8242c3c5f6031cf714238b95416af268a1935c39e",
   "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
+  "reviewer": "Codex native-size natural-play review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the scarfed bird has a distinct helmeted silhouette, face, beak, articulated two-part wings, legs, scarf follow-through, and readable dive, soar, brace, impact, and run poses. It is at least as authored and legible as the protagonists in both references."
+      "note": "At 160x360 Courier Finch reads as a character rather than a marker: ivory head, navy torso, eye, beak, aviator cap, neck knot, feet, and short tail remain distinct. The deterministic cloth chain bends differently through climb, descent, brace, impact, and recovery without becoming a mermaid-tail silhouette."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Each frame reads as a built place without relying on the HUD: layered skies, weather, distant landmarks, midground silhouettes, terrain materials, vegetation, inhabited towers, and foreground props meet the reference-world density."
+      "note": "Layered skies and terrain frame authored floating fort rigs in the upper arena, while gold coin trails trace the ground contour below. Rotors, balloons, sails, propellers, clouds, crystals, vegetation, and distant landmarks make the world feel constructed at the reference quality bar."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Five named biomes pair different landmark compositions with nine materially different hill silhouettes and five tower structures. The native sheet shows stronger environment-to-environment distinction than a palette swap and meets both reference progressions."
+      "note": "Five sky-fort silhouettes and their changing atmospheric biomes create materially different targets rather than recolors. Ground coin routes, hill profiles, aerial ring lines, and target heights change the readable approach and recovery line across the native montage."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned character crops prove pose motion, while the tower sequence clearly moves from forecast to strike to a spatially broad physical collapse and settled aftermath. The cleaned apex keeps one focal payoff line and meets both references for impact staging."
+      "note": "The contact sheet includes one uninterrupted autoplay sequence from target lock through climb, braced contact, fort collapse, recovery, forecast, commit, touchdown, and grounded follow-through. Character pose, scarf motion, physical collapse, and landing flare meet the authored motion and impact staging of both references."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The bird, gold flight rings, selected core, terrain edge, momentum bar, and tower silhouette stay separable at native size. Impact-label coalescing and reticle suppression remove the earlier payoff clutter, meeting both references."
+      "note": "The actual fort is materially visible for most of the airborne attack; before that, a right-edge marker and distance preserve the aim. The bottom route ribbon shows terrain, coins, fort, and touchdown gate, and the natural sheet proves the forecast stays within 40px through landing."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The soft pixel storybook palette, repeated material highlights, geometric landmark language, gold reward grammar, and scarfed skybird remain coherent across all five visually distinct biomes and match the deliberate authorship of both references."
+      "note": "The soft pixel-storybook palette, ink outlines, coral scarf, gold reward grammar, geometric fort materials, and compact navy route ribbon share one deliberate visual language. The richer navigation layer supports the world without turning the game into a HUD of rectangles."
     }
   }
 }

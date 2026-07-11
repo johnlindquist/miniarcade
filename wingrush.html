@@ -10,7 +10,7 @@
   canvas:focus-visible{outline:2px solid #ffe07a;outline-offset:-3px}
 </style>
 <canvas id="cv" width="320" height="720" tabindex="0"
-  aria-label="Wingrush. A scarfed skybird dives through living hills, soars, and shatters enchanted towers."></canvas>
+  aria-label="Wingrush. A scarfed courier banks lift energy through living hills, steers across the sky, and shatters floating forts."></canvas>
 <script src="engine.js"></script>
 <script src="autoplay.js"></script>
 <script>
@@ -22,8 +22,8 @@ const{controllerMux}=AI;
 
 // WINGRUSH is a momentum story, not a projectile gallery. The same little bird
 // dives, grips a valley, opens its wings on the rising face, flies, and hits.
-const TAU=Math.PI*2,GRAV=.074,RADIUS=6,SEG=480,KNOTS=8,KSTEP=SEG/KNOTS;
-const TOWER_GAP=2000,BIOME_SPAN=SEG*96,FINAL_FRAME=54000;
+const TAU=Math.PI*2,GRAV=.064,RADIUS=6,SEG=480,KNOTS=8,KSTEP=SEG/KNOTS,FORT_SCALE=.52;
+const FIRST_FORT=680,FORT_GAP=1080,ROUTE_RANGE=960,BIOME_SPAN=SEG*96,FINAL_FRAME=54000;
 const INK='#07101a',CREAM='#fff2cf',GOLD='#ffd15c',MINT='#61e5bd',CORAL='#ff705f',CYAN='#6ddcff';
 const BIOMES=[
   {name:'SUNMEADOW',sky0:'#5bb9df',sky1:'#d9f4df',far:'#79a9a2',mid:'#4e8870',soil:'#704c38',edge:'#8fd45b',under:'#4b332d',accent:'#fff080',weather:'petals',hills:[0,1,2]},
@@ -61,11 +61,14 @@ const PERSONAS=[
 
 let showFrame=0,runFrame=0,state='run',resultT=0,worldSeed=1,camX=0,camY=0;
 let segmentCache=new Map(),knotCache=new Map();
-let bird=null,towers=[],airRings=[],towerSerial=0,plan=null,planAt=-1e9,persona=PERSONAS[0],personaIndex=0;
+let bird=null,towers=[],airRings=[],groundCoins=[],towerSerial=0,coinSerial=0,plan=null,landingPlan=null,planAt=-1e9,persona=PERSONAS[0],personaIndex=0;
+let lockedTarget=-1,scarf=null;
 let texts=[],chapter=1,lastBiome=0,lastDistanceMark=0,lastEventFrame=0,lastProgressFrame=0,eventSerial=0,progressSerial=0;
 let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false},lastOutcome='';
 const stats={launches:0,landings:0,highFlights:0,perfectLandings:0,roughLandings:0,tumbles:0,
-  impacts:0,blocksBroken:0,towersToppled:0,cores:0,boosts:0,rings:0,misses:0,lapses:0,
+  impacts:0,blocksBroken:0,towersToppled:0,cores:0,boosts:0,rings:0,coins:0,misses:0,lapses:0,
+  targets:0,targetHits:0,targetLeadTotal:0,minTargetLead:1e9,firstTargetHit:-1,airControlFrames:0,energySpent:0,
+  guidedAttempts:0,guidedLandings:0,lastLandingError:0,lastLandingHard:0,lastFlightFrames:0,microHops:0,
   acts:0,biomes:1,endings:0,events:0,progress:0,maxEventLull:0,maxProgressLull:0,
   maxSpeed:0,maxAir:0,invisibleResets:0};
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
@@ -101,17 +104,20 @@ function findCrests(a,b){
   for(let x=a+5;x<=b;x+=5){const s=terrainSlope(x);if(ps<0&&s>=0)out.push(x-2.5);ps=s;}
   return out;
 }
-function findTowerSite(raw){
-  let best=raw,bestScore=1e9;
-  for(let x=raw-120;x<=raw+120;x+=4){const s=Math.abs(terrainSlope(x)),score=s*38+terrainY(x);if(score<bestScore){bestScore=score;best=x;}}
-  return best;
+function findFortSite(raw){
+  // Floating forts do not need a flat foundation. Tie each one to the final
+  // launch crest before its slot so the real structure is visible for most of
+  // the airborne approach instead of entering only at impact.
+  const crests=findCrests(raw-360,raw-85),crest=crests.length?crests[crests.length-1]:null;
+  return crest===null?raw:clamp(crest+190,raw-80,raw+45);
 }
 
 function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score);}
 function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
 function say(s,c,x,y,t){
   x=x===undefined?bird.x:x;y=y===undefined?bird.y-18:y;
-  const priority=/TOWER DOWN|KEEP SHATTERED/.test(s)?3:/CORE|SPRING|HEART|CAGE/.test(s)?2:0;
+  const priority=/SKY FORT DOWN|KEEP SHATTERED/.test(s)?3:/CORE|SPRING|HEART|CAGE/.test(s)?2:0;
+  if(!priority&&texts.some(q=>q.payoff&&Math.abs(q.x-x)<95&&Math.abs(q.y-y)<85&&q.priority>=2))return;
   if(priority){
     const higher=texts.some(q=>q.payoff&&Math.abs(q.x-x)<95&&Math.abs(q.y-y)<85&&q.priority>priority);
     if(higher)return;
@@ -119,24 +125,68 @@ function say(s,c,x,y,t){
   }
   texts.push({s,c:c||CREAM,x,y,t:t||70,payoff:priority>0,priority});
 }
-function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function offer(id,tier,x,y,tag){if(act.phase==='warn'&&tier===3)tier=2;return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
 
-function makeBird(x){return{x,y:terrainY(x)-RADIUS,vx:1.35,vy:0,speed:1.35,grounded:true,charge:.15,wing:.15,
+function makeBird(x){return{x,y:terrainY(x)-RADIUS,vx:1.35,vy:0,speed:1.35,grounded:true,charge:.15,energy:0,ram:1.35,wing:.15,
   rot:0,pose:'skim',intent:null,lastX:x,lastY:terrainY(x)-RADIUS,airFrames:0,launchY:0,apexY:0,flightX:0,
-  hitT:0,tumbleT:0,boostT:0,combo:0,runPhase:0,stuckT:0,planTarget:0};}
+  hitT:0,tumbleT:0,boostT:0,combo:0,runPhase:0,stuckT:0,planTarget:0,flightMode:'raid',landedAtX:-1e9,guidanceAttempted:false};}
+const SCARF_NODES=6;
+function birdBodyAngle(b){
+  b=b||bird;const base=clamp(b.rot||0,-1.05,1.05);
+  if(b.pose==='tumble')return clamp(base+Math.sin(showFrame*.28)*.55,-1.15,1.15);
+  return b.grounded?clamp(base*.72,-.68,.68):base;
+}
+function scarfAnchor(){
+  const a=birdBodyAngle(),ca=Math.cos(a),sa=Math.sin(a),lx=1,ly=-2;
+  return{x:bird.x+ca*lx-sa*ly,y:bird.y+sa*lx+ca*ly};
+}
+function initScarf(){
+  if(!bird)return;const a=scarfAnchor(),v=Math.hypot(bird.vx,bird.vy)||1,tx=-bird.vx/v,ty=-bird.vy/v,nodes=[];
+  for(let i=0;i<SCARF_NODES;i++){const x=a.x+tx*i*2.8,y=a.y+ty*i*2.8;nodes.push({x,y,px:x,py:y});}
+  scarf={nodes};
+}
+function stepScarf(){
+  if(!bird)return;const anchor=scarfAnchor();
+  if(!scarf||!scarf.nodes||scarf.nodes.length!==SCARF_NODES||Math.hypot(scarf.nodes[0].x-anchor.x,scarf.nodes[0].y-anchor.y)>30){initScarf();return;}
+  const nodes=scarf.nodes,env=envAt(0),speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),
+    airX=env.wind*70-bird.vx,airY=-bird.vy-env.lift*16,airN=Math.hypot(airX,airY)||1,nx=-airY/airN,ny=airX/airN,
+    seg=2.15+clamp(speed*.06,0,.32),damp=bird.grounded?.7:.86;
+  nodes[0].x=anchor.x;nodes[0].y=anchor.y;nodes[0].px=anchor.x;nodes[0].py=anchor.y;
+  for(let i=1;i<nodes.length;i++){
+    const n=nodes[i],ox=n.x,oy=n.y,u=i/(nodes.length-1),flutter=Math.sin(showFrame*.19-i*.83)*(.025+.035*clamp(speed/5,0,1))*u;
+    n.x+=(n.x-n.px)*damp+airX*(.008+.004*u)+nx*flutter;
+    n.y+=(n.y-n.py)*damp+airY*.006+ny*flutter+.018*u;n.px=ox;n.py=oy;
+  }
+  for(let pass=0;pass<5;pass++){
+    nodes[0].x=anchor.x;nodes[0].y=anchor.y;
+    for(let i=1;i<nodes.length;i++){
+      const a=nodes[i-1],b=nodes[i],dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1,cor=(d-seg)/d;
+      if(i===1){b.x-=dx*cor;b.y-=dy*cor;}
+      else{a.x+=dx*cor*.38;a.y+=dy*cor*.38;b.x-=dx*cor*.62;b.y-=dy*cor*.62;}
+    }
+  }
+  nodes[0].x=anchor.x;nodes[0].y=anchor.y;
+  for(let i=1;i<nodes.length;i++){
+    const n=nodes[i],floor=terrainY(n.x)-1;if(n.y>floor){n.y=floor;n.py=Math.min(n.py,floor);}
+    if(![n.x,n.y,n.px,n.py].every(Number.isFinite)){initScarf();return;}
+  }
+}
 function addBlock(t,dx,dy,w,h,mat,shape,supports,hp){
+  dx*=FORT_SCALE;dy*=FORT_SCALE;w*=FORT_SCALE;h*=FORT_SCALE;
   const id=t.blocks.length,b={id,x:t.x+dx,y:t.base+dy,w,h,mat,shape:shape||'block',supports:supports||['ground'],
     hp:hp||MATERIAL[mat].hp,maxHp:hp||MATERIAL[mat].hp,broken:false,falling:false,settled:false,delay:0,vx:0,vy:0,rot:0};
   t.blocks.push(b);return id;
 }
 function addCore(t,kind,dx,dy,anchor){
-  const b=t.blocks[anchor],c={id:t.cores.length,kind,x:t.x+dx,y:t.base+dy,r:5,anchor,ox:t.x+dx-b.x,oy:t.base+dy-b.y,triggered:false,flash:0};
+  dx*=FORT_SCALE;dy*=FORT_SCALE;const b=t.blocks[anchor],c={id:t.cores.length,kind,x:t.x+dx,y:t.base+dy,r:4,anchor,ox:t.x+dx-b.x,oy:t.base+dy-b.y,triggered:false,flash:0};
   t.cores.push(c);return c;
 }
 function corePos(t,c){const b=t.blocks[c.anchor];return b&&b.falling?{x:b.x+c.ox,y:b.y+c.oy}:{x:c.x,y:c.y};}
-function makeTower(index,forceType){
-  const raw=900+index*TOWER_GAP,x=findTowerSite(raw),base=terrainY(x),biome=biomeIndex(x),type=forceType===undefined?(index+biome)%5:forceType;
-  const t={id:index,x,base,biome,type,blocks:[],cores:[],toppled:false,resolved:false,passed:false,collapseT:0,spirit:0,style:mod(index+worldSeed,3)};
+function makeTower(index,forceType,rawOverride){
+  const raw=rawOverride===undefined?FIRST_FORT+index*FORT_GAP:rawOverride,x=rawOverride===undefined?findFortSite(raw):raw,ground=terrainY(x),biome=biomeIndex(x),type=forceType===undefined?(index+biome)%5:forceType,
+    altitude=86+type*7+(index%3)*9,base=ground-altitude;
+  const t={id:index,x,base,ground,altitude,biome,type,blocks:[],cores:[],toppled:false,resolved:false,passed:false,collapseT:0,spirit:0,
+    style:mod(index+worldSeed,3),lockAt:-1,hit:false};
   let a,b,c,d,e,f,g,h;
   if(type===0){ // windmill roost: tall timber mast, broad turning crown
     a=addBlock(t,-11,-7,14,12,'stone','base',['ground']);b=addBlock(t,8,-7,14,12,'stone','base',['ground']);
@@ -171,12 +221,14 @@ function makeTower(index,forceType){
     const bridge=addBlock(t,0,-46,29,9,'gold','arch',[g,h,e]);addBlock(t,-20,-57,14,15,'gold','roofL',[g]);addBlock(t,20,-57,14,15,'gold','roofR',[h]);
     const crown=addBlock(t,0,-61,18,19,'crystal','crown',[bridge]);addCore(t,'star',0,-46,bridge);addCore(t,'spring',0,-61,crown);
   }
-  // A readable approach arc and one tempting high ring make flight itself content.
+  // A readable aerial approach arc makes the intended flight lane visible long before impact.
   const high=t.cores.reduce((q,v)=>v.y<q.y?v:q,t.cores[0]);
-  for(let i=0;i<4;i++)airRings.push({id:index*10+i,x:x-175+i*34,y:high.y-12-Math.sin(i/3*Math.PI)*24,tower:index,taken:false,spin:i*7});
+  for(let i=0;i<6;i++)airRings.push({id:index*10+i,x:x-225+i*35,y:high.y+18-Math.sin(i/5*Math.PI)*42,tower:index,taken:false,spin:i*7});
   return t;
 }
-function ensureTowers(){while(900+towerSerial*TOWER_GAP<bird.x+1900){towers.push(makeTower(towerSerial));towerSerial++;}towers=towers.filter(t=>t.x>bird.x-700||!t.resolved);airRings=airRings.filter(r=>r.x>bird.x-500&&!r.taken);}
+function makeGroundCoin(i){const x=110+i*28,lift=8+(i%9===4?5:i%9===5?3:0);return{id:i,x,y:terrainY(x)-lift,taken:false,spin:i*1.7};}
+function ensureCoins(){while(110+coinSerial*28<bird.x+1250){if(hash(coinSerial*19,worldSeed)>.14)groundCoins.push(makeGroundCoin(coinSerial));coinSerial++;}groundCoins=groundCoins.filter(c=>c.x>bird.x-360&&!c.taken);}
+function ensureTowers(){while(FIRST_FORT+towerSerial*FORT_GAP<bird.x+1900){towers.push(makeTower(towerSerial));towerSerial++;}towers=towers.filter(t=>t.x>bird.x-700||!t.resolved);airRings=airRings.filter(r=>r.x>bird.x-500&&!r.taken);ensureCoins();}
 const activeTower=()=>towers.find(t=>!t.resolved&&t.x>bird.x-18)||null;
 function chooseCore(t){
   if(!t)return null;const live=t.cores.filter(c=>!c.triggered);if(!live.length)return null;
@@ -195,65 +247,134 @@ function envAt(offset){
   if(!live)return{wind:0,lift:0,slick:0};
   return act.type==='gust'?{wind:.012*act.dir,lift:0,slick:0}:{wind:.004*act.dir,lift:.026,slick:.08};
 }
+function launchHasRoom(x,y,vx,vy,energy,frames,climb){
+  let wing=.2;for(let f=0;f<(frames||14);f++){
+    wing+=((climb?1:.63)-wing)*.13;const lift=wing*(.019+Math.min(.013,Math.abs(vx)*.0032))+(climb?.035+.02*energy:0);
+    energy=Math.max(0,energy-(climb?.00197:.00032));vy=(vy+GRAV-lift)*.995;vx=clamp(vx*.9992,1.25,4.15);const bx=x+vx,by=y+vy;
+    if(sweepGround(x,y,bx,by))return false;x=bx;y=by;
+  }
+  return true;
+}
 function advanceBody(r,intent,env,collide){
-  const out={launched:false,landed:false,hard:0,kiss:false};intent=intent||{dive:false,trim:0,brace:false};env=env||{wind:0,lift:0,slick:0};
+  const out={launched:false,landed:false,hard:0,kiss:false};intent=intent||{dive:false,vertical:0,brace:false};env=env||{wind:0,lift:0,slick:0};
+  if(r.energy===undefined)r.energy=0;if(r.ram===undefined)r.ram=r.speed||Math.hypot(r.vx,r.vy)||1;if(r.landedAtX===undefined)r.landedAtX=-1e9;
   if(r.grounded){
     const tan=tangentAt(r.x),s=terrainSlope(r.x);let speed=Math.max(.48,r.speed||Math.hypot(r.vx,r.vy));
     speed+=GRAV*tan.y+.004;if(intent.dive&&tan.y>0){speed+=.008+.018*tan.y;r.charge=clamp(r.charge+.005+.026*tan.y,0,3.2);}else r.charge=Math.max(0,r.charge-.009);
     speed*=1-(intent.dive?.0006:.0028)-env.slick*(intent.dive?0:.002);if(r.boostT>0)speed+=.006;
     r.vx=speed*tan.x;r.vy=speed*tan.y;r.x+=r.vx;r.y=terrainY(r.x)-RADIUS;r.speed=speed;r.rot=Math.atan2(tan.y,tan.x);r.runPhase+=speed*.45;
-    if(!intent.dive&&s<-.075&&speed>.92&&(r.charge>.12||speed>2.15)){
-      const launch=speed+.26+r.charge*.72;r.grounded=false;r.vx=launch*tan.x+.06;r.vy=launch*tan.y-.42-r.charge*.46;
-      r.charge*=.18;r.airFrames=0;r.launchY=r.y;r.apexY=r.y;r.flightX=r.x;out.launched=true;
+    if(r.x-r.landedAtX>=90&&!intent.dive&&s<-.16&&speed>.92&&(r.charge>.12||speed>2.15)){
+      const stored=r.charge,bank=speed+stored*.7,launch=clamp(1.7+speed*.34+stored*.23,2.05,3.85);
+      const vx=launch*tan.x+.05,vy=launch*tan.y-.62-stored*.34,energy=clamp(.16+(speed-1.2)*.14+stored*.21,0,1);
+      const lookahead=typeof globalThis.__NO_LOOKAHEAD==='undefined',preview=lookahead?14:12;
+      if(launchHasRoom(r.x,r.y,vx,vy,energy,preview,lookahead)){r.grounded=false;r.vx=vx;r.vy=vy;r.energy=energy;r.ram=clamp(bank,1.5,8.5);
+        r.charge*=.16;r.airFrames=0;r.launchY=r.y;r.apexY=r.y;r.flightX=r.x;out.launched=true;}
     }
   }else{
-    const open=intent.dive?0:1;r.wing+=(open-r.wing)*.16;const trim=clamp(intent.trim||0,-1,1);
-    r.vx+=env.wind+trim*.0035+(r.boostT>0?.003:0);r.vy+=GRAV-env.lift-r.wing*(.022+Math.min(.013,r.vx*.0025))+(intent.dive?.022:0)-trim*.0015;
-    r.vx*=r.wing>.5?.9994:.9988;r.vy*=.999;r.lastX=r.x;r.lastY=r.y;const bx=r.x+r.vx,by=r.y+r.vy,hit=collide===false?null:sweepGround(r.x,r.y,bx,by);
+    const vertical=clamp(intent.vertical||0,-1,1),climb=Math.max(0,-vertical),descend=Math.max(0,vertical),powered=r.energy>.015,
+      clearance=terrainY(r.x)-RADIUS-r.y,recovering=r.flightMode==='recover',flare=recovering?climb*clamp((100-clearance)/70,0,1):0,open=powered?clamp(.63+climb*.37-descend*.48,.12,1):.16+flare*.7;
+    r.wing+=(open-r.wing)*.13;
+    const lift=r.wing*(.019+Math.min(.013,Math.abs(r.vx)*.0032))+(powered?climb*(.035+.02*r.energy)+(recovering?flare*.035:0):flare*.07);
+    const beforeEnergy=r.energy;r.energy=clamp(r.energy-(.00032+climb*.00165+(intent.brace?.00055:0))+descend*.00072,0,1);
+    r.vx+=env.wind+(r.boostT>0?.0035:0);r.vy+=GRAV-env.lift-lift+descend*.034;
+    r.vx=clamp(r.vx*(r.wing>.5?.9992:.9978),1.25,4.15);r.vy*=.995;r.ram=Math.max(1.2,r.ram-.0007);
+    r.lastX=r.x;r.lastY=r.y;const bx=r.x+r.vx,by=r.y+r.vy,hit=collide===false?null:sweepGround(r.x,r.y,bx,by);
     r.x=hit?hit.x:bx;r.y=hit?hit.y:by;r.rot=Math.atan2(r.vy,r.vx);r.airFrames++;r.apexY=Math.min(r.apexY,r.y);
     if(hit){const tan=tangentAt(r.x),normal=Math.abs(-tan.y*r.vx+tan.x*r.vy),along=Math.max(.45,tan.x*r.vx+tan.y*r.vy),kiss=normal<.85&&along>1.25;
-      r.grounded=true;r.speed=clamp(along*(kiss?.985:.76)+(kiss?.12:0),.45,8.4);r.vx=r.speed*tan.x;r.vy=r.speed*tan.y;r.wing=.2;r.charge=kiss?.25:0;out.landed=true;out.hard=normal;out.kiss=kiss;}
+      r.grounded=true;r.speed=clamp(along*(kiss?.985:.76)+(kiss?.18:0),.45,8.4);r.vx=r.speed*tan.x;r.vy=r.speed*tan.y;r.wing=.2;
+      r.charge=kiss?clamp(.34+r.energy*.45,0,1.2):0;r.energy=0;r.ram=r.speed;r.landedAtX=r.x;out.landed=true;out.hard=normal;out.kiss=kiss;}
+    out.energySpent=Math.max(0,beforeEnergy-r.energy);
   }
   r.lastX=r.lastX===undefined?r.x:r.lastX;r.lastY=r.lastY===undefined?r.y:r.lastY;return out;
 }
 
-function simulateArc(target,releaseX,trim){
-  const r=Object.assign({},bird),points=[];let min=1e9,impactSpeed=0,air=0,launched=!r.grounded,landed=0,apex=r.y;
-  for(let f=0;f<200;f++){
-    const intent={dive:r.grounded?r.x<releaseX:false,trim:r.grounded?0:trim,brace:false},ev=advanceBody(r,intent,envAt(f),true);
-    if(ev.launched)launched=true;if(!r.grounded){air++;apex=Math.min(apex,r.y);if(f%30===0&&points.length<8)points.push({x:r.x,y:r.y});}if(ev.landed)landed++;
-    const d=Math.hypot(r.x-target.x,r.y-target.y);if(d<min){min=d;impactSpeed=Math.hypot(r.vx,r.vy);}if(r.x>target.x+45)break;
+function findLandingZone(from,to){
+  let best=null,bestScore=1e9;from=Math.max(bird.x+70,from||bird.x+90);to=to||from+520;
+  for(let x=from;x<=to;x+=7){const s=terrainSlope(x),smooth=Math.abs(terrainSlope(x+8)-s),score=Math.abs(s-.28)*32+smooth*45+Math.abs((x-from)-260)*.012;
+    if(score<bestScore){bestScore=score;best={x,y:terrainY(x)-RADIUS,slope:s,score};}}
+  return best;
+}
+function controlToward(r,target,bias,gain){
+  if(!target)return 0;const dx=target.x-r.x,aimY=target.y+(bias||0),time=clamp(dx/Math.max(1.25,r.vx),0,150),lead=aimY-clamp(r.vy*time*.1,-24,24),damp=dx<170?.6:.23;
+  return clamp((lead-r.y)*(gain||.027)-r.vy*damp,-1,1);
+}
+function simulateArc(target,releaseX,bias,gain){
+  const r=Object.assign({},bird),points=[];let min=1e9,impactSpeed=0,air=0,launched=!r.grounded,landed=0,earlyLand=0,apex=r.y,energyAt=.0;
+  for(let f=0;f<240;f++){
+    const vertical=r.grounded?0:controlToward(r,target,bias,gain),intent={dive:r.grounded?r.x<releaseX:vertical>.35,vertical,brace:false},ev=advanceBody(r,intent,envAt(f),true);
+    if(ev.launched)launched=true;if(!r.grounded){air++;apex=Math.min(apex,r.y);if(f%24===0&&points.length<12)points.push({x:r.x,y:r.y,vertical});}
+    if(ev.landed){landed++;if(r.x<target.x-24)earlyLand++;}
+    const d=Math.hypot(r.x-target.x,r.y-target.y);if(d<min){min=d;impactSpeed=Math.hypot(r.vx,r.vy)+r.ram*.55;energyAt=r.energy;}
+    if(r.x>target.x+70)break;
   }
-  return{releaseX,trim,min,impactSpeed,air,landed,apex,points,score:(launched?0:-300)-min*3+impactSpeed*1.5+air*.012-(landed>1?3:0)};
+  return{releaseX,bias,gain,min,impactSpeed,energyAt,air,landed,earlyLand,apex,points,
+    score:(launched?0:-500)-min*6+impactSpeed*2.5+energyAt*18+air*.015-earlyLand*160};
 }
 function buildPlan(t){
   const core=chooseCore(t);if(!t||!core)return null;const q=corePos(t,core);
-  if(typeof globalThis.__NO_LOOKAHEAD!=='undefined')return{targetId:t.id,coreId:core.id,releaseX:bird.x+150,trim:0,points:[],min:99,score:0,reactive:true};
-  const crests=findCrests(bird.x+35,q.x-18).slice(-2),candidates=[];
-  for(const crest of(crests.length?crests:[bird.x+180]))for(const off of[-32,-7])for(const trim of[-.8,0,.8]){
-    const p=simulateArc(q,crest+off+persona.release,trim+persona.trim*.25);p.targetId=t.id;p.coreId=core.id;candidates.push(p);
+  if(typeof globalThis.__NO_LOOKAHEAD!=='undefined')return{targetId:t.id,coreId:core.id,releaseX:bird.x+125,bias:0,gain:.025,points:[],min:99,score:0,reactive:true};
+  const crests=bird.grounded?findCrests(bird.x+30,q.x-22).filter(x=>x<=q.x-120).slice(-1):[bird.x],candidates=[];
+  for(const crest of(crests.length?crests:[bird.x+145]))for(const off of(bird.grounded?[-34,-18]:[0]))for(const bias of[-6,6])for(const gain of[.027]){
+    const p=simulateArc(q,crest+off+persona.release,bias+persona.trim*7,gain);p.targetId=t.id;p.coreId=core.id;candidates.push(p);
   }
-  candidates.sort((a,b)=>b.score-a.score||a.releaseX-b.releaseX||a.trim-b.trim);return candidates[0];
+  candidates.sort((a,b)=>b.score-a.score||a.releaseX-b.releaseX||a.bias-b.bias);const best=candidates[0];best.landing=findLandingZone(t.x+50,t.x+560);return best;
+}
+function landingControl(r,p){
+  if(!p)return 0;const aimX=p.aimX===undefined?p.x:p.aimX,aimY=p.aimY===undefined?p.y:p.aimY,gateX=p.x===undefined?aimX:p.x,
+    gateY=p.y===undefined?aimY:p.y,gateDx=Math.max(1,gateX-r.x),farDx=Math.max(1,aimX-r.x),near=gateDx<180,
+    glideY=near?gateY-clamp(gateDx*.16,7,34):aimY-clamp(farDx*.18,8,55),
+    desiredVy=near?terrainSlope(gateX)*r.vx:clamp((glideY-r.y)/Math.max(8,farDx/Math.max(1.25,r.vx)*.35),-1.2,1.2);
+  return clamp((glideY-r.y)*(near?.021:.022)+(desiredVy-r.vy)*(near?.72:.3),-1,1);
+}
+function predictLanding(zone){
+  const aim={x:zone.x,y:zone.y};let gateX=aim.x,predictedX=aim.x,hard=99,frames=0,landed=false;
+  for(let pass=0;pass<3;pass++){
+    const r=Object.assign({},bird),guide={aimX:aim.x,aimY:aim.y,x:gateX,y:terrainY(gateX)-RADIUS};predictedX=gateX;hard=99;frames=0;landed=false;
+    if(!r.grounded)for(let f=0;f<420;f++){const vertical=landingControl(r,guide),ev=advanceBody(r,{dive:vertical>.35,vertical,brace:false},envAt(f),true);frames=f+1;if(ev.landed){predictedX=r.x;hard=ev.hard;landed=true;break;}}
+    if(!landed||Math.abs(predictedX-gateX)<2)break;gateX=predictedX;
+  }
+  return{aimX:aim.x,aimY:aim.y,predictedX,hard,frames,landed,error:Math.abs(predictedX-aim.x)};
+}
+function buildLandingPlan(previous){
+  if(bird.grounded)return null;const from=bird.x+75,to=bird.x+560,candidates=[];
+  for(let x=from;x<=to;x+=28){const slope=terrainSlope(x),smooth=Math.abs(terrainSlope(x+8)-slope);if(slope<-.25||slope>.7||smooth>.55)continue;
+    const zone={x,y:terrainY(x)-RADIUS,slope},p=predictLanding(zone);if(!p.landed)continue;
+    const touchSlope=terrainSlope(p.predictedX),touchSmooth=Math.abs(terrainSlope(p.predictedX+8)-touchSlope),distance=p.predictedX-bird.x;
+    p.score=p.hard*42+Math.abs(touchSlope-.22)*22+touchSmooth*32+p.error*.04+Math.abs(distance-250)*.018+(previous?Math.abs(p.predictedX-previous.x)*.055:0);candidates.push(p);}
+  if(!candidates.length){const zone=findLandingZone(from,to),p=zone&&predictLanding(zone);if(!p||!p.landed)return null;p.score=p.hard*34+p.error*.035;candidates.push(p);}
+  candidates.sort((a,b)=>a.score-b.score||a.predictedX-b.predictedX);const best=candidates[0],x=best.predictedX;
+  return{x,y:terrainY(x)-RADIUS,slope:terrainSlope(x),aimX:best.aimX,aimY:best.aimY,predictedX:x,hard:best.hard,frames:best.frames,error:0,aimError:best.error,madeAt:runFrame};
 }
 function lapseActive(){if(typeof globalThis.__NO_LAPSE!=='undefined')return false;const slot=runFrame%4800,on=530+personaIndex*190,yes=slot>=on&&slot<on+18;if(yes&&slot===on){stats.lapses++;markEvent();}return yes;}
 function botIntent(){
-  const t=activeTower(),core=t&&chooseCore(t);if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined')return{dive:false,trim:0,brace:false,targetId:t&&t.id,coreId:core&&core.id,tactic:'ADMIRE THE FALL'};
-  if(!t||!core)return{dive:bird.grounded,trim:0,brace:false,targetId:0,coreId:0,tactic:'CHASE THE HORIZON'};
-  if(!plan||plan.targetId!==t.id||plan.coreId!==core.id||
-    bird.grounded&&showFrame-planAt>=240&&bird.x<plan.releaseX-80){plan=buildPlan(t);planAt=showFrame;bird.planTarget=t.id;}
-  const q=corePos(t,core),lapse=lapseActive();let dive=false,trim=0,brace=false,tactic='OPEN YOUR WINGS';
-  if(typeof globalThis.__NO_LOOKAHEAD!=='undefined'){
-    const slope=terrainSlope(bird.x);dive=bird.grounded?slope>.02||q.x-bird.x>340:bird.y<q.y-15;trim=bird.grounded?0:clamp((q.y-bird.y)*.025,-1,1);tactic=dive?'DIVE BY FEEL':'REACTIVE GLIDE';
-  }else if(bird.grounded){dive=bird.x<plan.releaseX+(lapse?14:0);tactic=dive?'BANK SPEED':'OPEN AT THE CREST';}
-  else{trim=clamp(plan.trim+(lapse?personaIndex-1:0),-1,1);dive=lapse&&bird.vy<0;tactic=dive?'RISKY DIVE':'SOAR TO THE CORE';}
-  const d=Math.hypot(bird.x-q.x,bird.y-q.y),speed=Math.hypot(bird.vx,bird.vy);brace=!bird.grounded&&d<35&&speed>1.65&&!lapse;if(brace)tactic='SCARF DOWN · STRIKE';
+  const t=activeTower(),core=t&&chooseCore(t);if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined')return{dive:false,vertical:0,brace:false,targetId:t&&t.id,coreId:core&&core.id,tactic:'ADMIRE THE FALL'};
+  if(!bird.grounded&&bird.flightMode==='recover'){
+    const guided=typeof globalThis.__NO_LANDING_GUIDANCE==='undefined'&&landingPlan,vertical=guided?landingControl(bird,landingPlan):clamp(.5-bird.vy*.22,-.15,1);
+    return{dive:vertical>.35,vertical,brace:false,targetId:t&&t.id,coreId:core&&core.id,tactic:guided?(vertical<-.2?'PULL UP TO THE GATE':'FOLLOW THE LANDING GATE'):'UNGUIDED RECOVERY'};
+  }
+  if(!t||!core){const land=!bird.grounded&&landingPlan,vertical=land?landingControl(bird,land):0;
+    return{dive:bird.grounded||vertical>.35,vertical,brace:false,targetId:0,coreId:0,tactic:bird.grounded?'BANK FOR THE SKY':'FOLLOW THE COINS'};}
+  if(!plan||plan.targetId!==t.id||plan.coreId!==core.id||!bird.grounded&&showFrame-planAt>=48||bird.grounded&&bird.x>plan.releaseX+70){plan=buildPlan(t);planAt=showFrame;bird.planTarget=t.id;}
+  const q=corePos(t,core),lapse=lapseActive(),legacy=typeof globalThis.__NO_TARGET_GUIDANCE!=='undefined',passed=bird.x>q.x+20,
+    abort=!bird.grounded&&(t.hit||bird.energy<.14&&q.x-bird.x>90||passed);
+  let dive=false,vertical=0,brace=false,tactic='OPEN YOUR WINGS';
+  if(legacy){
+    const slope=terrainSlope(bird.x);dive=bird.grounded?slope>.02||q.x-bird.x>300:false;vertical=bird.grounded?0:clamp((q.y-bird.y)*.018,-1,1);tactic=dive?'OLD DIVE BY FEEL':'OLD REACTIVE GLIDE';
+  }else if(bird.grounded&&typeof globalThis.__NO_LOOKAHEAD!=='undefined'){
+    const slope=terrainSlope(bird.x);dive=slope>-.28||q.x-bird.x>300;vertical=0;tactic=dive?'DIVE BY FEEL':'RELEASE ON THE RISING FACE';
+  }else if(bird.grounded){dive=bird.x<plan.releaseX+(lapse?16:0);tactic=dive?'BANK LIFT ENERGY':'LAUNCH FOR THE FORT';}
+  else if(abort){vertical=landingControl(bird,landingPlan);dive=vertical>.35;tactic=vertical<-.2?'PULL UP TO THE GATE':'FOLLOW THE COIN LINE';}
+  else if(typeof globalThis.__NO_LOOKAHEAD!=='undefined'){vertical=controlToward(bird,q,0,.014);dive=vertical>.35;tactic='REACTIVE GLIDE';}
+  else{const exact=q.x-bird.x<300?0:plan.bias,aim=exact+(lapse?(personaIndex-1)*22:0);vertical=controlToward(bird,q,aim,plan.gain);dive=vertical>.35;tactic=vertical<-.24?'CLIMB TO THE CORE':vertical>.3?'DIVE ON THE CORE':'HOLD THE SKY LANE';}
+  const d=Math.hypot(bird.x-q.x,bird.y-q.y),speed=Math.hypot(bird.vx,bird.vy)+bird.ram*.45;
+  brace=!bird.grounded&&d<(legacy?35:72)&&speed>(legacy?1.65:2.1)&&!lapse;if(brace)tactic='SCARF LOCK · STRIKE';
   if(act.phase==='warn'){
-    if(bird.grounded)dive=act.type==='rain';else trim=-act.dir;
+    if(bird.grounded)dive=act.type==='rain';else vertical=clamp(vertical-act.dir*.35,-1,1);
     tactic=act.type==='gust'?'READ THE GUST':'BANK BEFORE THE RAIN';
   }
-  return{dive,trim,brace,targetId:t.id,coreId:core.id,tactic};
+  return{dive,vertical,brace,targetId:t.id,coreId:core.id,tactic};
 }
-function humanIntent(){const t=activeTower(),core=t&&chooseCore(t);return{dive:!!(keys.down||keys.a),trim:(keys.right?1:0)-(keys.left?1:0),
+function humanIntent(){const t=activeTower(),core=t&&chooseCore(t),vertical=(keys.down?1:0)-(keys.up?1:0);return{dive:bird.grounded?!!(keys.down||keys.a):vertical>.3,vertical,
   brace:!!(keys.b||keys.c),targetId:t&&t.id,coreId:core&&core.id,tactic:'MANUAL FLIGHT'};}
 const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
 
@@ -272,40 +393,50 @@ function unsupportedCascade(t){
   }}
   for(const b of t.blocks)if(!b.broken&&!b.falling&&!stable.has(b.id)){b.broken=true;b.delay=4+b.id*3;b.vx=(b.x<t.x?-.18:.18);b.vy=-.25;stats.blocksBroken++;}
 }
+function registerTargetHit(t){if(!t||t.hit)return;t.hit=true;bird.flightMode='recover';landingPlan=null;stats.targetHits++;const lead=Math.max(0,showFrame-Math.max(0,t.lockAt));stats.targetLeadTotal+=lead;stats.minTargetLead=Math.min(stats.minTargetLead,lead);if(stats.firstTargetHit<0)stats.firstTargetHit=runFrame;}
+function ensureTargetFracture(t,x,y){
+  const goal=Math.ceil(t.blocks.length*.34),broken=()=>t.blocks.filter(b=>b.broken||b.falling).length;
+  for(const b of t.blocks.filter(b=>!b.broken&&!b.falling).sort((a,b)=>Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y)||a.id-b.id)){
+    if(broken()>=goal)break;breakBlock(t,b,2.4,Math.max(0,broken()*2));
+  }
+}
 function triggerCore(t,c,hitByBird){
   if(c.triggered)return;c.triggered=true;c.flash=50;stats.cores++;markEvent(55);markProgress(1);const p=corePos(t,c),near=Math.hypot(bird.x-p.x,bird.y-p.y)<150;
-  if(c.kind==='gust'&&near){bird.vx+=1.25;bird.vy-=.28;bird.boostT=Math.max(bird.boostT,240);stats.boosts++;}
-  if(c.kind==='spring'&&near){bird.grounded=false;bird.vx+=.65;bird.vy=Math.min(bird.vy,-3.25);bird.wing=1;bird.boostT=300;stats.boosts++;}
-  if(c.kind==='star'&&near){bird.boostT=480;bird.vx+=.8;bird.combo+=3;stats.boosts++;}
+  if(hitByBird)registerTargetHit(t);
+  if(c.kind==='gust'&&near){bird.vx+=.55;bird.vy-=.42;bird.energy=clamp(bird.energy+.3,0,1);bird.ram+=.5;bird.boostT=Math.max(bird.boostT,240);stats.boosts++;}
+  if(c.kind==='spring'&&near){bird.grounded=false;bird.vx+=.35;bird.vy=Math.min(bird.vy,-2.8);bird.wing=1;bird.energy=clamp(bird.energy+.42,0,1);bird.ram+=.4;bird.boostT=300;stats.boosts++;}
+  if(c.kind==='star'&&near){bird.boostT=480;bird.vx+=.4;bird.energy=1;bird.ram+=.8;bird.combo+=3;stats.boosts++;}
   const anchor=t.blocks[c.anchor];if(anchor)breakBlock(t,anchor,c.kind==='blast'?3:2,0);
   const fracture=c.kind==='blast'?35:18;for(const b of t.blocks)if(!b.falling&&Math.hypot(b.x-p.x,b.y-p.y)<fracture)
     breakBlock(t,b,c.kind==='blast'?3:1.8,Math.floor(Math.hypot(b.x-p.x,b.y-p.y)/5));
+  if(hitByBird)ensureTargetFracture(t,p.x,p.y);
   unsupportedCascade(t);const tier=c.kind==='star'||c.kind==='spring'?3:2;offer(c.kind+'-core',tier,p.x,p.y,t.id);ring(p.x,p.y,CORE_STYLE[c.kind].c,2.4,34);fxBurst(p.x,p.y,tier===3?34:22,CORE_STYLE[c.kind].c,tier===3?3:2.2,.035);shake(tier===3?7:4);say(CORE_STYLE[c.kind].label,CORE_STYLE[c.kind].c,p.x,p.y-15,90);
 }
 function collideStructures(){
-  if(bird.grounded||bird.hitT>0)return;const speed=Math.hypot(bird.vx,bird.vy);
+  if(bird.grounded||bird.hitT>0)return;const speed=Math.hypot(bird.vx,bird.vy)+bird.ram*.55;
   for(const t of towers){if(t.x<bird.x-80||t.x>bird.x+80)continue;
     for(const c of t.cores){if(c.triggered)continue;const p=corePos(t,c);if(segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,p.x,p.y)<RADIUS+c.r){
       stats.impacts++;markEvent();if(bird.intent&&bird.intent.brace&&speed>1.55){triggerCore(t,c,true);bird.vx*=.94;bird.vy-=.25;bird.hitT=10;}else{bird.vx*=.58;bird.vy=-Math.abs(bird.vy)*.6;bird.hitT=18;stats.tumbles++;}return;}}
     for(const b of t.blocks){if(b.falling||b.settled)continue;if(segmentBox(bird.lastX,bird.lastY,bird.x,bird.y,b.x,b.y,RADIUS+b.w/2,RADIUS+b.h/2)){
-      stats.impacts++;markEvent();const force=.5*speed*speed*(bird.intent&&bird.intent.brace?1.65:.75);b.hp-=force;
-      if(b.hp<=0&&bird.intent&&bird.intent.brace){breakBlock(t,b,clamp(speed/2,1,4),0);unsupportedCascade(t);bird.vx*=.88;bird.vy=-Math.abs(bird.vy)*.25-.45;fxBurst(b.x,b.y,12,MATERIAL[b.mat].hi,1.8,.05);shake(3);}
+      stats.impacts++;markEvent();const braced=bird.intent&&bird.intent.brace&&speed>2.1,force=.5*speed*speed*(braced?1.65:.75);b.hp-=force;
+      if(b.hp<=0&&braced){registerTargetHit(t);breakBlock(t,b,clamp(speed/2,1,4),0);ensureTargetFracture(t,b.x,b.y);unsupportedCascade(t);bird.vx*=.88;bird.vy=-Math.abs(bird.vy)*.25-.45;fxBurst(b.x,b.y,12,MATERIAL[b.mat].hi,1.8,.05);shake(3);}
       else{bird.vx*=.52;bird.vy=-Math.abs(bird.vy)*.55;bird.hitT=22;bird.tumbleT=40;stats.tumbles++;say('NOT ENOUGH MOMENTUM',CORAL,bird.x,bird.y-18,55);}return;}}
   }
 }
-function collectRings(){for(const r of airRings)if(!r.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,r.x,r.y)<RADIUS+4){r.taken=true;stats.rings++;bird.combo++;bird.vx+=.16;bird.vy-=.08;bird.boostT=Math.max(bird.boostT,60);markEvent(12);offer('ring',1,r.x,r.y,r.id);fxBurst(r.x,r.y,7,GOLD,1.2);}}
+function collectRings(){for(const r of airRings)if(!r.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,r.x,r.y)<RADIUS+4){r.taken=true;stats.rings++;bird.combo++;bird.vx+=.1;bird.vy-=.08;bird.energy=clamp(bird.energy+.1,0,1);bird.ram+=.08;bird.boostT=Math.max(bird.boostT,60);markEvent(12);offer('ring',1,r.x,r.y,r.id);fxBurst(r.x,r.y,7,GOLD,1.2);}}
+function collectGroundCoins(){for(const c of groundCoins)if(!c.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,c.x,c.y)<RADIUS+5){c.taken=true;stats.coins++;bird.combo++;bird.charge=clamp(bird.charge+.1,0,3.2);if(!bird.grounded)bird.energy=clamp(bird.energy+.04,0,1);markEvent(3);if(stats.coins%8===0)offer('coin-line',1,c.x,c.y,stats.coins);fxBurst(c.x,c.y,4,GOLD,.8);}}
 function stepTowers(){
   for(const t of towers){t.collapseT++;
     for(const c of t.cores){if(c.flash>0)c.flash--;const b=t.blocks[c.anchor];if(!c.triggered&&b&&b.falling&&Math.hypot(b.x-(c.x-c.ox),b.y-(c.y-c.oy))>7)triggerCore(t,c,false);}
     for(const b of t.blocks)if(b.broken){if(b.delay>0){b.delay--;continue;}if(!b.falling)b.falling=true;if(!b.settled){b.vy+=.07;b.vx*=.997;b.x+=b.vx;b.y+=b.vy;b.rot+=b.vx*.065;const ground=terrainY(b.x)-b.h/2;if(b.y>=ground){b.y=ground;b.vx*=.62;b.vy*=-.14;if(Math.abs(b.vy)<.07)b.settled=true;}}}
-    const fallen=t.blocks.filter(b=>b.broken||b.falling).length;if(!t.toppled&&fallen>=Math.ceil(t.blocks.length*.3)){t.toppled=true;stats.towersToppled++;markProgress(80);offer(t.type===4?'crown-fall':'tower-fall',t.type===4?3:2,t.x,t.base-35,t.id);fxBurst(t.x,t.base-35,t.type===4?40:24,t.type===4?GOLD:CREAM,2.7,.05);say(t.type===4?'CROWN KEEP SHATTERED':'TOWER DOWN',t.type===4?GOLD:MINT,t.x,t.base-78,100);shake(t.type===4?9:5);}
-    if(!t.resolved&&bird.x>t.x+100){t.resolved=true;if(!t.toppled){stats.misses++;markEvent();say('RUIN LEFT STANDING',CORAL,t.x,t.base-65,60);}else markProgress();plan=null;}
+    const fallen=t.blocks.filter(b=>b.broken||b.falling).length;if(!t.toppled&&fallen>=Math.ceil(t.blocks.length*.3)){t.toppled=true;stats.towersToppled++;markProgress(80);offer(t.type===4?'crown-fall':'tower-fall',t.type===4?3:2,t.x,t.base-35,t.id);fxBurst(t.x,t.base-35,t.type===4?40:24,t.type===4?GOLD:CREAM,2.7,.05);say(t.type===4?'CROWN KEEP SHATTERED':'SKY FORT DOWN',t.type===4?GOLD:MINT,t.x,t.base-78,100);shake(t.type===4?9:5);}
+    if(!t.resolved&&bird.x>t.x+100){t.resolved=true;if(!t.toppled){stats.misses++;markEvent();say('RUIN LEFT STANDING',CORAL,t.x,t.base-65,60);}else markProgress();if(!bird.grounded)bird.flightMode='recover';plan=null;}
   }
 }
 
 function stepAct(){
   if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
-  if(act.phase==='calm'&&runFrame>=act.warnAt){act.phase='warn';act.type=act.index%2?'rain':'gust';act.dir=act.index%3===0?1:-1;act.landAt=runFrame+240;act.endAt=act.landAt+720;plan=null;
+  if(act.phase==='calm'&&runFrame>=act.warnAt){if(pres.cue&&pres.cue.tier>=3||SHOW.probe().queued){act.warnAt++;return;}act.phase='warn';act.type=act.index%2?'rain':'gust';act.dir=act.index%3===0?1:-1;act.landAt=runFrame+240;act.endAt=act.landAt+720;plan=null;
     const n={kind:'act-warning',id:act.type,at:showFrame,tag:runFrame,landsAt:showFrame+240};act.notes.push(n);SHOW.note(n);say(act.type==='gust'?'GUST FRONT RISING':'RAIN POLISHES THE HILLS',act.type==='gust'?CYAN:'#a8c9ff',bird.x+70,bird.y-90,110);}
   else if(act.phase==='warn'&&runFrame>=act.landAt){act.phase='live';stats.acts++;const n={kind:'act-land',id:act.type,at:showFrame,tag:runFrame};act.notes.push(n);SHOW.note(n);offer(act.type,2,bird.x,bird.y,act.index);shake(3);}
   else if(act.phase==='live'&&runFrame>=act.endAt){act.phase='calm';act.index++;act.warnAt=runFrame+6900;}
@@ -313,30 +444,40 @@ function stepAct(){
 
 function finishRun(){if(state!=='run')return;state='ending';resultT=360;stats.endings++;lastOutcome=stats.towersToppled>=18?'SKYLINE FREE':'ONE MORE FLIGHT';markEvent(500);offer('ending',3,bird.x,bird.y,lastOutcome);fxBurst(bird.x,bird.y,48,GOLD,3.3,.02);}
 function resetRun(full){
-  worldSeed=RI(1,999999);segmentCache.clear();knotCache.clear();runFrame=0;state='run';resultT=0;camX=0;camY=0;towers=[];airRings=[];towerSerial=0;plan=null;planAt=-1e9;texts=[];chapter=1;lastBiome=0;lastDistanceMark=0;lastOutcome='';
-  for(const k in stats)stats[k]=k==='biomes'?1:k==='maxEventLull'||k==='maxProgressLull'||k==='maxSpeed'||k==='maxAir'?0:0;
-  eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];bird=makeBird(40);
+  worldSeed=RI(1,999999);segmentCache.clear();knotCache.clear();runFrame=0;state='run';resultT=0;camX=0;camY=0;towers=[];airRings=[];groundCoins=[];towerSerial=0;coinSerial=0;
+  plan=null;landingPlan=null;planAt=-1e9;lockedTarget=-1;scarf=null;texts=[];chapter=1;lastBiome=0;lastDistanceMark=0;lastOutcome='';
+  for(const k in stats)stats[k]=0;stats.biomes=1;stats.minTargetLead=1e9;stats.firstTargetHit=-1;
+  eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];bird=makeBird(40);initScarf();
   Object.assign(act,{phase:'calm',type:'gust',warnAt:4200,landAt:4440,endAt:5160,index:0,dir:1,notes:[]});ensureTowers();if(full)SHOW.reset(showFrame);
 }
 function updateBird(){
-  bird.intent=controller();bird.lastX=bird.x;bird.lastY=bird.y;const wasGround=bird.grounded,ev=advanceBody(bird,bird.intent,envAt(0),true);
-  if(ev.launched){stats.launches++;markEvent(4);offer('launch',1,bird.x,bird.y,'crest');fxDust(bird.x,bird.y+5,7,BIOMES[biomeIndex(bird.x)].edge);bird.pose='launch';}
-  if(ev.landed){stats.landings++;stats.maxAir=Math.max(stats.maxAir,bird.airFrames);const rise=bird.launchY-bird.apexY;if(bird.airFrames>=135||rise>=58){stats.highFlights++;offer('high-flight',2,bird.x,bird.y,Math.round(rise));say('SKY KISS',MINT,bird.x,bird.y-24,55);}if(ev.kiss){stats.perfectLandings++;bird.combo++;offer('kiss',1,bird.x,bird.y,'perfect');fxDust(bird.x,bird.y+5,8,GOLD);}else if(ev.hard>1.6){stats.roughLandings++;bird.tumbleT=Math.round(clamp(ev.hard*10,20,65));stats.tumbles++;shake(2);}markEvent();}
-  if(!bird.grounded)collideStructures();collectRings();if(bird.hitT>0)bird.hitT--;if(bird.tumbleT>0)bird.tumbleT--;if(bird.boostT>0)bird.boostT--;
+  const target=activeTower();if(target&&target.id!==lockedTarget){lockedTarget=target.id;target.lockAt=showFrame;stats.targets++;plan=null;planAt=-1e9;}
+  const targetCore=target&&chooseCore(target),targetPos=target&&targetCore&&corePos(target,targetCore);
+  if(!bird.grounded&&bird.flightMode==='raid'&&(!target||!targetCore||target.hit||bird.energy<.14&&targetPos.x-bird.x>90||bird.x>targetPos.x+20))bird.flightMode='recover';
+  const landingMode=!bird.grounded&&bird.flightMode==='recover',guidance=typeof globalThis.__NO_LANDING_GUIDANCE==='undefined';
+  if(bird.grounded)landingPlan=null;else if(landingMode&&guidance&&(!landingPlan||landingPlan.x<bird.x+25||runFrame-landingPlan.madeAt>=18)){
+    landingPlan=buildLandingPlan(landingPlan);if(landingPlan&&!bird.guidanceAttempted){stats.guidedAttempts++;bird.guidanceAttempted=true;}
+  }else if(!landingMode||!guidance)landingPlan=null;
+  bird.intent=controller();bird.lastX=bird.x;bird.lastY=bird.y;const landingBefore=landingPlan,ev=advanceBody(bird,bird.intent,envAt(0),true);stats.energySpent+=ev.energySpent||0;
+  if(ev.launched){bird.flightMode='raid';bird.guidanceAttempted=false;stats.launches++;markEvent(4);offer('launch',1,bird.x,bird.y,'crest');fxDust(bird.x,bird.y+5,7,BIOMES[biomeIndex(bird.x)].edge);bird.pose='launch';}
+  if(ev.landed){stats.landings++;stats.lastFlightFrames=bird.airFrames;if(bird.airFrames<20)stats.microHops++;stats.maxAir=Math.max(stats.maxAir,bird.airFrames);const rise=bird.launchY-bird.apexY;if(bird.airFrames>=180||rise>=75){stats.highFlights++;offer('high-flight',2,bird.x,bird.y,Math.round(rise));say('SKY KISS',MINT,bird.x,bird.y-24,55);}
+    stats.lastLandingError=landingBefore?Math.abs(bird.x-landingBefore.x):0;stats.lastLandingHard=ev.hard;if(landingBefore&&stats.lastLandingError<40)stats.guidedLandings++;bird.flightMode='raid';bird.guidanceAttempted=false;
+    if(ev.kiss){stats.perfectLandings++;bird.combo++;offer('kiss',1,bird.x,bird.y,'perfect');fxDust(bird.x,bird.y+5,8,GOLD);}else if(ev.hard>1.35){stats.roughLandings++;bird.tumbleT=Math.round(clamp(ev.hard*9,16,48));stats.tumbles++;shake(2);}landingPlan=null;markEvent();}
+  if(!bird.grounded){stats.airControlFrames++;collideStructures();}collectRings();collectGroundCoins();if(bird.hitT>0)bird.hitT--;if(bird.tumbleT>0)bird.tumbleT--;if(bird.boostT>0)bird.boostT--;
   const speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy);stats.maxSpeed=Math.max(stats.maxSpeed,speed);
-  bird.pose=bird.hitT?'impact':bird.tumbleT?'tumble':bird.grounded?(bird.intent.dive?'dive':'skim'):(bird.intent.brace?'brace':bird.intent.dive?'dive':'soar');
+  bird.pose=bird.hitT?'impact':bird.tumbleT?'tumble':bird.grounded?(bird.intent.dive?'dive':'skim'):(bird.intent.brace?'brace':bird.intent.vertical<-.2?'climb':bird.intent.vertical>.28?'descend':'soar');
   if(speed<.62&&bird.grounded)bird.stuckT++;else bird.stuckT=0;if(bird.stuckT>150){bird.speed=.9;bird.charge=.5;bird.stuckT=0;say('TAILWIND NUDGE',CYAN,bird.x,bird.y-18,45);markEvent();}
   const mark=Math.floor(bird.x/600);if(mark>lastDistanceMark){lastDistanceMark=mark;markProgress();}
   const bio=biomeIndex(bird.x);chapter=bio+1;if(bio!==lastBiome){lastBiome=bio;stats.biomes=Math.max(stats.biomes,bio+1);markProgress(100);offer('biome',2,bird.x,bird.y,BIOMES[bio].name);say(BIOMES[bio].name,BIOMES[bio].accent,bird.x+45,bird.y-95,180);}
-  const desired=bird.x-44,lead=activeTower()&&activeTower().x-bird.x<260?activeTower().x-128:desired;camX+=(Math.min(bird.x-16,Math.max(desired,lead))-camX)*.08;
-  const high=bird.y<105?bird.y-95:0;camY+=(clamp(high,-120,22)-camY)*.07;
+  const desired=bird.x-(bird.grounded?40:14);camX+=(desired-camX)*.14;
+  const t=activeTower(),c=t&&chooseCore(t),q=t&&c&&corePos(t,c),high=bird.grounded?0:Math.min(bird.y-145,q?q.y-115:bird.y-145);camY+=(clamp(high,-145,18)-camY)*.075;
 }
 function step(){
   showFrame++;sessionStep({reset:()=>resetRun(true)});pres=SHOW.step(showFrame);
   if(state==='run'){
     if(!pres.holdWorld&&showFrame%pres.physicsEvery===0){runFrame++;stepAct();ensureTowers();updateBird();stepTowers();if(runFrame>=FINAL_FRAME)finishRun();}
   }else if(state==='ending'){resultT--;if(resultT<=0){if(playing())gameOver(lastOutcome);resetRun(true);}}
-  stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+  stepScarf();stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
 }
 
 function skyBands(b){for(let i=0;i<7;i++)rect(0,i*H/7,W,H/7+1,mix(b.sky0,b.sky1,i/6));}
@@ -419,90 +560,164 @@ function drawCore(t,c){
   else{poly([[0,-6],[2,-2],[6,-2],[3,1],[4,5],[0,3],[-4,5],[-3,1],[-6,-2],[-2,-2]],s.c);rect(-1,-1,2,2,CREAM);}
   ctx.restore();
 }
-function drawTower(t){if(t.x<camX-90||t.x>camX+W+90)return;for(const b of t.blocks)drawMaterialBlock(b);for(const c of t.cores)drawCore(t,c);
-  const x=t.x-camX,y=t.base-camY;if(!t.toppled){const wave=Math.sin(showFrame*.09+t.id)*2,fc=BIOMES[t.biome].accent;poly([[x-1,y-73],[x+1,y-73],[x+1,y-88],[x+12+wave,y-84],[x+1,y-80]],fc);rect(x-1,y-88,2,16,'#4b3b36');
-    // Tiny tower keepers make the architecture inhabited and react to approach.
-    const alert=bird.x>t.x-180;for(const side of[-1,1]){const sx=x+side*10,sy=y-31;rect(sx-2,sy-3,4,5,'#5b416f');rect(sx-1,sy-5,3,3,'#d6b4a1');rect(sx+(alert?side:0),sy-4,1,1,alert?CORAL:CREAM);}}
+function drawSkyRig(t){
+  if(t.toppled)return;const b=BIOMES[t.biome],pulse=Math.sin(showFrame*.055+t.id)*2;ctx.save();ctx.translate(t.x-camX,t.base-camY);ctx.scale(FORT_SCALE,FORT_SCALE);const x=0,y=0;
+  ctx.globalAlpha=.72;
+  if(t.type===0){const cy=y-78;line([[x,cy+8],[x,y-58]],'#6b5043',2);ctx.strokeStyle=b.accent;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,cy,8,0,TAU);ctx.stroke();for(let i=0;i<4;i++){const a=showFrame*.035+i*TAU/4;line([[x,cy],[x+Math.cos(a)*17,cy+Math.sin(a)*17]],i%2?CREAM:b.accent,2);}ctx.lineWidth=1;}
+  else if(t.type===1){for(const side of[-1,1]){const bx=x+side*17,by=y-77+side*pulse;ctx.fillStyle=side<0?CORAL:GOLD;ctx.beginPath();ctx.ellipse(bx,by,11,15,side*.12,0,TAU);ctx.fill();poly([[bx-4,by+12],[bx+4,by+12],[bx,by+18]],mix(side<0?CORAL:GOLD,INK,.25));line([[bx,by+18],[x+side*10,y-48]],CREAM);}}
+  else if(t.type===2){const ky=y-83+pulse;poly([[x,ky-15],[x+25,ky],[x,ky+12],[x-25,ky]],b.accent);poly([[x,ky-11],[x+19,ky],[x,ky+7]],mix(b.accent,CREAM,.45));line([[x-20,ky],[x-7,y-55],[x+20,ky],[x+7,y-55]],CREAM);}
+  else if(t.type===3){for(const side of[-1,1]){const px=x+side*24,py=y+3;rect(px-8,py-2,16,4,'#4c5c69');ctx.strokeStyle=CYAN;ctx.beginPath();ctx.arc(px,py,7,0,TAU);ctx.stroke();const a=showFrame*.09*side;line([[px-Math.cos(a)*10,py-Math.sin(a)*10],[px+Math.cos(a)*10,py+Math.sin(a)*10]],CREAM,2);}for(let i=0;i<3;i++){ctx.fillStyle=mix(b.sky1,CREAM,.35);ctx.beginPath();ctx.arc(x-12+i*12,y+13+(i%2)*3,7,0,TAU);ctx.fill();}}
+  else{const zy=y-87+pulse;ctx.fillStyle=mix(b.accent,'#ffffff',.18);ctx.beginPath();ctx.ellipse(x,zy,30,12,0,0,TAU);ctx.fill();poly([[x-22,zy],[x,zy-18],[x+22,zy],[x,zy+7]],b.accent);rect(x-9,zy-3,18,6,'#f7e8bd');line([[x-20,zy+7],[x-10,y-52],[x+20,zy+7],[x+10,y-52]],GOLD);}
+  ctx.globalAlpha=1;ctx.restore();
 }
-function drawPickups(){for(const r of airRings)if(!r.taken&&r.x>camX-12&&r.x<camX+W+12){const x=r.x-camX,y=r.y-camY,q=3+Math.sin(showFrame*.1+r.spin);ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(x,y,q,5,showFrame*.035+r.spin,0,TAU);ctx.stroke();ctx.lineWidth=1;rect(x-1,y-1,2,2,CREAM);}}
+function drawTower(t){if(t.x<camX-120||t.x>camX+W+120)return;drawSkyRig(t);for(const b of t.blocks)drawMaterialBlock(b);for(const c of t.cores)drawCore(t,c);
+  const x=t.x-camX,y=t.base-camY;if(!t.toppled){const wave=Math.sin(showFrame*.09+t.id)*2,fc=BIOMES[t.biome].accent;ctx.save();ctx.translate(x,y);ctx.scale(FORT_SCALE,FORT_SCALE);poly([[-1,-73],[1,-73],[1,-88],[12+wave,-84],[1,-80]],fc);rect(-1,-88,2,16,'#4b3b36');
+    // Tiny tower keepers make the architecture inhabited and react to approach.
+    const alert=bird.x>t.x-180;for(const side of[-1,1]){const sx=side*10,sy=-31;rect(sx-2,sy-3,4,5,'#5b416f');rect(sx-1,sy-5,3,3,'#d6b4a1');rect(sx+(alert?side:0),sy-4,1,1,alert?CORAL:CREAM);}ctx.restore();}
+}
+function drawPickups(){
+  for(const c of groundCoins)if(!c.taken&&c.x>camX-12&&c.x<camX+W+12){const x=c.x-camX,y=c.y-camY,w=2+Math.abs(Math.sin(showFrame*.08+c.spin))*3;ctx.fillStyle=GOLD;ctx.beginPath();ctx.ellipse(x,y,w,4,0,0,TAU);ctx.fill();rect(x-1,y-2,2,4,CREAM);}
+  for(const r of airRings)if(!r.taken&&r.x>camX-12&&r.x<camX+W+12){const x=r.x-camX,y=r.y-camY,q=3+Math.sin(showFrame*.1+r.spin);ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(x,y,q,5,showFrame*.035+r.spin,0,TAU);ctx.stroke();ctx.lineWidth=1;rect(x-1,y-1,2,2,CREAM);}
+}
 function drawPlan(){
-  const t=activeTower(),c=t&&chooseCore(t);if(!t||!c||t.toppled||t.blocks.some(b=>b.falling))return;const p=corePos(t,c),x=p.x-camX,y=p.y-camY;if(x>-10&&x<W+10){ctx.globalAlpha=.85;ctx.strokeStyle=CORE_STYLE[c.kind].c;ctx.strokeRect(Math.round(x-8)+.5,Math.round(y-8)+.5,16,16);ctx.globalAlpha=1;}
-  if(plan&&typeof globalThis.__NO_LOOKAHEAD==='undefined'){ctx.globalAlpha=.65;for(const q of plan.points||[]){const px=q.x-camX,py=q.y-camY;if(px>2&&px<W-2&&py>34&&py<H-5){ctx.strokeStyle=CREAM;ctx.strokeRect(Math.round(px)-1.5,Math.round(py)-1.5,3,3);}}ctx.globalAlpha=1;}
-  if(x>12&&x<W-12){const label=CORE_STYLE[c.kind].label,w=label.length*3.6+8;ctx.globalAlpha=.85;rect(clamp(x-w/2,2,W-w-2),y-18,w,9,INK);ctx.globalAlpha=1;ctx.fillStyle=CORE_STYLE[c.kind].c;ctx.font='bold 6px monospace';ctx.fillText(label,clamp(x-label.length*1.8,5,W-label.length*3.6-4),y-11);}
+  const t=activeTower(),c=t&&chooseCore(t),falling=t&&t.blocks.some(b=>b.falling),p=t&&c&&corePos(t,c);
+  if(p&&!t.toppled&&!falling){const x=p.x-camX,y=p.y-camY,tc=CORE_STYLE[c.kind].c;
+    if(x>-10&&x<W+10){ctx.globalAlpha=.88;ctx.strokeStyle=tc;ctx.strokeRect(Math.round(x-9)+.5,Math.round(y-9)+.5,18,18);line([[x-12,y],[x-7,y],[x+7,y],[x+12,y]],tc);ctx.globalAlpha=1;}
+    else if(x>=W-10){const ey=clamp(y,50,310),ix=W-18;ctx.globalAlpha=.92;ctx.strokeStyle=tc;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(ix,ey-10,5,7,0,0,TAU);ctx.stroke();ctx.lineWidth=1;line([[ix-3,ey-4],[ix-4,ey+1],[ix+3,ey-4],[ix+4,ey+1]],CREAM);rect(ix-6,ey,12,9,INK);ctx.strokeStyle=tc;ctx.strokeRect(ix-5.5,ey+.5,11,8);rect(ix-1,ey+2,3,3,tc);poly([[W-2,ey+4],[W-8,ey],[W-8,ey+8]],tc);ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText(Math.max(1,Math.ceil((p.x-bird.x)/100))+'00',W-34,ey+16);ctx.globalAlpha=1;}
+    if(plan&&typeof globalThis.__NO_LOOKAHEAD==='undefined'){ctx.globalAlpha=.72;let n=0;for(const q of plan.points||[]){const px=q.x-camX,py=q.y-camY;if(px>4&&px<W-4&&py>34&&py<H-22){const s=2+(n++%2);poly([[px-s,py],[px,py-s-1],[px+s+1,py],[px,py+s]],n%2?CREAM:tc);}}ctx.globalAlpha=1;}
+    if(x>15&&x<W-15){const label=CORE_STYLE[c.kind].label,w=label.length*3.6+8;ctx.globalAlpha=.86;rect(clamp(x-w/2,2,W-w-2),y-20,w,9,INK);ctx.globalAlpha=1;ctx.fillStyle=tc;ctx.font='bold 6px monospace';ctx.fillText(label,clamp(x-label.length*1.8,5,W-label.length*3.6-4),y-13);}
+  }
+  if(!bird.grounded&&landingPlan){const x=landingPlan.x-camX,y=terrainY(landingPlan.x)-camY,good=landingPlan.hard<1.25&&landingPlan.error<46,lc=good?MINT:CORAL;
+    if(x>8&&x<W-8){ctx.globalAlpha=.82;line([[x-12,y-4],[x-12,y-10],[x-7,y-10]],lc,2);line([[x+12,y-4],[x+12,y-10],[x+7,y-10]],lc,2);ctx.fillStyle=lc;ctx.font='bold 6px monospace';ctx.fillText(good?'LAND':'PULL UP',clamp(x-(good?7:13),3,W-(good?14:29)),y-13);ctx.globalAlpha=1;}}
+}
+function drawRouteRibbon(){
+  const y0=337,h=23;ctx.globalAlpha=.9;rect(0,y0,W,h,INK);ctx.globalAlpha=1;line([[0,y0],[W,y0]],'#30465c');
+  const samples=[];for(let i=0;i<=40;i++){const wx=bird.x+i/40*ROUTE_RANGE,gy=terrainY(wx),sy=y0+20-clamp((305-gy)*.055,0,12);samples.push([i/40*W,sy]);}line(samples,BIOMES[biomeIndex(bird.x)].edge,2);
+  for(const c of groundCoins)if(!c.taken&&c.x>=bird.x&&c.x<=bird.x+ROUTE_RANGE){const x=(c.x-bird.x)/ROUTE_RANGE*W,gy=terrainY(c.x),y=y0+18-clamp((305-gy)*.055,0,12);rect(x,y-3,1,1,GOLD);}
+  const t=activeTower(),core=t&&chooseCore(t),p=t&&core&&corePos(t,core);if(p){const x=clamp((p.x-bird.x)/ROUTE_RANGE*W,7,W-5),alt=clamp((t.ground-p.y)/175,0,1),y=y0+14-alt*10,tc=CORE_STYLE[core.kind].c;poly([[x,y-4],[x+4,y],[x,y+4],[x-4,y]],tc);rect(x-1,y-1,2,2,CREAM);}
+  if(landingPlan){const x=clamp((landingPlan.x-bird.x)/ROUTE_RANGE*W,5,W-5),gy=terrainY(landingPlan.x),y=y0+20-clamp((305-gy)*.055,0,12),lc=landingPlan.hard<1.25&&landingPlan.error<46?MINT:CORAL;line([[x-4,y-4],[x,y],[x+4,y-4]],lc,2);}
+  poly([[4,y0+9],[9,y0+12],[4,y0+15]],bird.grounded?GOLD:CYAN);ctx.fillStyle='#8299ae';ctx.font='bold 5px monospace';ctx.fillText(bird.grounded?'GROUND CHARGE':'SKY ROUTE',12,y0+8);
+}
+function drawScarf(){
+  if(!scarf||!scarf.nodes||scarf.nodes.length<2)return;const anchor=scarfAnchor();
+  if(Math.hypot(scarf.nodes[0].x-anchor.x,scarf.nodes[0].y-anchor.y)>30)return;
+  const pts=scarf.nodes.map(n=>({x:n.x-camX,y:n.y-camY}));ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  for(const pass of[{c:'#672337',w:3},{c:'#f0526b',w:1.8}])for(let i=0;i<pts.length-1;i++){
+    ctx.strokeStyle=pass.c;ctx.lineWidth=Math.max(pass.c==='#672337'?1.45:.9,pass.w-i*.24);ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[i+1].x,pts[i+1].y);ctx.stroke();
+  }
+  const a=pts[pts.length-2],b=pts[pts.length-1],dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1,nx=-dy/d,ny=dx/d,bx=a.x+dx*.7,by=a.y+dy*.7;
+  for(const pass of[{c:'#672337',w:2.1},{c:'#ff7180',w:1.1}])for(const side of[-1,1]){
+    ctx.strokeStyle=pass.c;ctx.lineWidth=pass.w;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(b.x+nx*side*1.35,b.y+ny*side*1.35);ctx.stroke();
+  }
+  ctx.restore();
 }
 function drawBird(){
-  const x=bird.x-camX,y=bird.y-camY,speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),pose=bird.pose,face=1;
-  if(bird.grounded){ctx.globalAlpha=.18;ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(x,y+7,8+speed,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
-  if(speed>4.2){ctx.globalAlpha=clamp((speed-4.2)/4,0,.5);for(let i=1;i<=4;i++)line([[x-10-i*8,y-3+i%2*3],[x-2-i*3,y-3+i%2*3]],i%2?GOLD:CYAN);ctx.globalAlpha=1;}
-  ctx.save();ctx.translate(x,y);const angle=pose==='tumble'?bird.rot+Math.sin(showFrame*.45)*1.8:bird.rot;ctx.rotate(angle);
-  // Two-segment scarf with a forked tail, visibly stretched by momentum.
-  const scarfLen=10+clamp(speed*2,0,13),flutter=Math.sin(showFrame*.18)*2;poly([[-3,-2],[-9,-4],[-scarfLen,flutter-3],[-scarfLen+3,flutter],[-8,0]],'#e94d5e');
-  poly([[-scarfLen+1,flutter-3],[-scarfLen-5,flutter-6],[-scarfLen-2,flutter],[-scarfLen-6,flutter+4],[-scarfLen+3,flutter]],'#ff6b6f');
-  const open=pose==='soar'?1:pose==='brace'?.45:pose==='dive'?.08:.25,flap=Math.sin(showFrame*.24)*2;
-  ctx.save();ctx.rotate(-.25-open*.35);poly([[-1,0],[-5-open*9,-2-flap*open],[-10-open*5,1],[-4,4],[1,3]],'#315f86');poly([[-3,1],[-8-open*7,0],[-5,3]],'#7bc3d8');ctx.restore();
-  ctx.save();ctx.scale(1,-1);ctx.rotate(.15+open*.42);poly([[-1,0],[-4-open*9,-2+flap*open],[-9-open*6,2],[-3,4],[2,2]],'#284d76');poly([[-2,1],[-7-open*7,0],[-4,3]],'#65aeca');ctx.restore();
-  // Plump body, belly, helmet, face and beak: a character in every pose.
-  ctx.fillStyle=bird.hitT?CREAM:'#286681';ctx.beginPath();ctx.ellipse(0,0,7.5,6,0,0,TAU);ctx.fill();ctx.fillStyle='#e8d8b5';ctx.beginPath();ctx.ellipse(2,2,4.5,3.5,0,0,TAU);ctx.fill();
-  poly([[-5,-4],[-1,-8],[5,-6],[7,-2],[2,-4]],persona.c);rect(-1,-7,5,2,mix(persona.c,'#ffffff',.35));
-  const eyeX=pose==='brace'?4:3;if(pose==='dive')line([[eyeX,-3],[eyeX+2,-3]],INK,1.5);else{rect(eyeX,-4,2,2,CREAM);rect(eyeX+1,-4,1,1,pose==='impact'?CORAL:INK);}
-  poly([[6,-2],[11,0],[6,2]],GOLD);if(pose==='brace')rect(7,-3,3,1,CREAM);
-  if(bird.grounded){const step=Math.sin(bird.runPhase);line([[-2,4],[-3+step*2,8]],'#55382f',2);line([[2,4],[3-step*2,8]],'#55382f',2);rect(-5+step*2,7,4,2,GOLD);rect(1-step*2,7,4,2,GOLD);}
+  const x=bird.x-camX,y=bird.y-camY,speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),pose=bird.pose,
+    bodyA=birdBodyAngle(),landingReady=!bird.grounded&&!!landingPlan&&landingPlan.x>bird.x&&landingPlan.x-bird.x<125&&bird.vy>-.05,
+    flap=Math.sin(showFrame*.22);
+  if(bird.grounded){ctx.globalAlpha=.18;ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(x,y+8,8+speed,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  if(speed>4.2&&typeof globalThis.__HIDE_MOTION_TRAILS==='undefined'){ctx.globalAlpha=clamp((speed-4.2)/4,0,.5);for(let i=1;i<=4;i++)line([[x-10-i*8,y-3+i%2*3],[x-2-i*3,y-3+i%2*3]],i%2?GOLD:CYAN);ctx.globalAlpha=1;}
+  drawScarf();
+  if(pose==='impact'){ctx.globalAlpha=.5;ctx.strokeStyle=GOLD;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+4,y,11+bird.hitT%3,0,TAU);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=1;}
+  let rear=[[-4,0],[-8,-2],[-10,1],[-4,3]],front=[[-2,1],[-7,3],[-9,5],[-2,4]];
+  if(pose==='climb'){rear=[[-3,1],[-8,-8-flap],[-13,-6],[-6,2]];front=[[-2,1],[-7,7+flap*.5],[-11,5],[-4,2]];}
+  else if(pose==='soar'){rear=[[-3,0],[-10,-5-flap],[-14,-1],[-5,2]];front=[[-2,1],[-10,4+flap*.4],[-13,2],[-4,1]];}
+  else if(pose==='descend'){rear=[[-3,0],[-7,-7-flap*.5],[-12,-4],[-5,2]];front=[[-2,1],[-7,7],[-11,4],[-4,1]];}
+  else if(pose==='brace'||pose==='impact'){rear=[[-4,0],[-12,-2],[-9,1],[-4,3]];front=[[-3,2],[-11,3],[-8,5],[-2,4]];}
+  else if(pose==='tumble'){rear=[[-4,0],[-9,-5],[-11,0],[-4,3]];front=[[-2,1],[-6,7],[-10,5],[-3,3]];}
+  else if(pose==='dive'){rear=[[-4,0],[-11,-1],[-8,2],[-3,3]];front=[[-3,2],[-9,3],[-7,5],[-2,4]];}
+  ctx.save();ctx.translate(x,y);ctx.rotate(bodyA);ctx.scale(.78,.78);
+  // Short navy tail feathers establish the bird anatomy; the bright cloth begins at the neck.
+  poly([[-6,-1],[-11,-3],[-8,1],[-11,3],[-5,3]],'#173b5b');
+  poly(rear,'#244b70');poly(rear.map((p,i)=>[p[0]+(i?1:0),p[1]+1]),'#315f86');
+  if(bird.grounded||landingReady){const stride=bird.grounded?Math.sin(bird.runPhase)*2:1.5;
+    line([[-3,4],[-4+stride,8]],'#563729',2);line([[1,4],[2-stride,8]],'#563729',2);rect(-7+stride,7,5,2,GOLD);rect(0-stride,7,5,2,GOLD);
+  }
+  ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(-2,1,7,6,0,0,TAU);ctx.fill();ctx.fillStyle=bird.hitT?CREAM:'#286681';ctx.beginPath();ctx.ellipse(-2,1,6,5,0,0,TAU);ctx.fill();
+  ctx.fillStyle='#d7c59f';ctx.beginPath();ctx.ellipse(0,3,3.5,2.2,0,0,TAU);ctx.fill();
+  poly(front,bird.hitT?GOLD:'#3c7898');poly([front[0],front[1],front[3]],'#70bdd0');
+  let headWorld=bird.grounded?bodyA*.18:clamp((bird.rot||0)*.34,-.48,.48);const t=activeTower(),c=t&&chooseCore(t),target=t&&c&&corePos(t,c);
+  if(!bird.grounded&&target&&target.x>bird.x-20&&target.x-bird.x<380)headWorld=clamp(Math.atan2(target.y-bird.y,target.x-bird.x),-.58,.48);
+  if(landingReady)headWorld=clamp(Math.atan2(landingPlan.y-bird.y,landingPlan.x-bird.x),-.28,.48);
+  ctx.save();ctx.translate(1,-2);ctx.rotate(headWorld-bodyA);
+  ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(3,0,5.3,4.8,0,0,TAU);ctx.fill();ctx.fillStyle='#f1dfb8';ctx.beginPath();ctx.ellipse(3,0,4.4,4,0,0,TAU);ctx.fill();
+  // Aviator cap stays above the face instead of replacing it.
+  poly([[-1,-1],[0,-4],[4,-5],[7,-2],[5,-1],[1,-2]],persona.c);rect(1,-4,4,1,mix(persona.c,'#ffffff',.4));
+  if(pose==='dive')line([[4,-1],[7,-1]],INK,1.5);else{rect(4,-2,3,3,INK);rect(5,-2,1,1,pose==='impact'?CORAL:CREAM);}
+  poly([[7,-1],[12,1],[7,3]],GOLD);line([[7,3],[11,1]],'#8e5b2d');
+  ctx.restore();
+  poly([[-1,-4],[3,-2],[1,1],[-2,-1]],INK);poly([[-.4,-3.2],[2.2,-2],[.8,.2],[-1.2,-1]],'#f0526b');
   ctx.restore();
 }
 function drawHUD(){
-  ctx.globalAlpha=.9;rect(0,0,W,30,INK);ctx.globalAlpha=1;const b=BIOMES[biomeIndex(bird.x)],speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),moment=clamp(speed/7.5,0,1);
+  ctx.globalAlpha=.9;rect(0,0,W,30,INK);ctx.globalAlpha=1;const b=BIOMES[biomeIndex(bird.x)],speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),power=bird.grounded?clamp((speed+bird.charge*.75)/7.5,0,1):bird.energy;
   ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('WINGRUSH',4,10);ctx.fillStyle=b.accent;ctx.fillText('C'+chapter,142,10);
-  ctx.font='bold 6px monospace';ctx.fillStyle=persona.c;ctx.fillText((bird.intent&&bird.intent.tactic||'FIND THE VALLEY').slice(0,22),4,20);
-  ctx.fillStyle='#91a8bd';ctx.fillText(stats.towersToppled+' TOWERS',112,20);rect(4,24,104,3,'#223348');rect(4,24,104*moment,3,moment>.72?GOLD:moment>.45?MINT:CYAN);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.c;ctx.fillText((bird.intent&&bird.intent.tactic||'FIND THE VALLEY').slice(0,20),4,20);
+  ctx.fillStyle=bird.grounded?GOLD:CYAN;ctx.fillText(bird.grounded?'MOM':'LIFT',84,20);ctx.fillStyle='#91a8bd';ctx.fillText(stats.towersToppled+' FORTS',116,20);
+  rect(4,24,104,3,'#223348');rect(4,24,104*power,3,power>.72?GOLD:power>.38?MINT:CORAL);
   for(let i=0;i<4;i++)rect(113+i*10,24,7,3,i<Math.min(4,bird.combo)?GOLD:'#28384c');
-  if(state==='ending'){ctx.globalAlpha=.86;rect(12,130,136,74,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(12.5,130.5,135,73);ctx.font='bold 12px monospace';ctx.fillStyle=lastOutcome==='SKYLINE FREE'?GOLD:CREAM;ctx.fillText(lastOutcome,lastOutcome==='SKYLINE FREE'?30:27,161);ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;ctx.fillText(stats.towersToppled+' TOWERS · '+stats.highFlights+' GREAT FLIGHTS',25,182);}
+  if(state==='ending'){ctx.globalAlpha=.86;rect(12,130,136,74,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(12.5,130.5,135,73);ctx.font='bold 12px monospace';ctx.fillStyle=lastOutcome==='SKYLINE FREE'?GOLD:CREAM;ctx.fillText(lastOutcome,lastOutcome==='SKYLINE FREE'?30:27,161);ctx.font='bold 7px monospace';ctx.fillStyle=CREAM;ctx.fillText(stats.towersToppled+' FORTS · '+stats.highFlights+' SKY RUNS',25,182);}
   drawSession();
 }
 function render(){
   const bi=biomeIndex(bird.x),b=BIOMES[bi];skyBands(b);drawFarWorld(bi);drawWeather(bi);drawProps(false);drawGround();preDraw();
-  for(const t of towers)drawTower(t);drawPickups();drawPlan();drawBird();
+  if(typeof globalThis.__HIDE_FORTS==='undefined')for(const t of towers)drawTower(t);drawPickups();drawPlan();if(typeof globalThis.__HIDE_BIRD==='undefined')drawBird();
   ctx.save();ctx.translate(-camX,0);drawParts(camY);drawRings(camY);ctx.restore();
   for(const t of texts){const x=t.x-camX,y=t.y-camY,a=Math.min(1,t.t/16);ctx.globalAlpha=a;ctx.font='bold 7px monospace';ctx.fillStyle=t.c;ctx.fillText(t.s,clamp(x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;
-  drawProps(true);postDraw();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.12;rect(0,30,W,H-30,GOLD);ctx.globalAlpha=1;}drawHUD();
+  drawProps(true);postDraw();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.12;rect(0,30,W,H-30,GOLD);ctx.globalAlpha=1;}drawRouteRibbon();drawHUD();
 }
 
-function finite(){return[bird.x,bird.y,bird.vx,bird.vy,bird.speed,camX,camY,runFrame].every(Number.isFinite)&&towers.every(t=>t.blocks.every(b=>[b.x,b.y,b.vx,b.vy,b.rot].every(Number.isFinite)));}
+function finite(){return[bird.x,bird.y,bird.vx,bird.vy,bird.speed,bird.energy,bird.ram,camX,camY,runFrame].every(Number.isFinite)&&towers.every(t=>t.blocks.every(b=>[b.x,b.y,b.vx,b.vy,b.rot].every(Number.isFinite)))&&!!scarf&&scarf.nodes.every(n=>[n.x,n.y,n.px,n.py].every(Number.isFinite));}
 function round(v,n){const p=Math.pow(10,n||4);return Math.round(v*p)/p;}
-globalThis.__wingrushProbe=()=>({state,runFrame,showFrame,chapter,biome:BIOMES[biomeIndex(bird.x)].name,family:HILLS[segmentInfo(Math.floor(bird.x/SEG)).family].name,
-  persona:persona.name,finite:finite(),bird:{x:bird.x,y:bird.y,vx:bird.vx,vy:bird.vy,speed:bird.speed,grounded:bird.grounded,charge:bird.charge,wing:bird.wing,pose:bird.pose,
-    tactic:bird.intent&&bird.intent.tactic,targetId:bird.intent&&bird.intent.targetId},target:activeTower()&&activeTower().id,plan:plan&&{releaseX:plan.releaseX,trim:plan.trim,min:plan.min,targetId:plan.targetId,coreId:plan.coreId},
-  stats:Object.assign({},stats),act:{phase:act.phase,type:act.type,dir:act.dir,notes:act.notes.slice()},show:SHOW.probe(),playing:playing(),outcome:lastOutcome});
+function fortVisualBox(t){if(!t)return null;const w=40,h=62;return{x:t.x-camX-w/2,y:t.base-camY-53,width:w,height:h};}
+function scarfVisualBox(){if(!scarf||!scarf.nodes.length)return null;const xs=scarf.nodes.map(n=>n.x-camX),ys=scarf.nodes.map(n=>n.y-camY),pad=2;
+  return{x:Math.min(...xs)-pad,y:Math.min(...ys)-pad,width:Math.max(...xs)-Math.min(...xs)+pad*2,height:Math.max(...ys)-Math.min(...ys)+pad*2};}
+globalThis.__wingrushProbe=()=>{const t=activeTower(),c=t&&chooseCore(t),q=t&&c&&corePos(t,c),s=Object.assign({},stats);if(!Number.isFinite(s.minTargetLead))s.minTargetLead=0;return{
+  state,runFrame,showFrame,chapter,biome:BIOMES[biomeIndex(bird.x)].name,family:HILLS[segmentInfo(Math.floor(bird.x/SEG)).family].name,persona:persona.name,finite:finite(),
+  bird:{x:bird.x,y:bird.y,vx:bird.vx,vy:bird.vy,speed:bird.speed,grounded:bird.grounded,charge:bird.charge,energy:bird.energy,ram:bird.ram,wing:bird.wing,pose:bird.pose,
+    vertical:bird.intent&&bird.intent.vertical,tactic:bird.intent&&bird.intent.tactic,targetId:bird.intent&&bird.intent.targetId,flightMode:bird.flightMode,landedAtX:bird.landedAtX},
+  target:t&&q&&{id:t.id,kind:c.kind,x:q.x,y:q.y,distance:q.x-bird.x,screenX:q.x-camX,screenY:q.y-camY,hit:t.hit,lockFrames:Math.max(0,showFrame-t.lockAt)},
+  plan:plan&&{releaseX:plan.releaseX,bias:plan.bias,gain:plan.gain,min:plan.min,targetId:plan.targetId,coreId:plan.coreId},
+  landing:landingPlan&&{x:landingPlan.x,y:landingPlan.y,distance:landingPlan.x-bird.x,aimX:landingPlan.aimX,predictedX:landingPlan.predictedX,hard:landingPlan.hard,error:landingPlan.error},
+  stats:s,act:{phase:act.phase,type:act.type,dir:act.dir,notes:act.notes.slice()},show:SHOW.probe(),playing:playing(),outcome:lastOutcome};};
 globalThis.__wingrushVisualProbe=()=>{
-  const t=activeTower(),speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),falling=t?t.blocks.filter(b=>b.falling&&!b.settled).length:0;
+  const t=activeTower(),c=t&&chooseCore(t),q=t&&c&&corePos(t,c),speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),falling=t?t.blocks.filter(b=>b.falling&&!b.settled).length:0;
   return{frame:showFrame,biome:BIOMES[biomeIndex(bird.x)].name,
     hillFamily:HILLS[segmentInfo(Math.floor(bird.x/SEG)).family].name,speed,airborne:!bird.grounded,
-    altitude:Math.max(0,terrainY(bird.x)-RADIUS-bird.y),
+    altitude:Math.max(0,terrainY(bird.x)-RADIUS-bird.y),energy:bird.energy,routeVisible:true,targetDistance:q?q.x-bird.x:null,targetLead:t?Math.max(0,showFrame-t.lockAt):0,
     danger:bird.hitT>0||bird.tumbleT>0||act.phase==='live'||!!(t&&t.x-bird.x<65&&!t.toppled),
     towerPhase:!t?'none':t.toppled||falling>0?'collapse':t.x-bird.x<150?'approach':'distant',
-    towerSerial:t?t.id:towerSerial,impactSerial:stats.impacts,
-    playerBox:{x:bird.x-camX-18,y:bird.y-camY-14,width:36,height:28}};
+    towerSerial:t?t.id:towerSerial,impactSerial:stats.impacts,targetId:t&&t.id,targetHits:stats.targetHits,landings:stats.landings,guidedLandings:stats.guidedLandings,
+    landing:landingPlan&&{x:landingPlan.x,y:landingPlan.y,distance:landingPlan.x-bird.x,screenX:landingPlan.x-camX,hard:landingPlan.hard},
+    bodyBox:{x:bird.x-camX-10,y:bird.y-camY-10,width:20,height:20},playerBox:{x:bird.x-camX-16,y:bird.y-camY-12,width:30,height:24},
+    scarfBox:scarfVisualBox(),fortBox:fortVisualBox(t)};
 };
 globalThis.__wingrushSignature=()=>JSON.stringify({state,runFrame,worldSeed,chapter,persona:persona.name,
-  b:[bird.x,bird.y,bird.vx,bird.vy,bird.speed,bird.grounded,bird.charge,bird.wing,bird.hitT,bird.tumbleT,bird.boostT].map(v=>typeof v==='number'?round(v,4):v),
-  t:towers.map(t=>[t.id,t.toppled,t.resolved,...t.cores.map(c=>c.triggered?1:0),...t.blocks.flatMap(b=>[b.id,b.broken,b.falling,b.settled,round(b.x,3),round(b.y,3),round(b.rot,3)])]),
-  a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.dir],s:[stats.launches,stats.landings,stats.highFlights,stats.perfectLandings,stats.roughLandings,stats.impacts,stats.blocksBroken,stats.towersToppled,stats.cores,stats.boosts,stats.rings,stats.misses,stats.lapses]});
+  b:[bird.x,bird.y,bird.vx,bird.vy,bird.speed,bird.grounded,bird.charge,bird.energy,bird.ram,bird.wing,bird.hitT,bird.tumbleT,bird.boostT,bird.flightMode,bird.landedAtX,bird.guidanceAttempted].map(v=>typeof v==='number'?round(v,4):v),
+  t:towers.map(t=>[t.id,t.toppled,t.resolved,t.hit,...t.cores.map(c=>c.triggered?1:0),...t.blocks.flatMap(b=>[b.id,b.broken,b.falling,b.settled,round(b.x,3),round(b.y,3),round(b.rot,3)])]),
+  c:[coinSerial,...groundCoins.map(c=>c.id)],f:scarf.nodes.flatMap(n=>[round(n.x,3),round(n.y,3),round(n.px,3),round(n.py,3)]),
+  a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.dir],s:[stats.launches,stats.landings,stats.highFlights,stats.perfectLandings,stats.roughLandings,stats.impacts,stats.blocksBroken,stats.towersToppled,stats.cores,stats.boosts,stats.rings,stats.coins,stats.targets,stats.targetHits,stats.guidedAttempts,stats.guidedLandings,stats.microHops,stats.misses,stats.lapses]});
 globalThis.__wingrushVisualBeats=['opening','momentum','major-flight','tower','impact','later-biome','apex'];
 function primeAt(x,forceType){
-  bird=makeBird(x);towers=[];airRings=[];
-  const first=Math.max(0,Math.ceil((x+145-900)/TOWER_GAP));towerSerial=first;
-  towers.push(makeTower(towerSerial++,forceType));ensureTowers();
-  plan=buildPlan(activeTower());planAt=showFrame;camX=Math.max(0,bird.x-44);camY=0;
+  bird=makeBird(x);initScarf();towers=[];airRings=[];groundCoins=[];landingPlan=null;lockedTarget=-1;
+  const first=Math.max(0,Math.ceil((x+145-FIRST_FORT)/FORT_GAP));towerSerial=first;coinSerial=Math.max(0,Math.floor((x-300-110)/28));
+  towers.push(makeTower(towerSerial++,forceType,x+260));ensureTowers();const t=activeTower();if(t){lockedTarget=t.id;t.lockAt=showFrame;}
+  plan=buildPlan(t);planAt=showFrame;camX=Math.max(0,bird.x-40);camY=0;
 }
 globalThis.__wingrushSetVisualBeat=name=>{
-  const map={'opening':{bio:0,off:100,type:0},'momentum':{bio:0,off:2500,type:1},'major-flight':{bio:1,off:3100,type:2},tower:{bio:2,off:2600,type:3},impact:{bio:2,off:5200,type:4},'later-biome':{bio:3,off:4200,type:2},apex:{bio:4,off:5200,type:4}},q=map[name]||map.opening;
+  const map={'opening':{bio:0,off:100,type:0},'momentum':{bio:0,off:2500,type:1},'major-flight':{bio:1,off:3100,type:2},tower:{bio:2,off:2600,type:3},impact:{bio:2,off:5200,type:4},'fort-crown':{bio:4,off:3600,type:4},'later-biome':{bio:3,off:4200,type:2},apex:{bio:4,off:5200,type:4}},q=map[name]||map.opening;
   primeAt(q.bio*BIOME_SPAN+q.off,q.type);const t=activeTower(),c=t&&chooseCore(t),p=t&&c&&corePos(t,c);
-  if(name==='momentum'){let best=bird.x;for(let x=bird.x;x<bird.x+SEG;x+=3)if(terrainSlope(x)>.65){best=x;break;}bird.x=best;bird.y=terrainY(best)-RADIUS;bird.speed=4.1;bird.vx=4;bird.charge=2.2;bird.intent={dive:true,trim:0,brace:false,tactic:'BANK SPEED'};bird.pose='dive';camX=bird.x-44;}
-  if(name==='major-flight'&&p){Object.assign(bird,{x:p.x-120,y:p.y-95,vx:4.5,vy:-.55,grounded:false,wing:1,airFrames:150,launchY:p.y-15,apexY:p.y-100,intent:{dive:false,trim:.4,brace:false,targetId:t.id,coreId:c.id,tactic:'SOAR TO THE CORE'},pose:'soar'});camX=bird.x-32;camY=bird.y-94;plan=buildPlan(t);}
-  if(name==='tower'&&t){bird.x=t.x-105;bird.y=terrainY(bird.x)-RADIUS;bird.speed=2.4;bird.intent={dive:true,trim:0,brace:false,targetId:t.id,coreId:c.id,tactic:'BANK SPEED'};camX=t.x-130;plan=buildPlan(t);}
-  if(name==='impact'&&p){Object.assign(bird,{x:p.x-7,y:p.y,vx:4.8,vy:.2,grounded:false,wing:.3,lastX:p.x-14,lastY:p.y-1,intent:{dive:false,trim:0,brace:true,targetId:t.id,coreId:c.id,tactic:'SCARF DOWN · STRIKE'},pose:'brace'});triggerCore(t,c,true);for(let i=0;i<3;i++)breakBlock(t,t.blocks[i],3,i*4);unsupportedCascade(t);camX=t.x-108;}
-  if(name==='later-biome'&&t){bird.x=t.x-100;bird.y=terrainY(bird.x)-RADIUS;bird.speed=3.2;bird.intent={dive:true,trim:0,brace:false,targetId:t.id,coreId:c.id,tactic:'BANK SPEED'};camX=t.x-128;}
-  if(name==='apex'&&t&&c){for(let i=0;i<t.blocks.length;i++)if(i%2===0)breakBlock(t,t.blocks[i],4,i*2);triggerCore(t,c,true);unsupportedCascade(t);for(let i=0;i<22;i++)stepTowers();Object.assign(bird,{x:t.x-28,y:t.base-82,vx:4.2,vy:-1.2,grounded:false,wing:1,intent:{dive:false,trim:.3,brace:false,targetId:t.id,tactic:'ADMIRE THE FALL'},pose:'soar'});offer('visual-apex',3,t.x,t.base-45,'fixture');camX=t.x-95;camY=-12;}
-  return globalThis.__wingrushProbe();
+  if(name==='momentum'){let best=bird.x;for(let x=bird.x;x<bird.x+SEG;x+=3)if(terrainSlope(x)>.65){best=x;break;}bird.x=best;bird.y=terrainY(best)-RADIUS;bird.speed=4.1;bird.vx=4;bird.charge=2.2;bird.intent={dive:true,vertical:0,brace:false,tactic:'BANK LIFT ENERGY'};bird.pose='dive';camX=bird.x-40;}
+  if(name==='major-flight'&&p){Object.assign(bird,{x:p.x-145,y:p.y+28,vx:3.1,vy:-.55,grounded:false,energy:.84,ram:5.4,wing:1,airFrames:180,launchY:p.y+70,apexY:p.y+20,intent:{dive:false,vertical:-.5,brace:false,targetId:t.id,coreId:c.id,tactic:'CLIMB TO THE CORE'},pose:'climb'});camX=bird.x-34;camY=bird.y-145;plan=buildPlan(t);landingPlan=buildLandingPlan();}
+  if(name==='tower'&&t){bird.x=t.x-190;bird.y=terrainY(bird.x)-RADIUS;bird.speed=3.4;bird.charge=1.6;bird.intent={dive:true,vertical:0,brace:false,targetId:t.id,coreId:c.id,tactic:'BANK LIFT ENERGY'};camX=bird.x-24;plan=buildPlan(t);}
+  if(name==='impact'&&p){Object.assign(bird,{x:p.x-9,y:p.y,vx:3.4,vy:.15,grounded:false,energy:.55,ram:5.8,wing:.35,lastX:p.x-16,lastY:p.y-1,intent:{dive:false,vertical:0,brace:true,targetId:t.id,coreId:c.id,tactic:'SCARF LOCK · STRIKE'},pose:'brace'});triggerCore(t,c,true);for(let i=0;i<3;i++)breakBlock(t,t.blocks[i],3,i*4);unsupportedCascade(t);camX=t.x-112;}
+  if(name==='later-biome'&&t){bird.x=t.x-180;bird.y=terrainY(bird.x)-RADIUS;bird.speed=3.8;bird.charge=1.8;bird.intent={dive:true,vertical:0,brace:false,targetId:t.id,coreId:c.id,tactic:'BANK LIFT ENERGY'};camX=t.x-128;plan=buildPlan(t);}
+  if(name==='apex'&&t&&c){for(let i=0;i<t.blocks.length;i++)if(i%2===0)breakBlock(t,t.blocks[i],4,i*2);triggerCore(t,c,true);unsupportedCascade(t);for(let i=0;i<22;i++)stepTowers();Object.assign(bird,{x:t.x-28,y:t.base-82,vx:3.2,vy:-1.2,grounded:false,energy:.7,ram:5.5,wing:1,intent:{dive:false,vertical:-.2,brace:false,targetId:t.id,tactic:'ADMIRE THE FALL'},pose:'soar'});offer('visual-apex',3,t.x,t.base-45,'fixture');camX=t.x-95;camY=-12;}
+  initScarf();return globalThis.__wingrushProbe();
+};
+globalThis.__wingrushSetFortScale=type=>{
+  type=clamp(type|0,0,4);primeAt(type*BIOME_SPAN+1800,type);const t=activeTower();bird.x=t.x-78;bird.y=terrainY(bird.x)-RADIUS;bird.speed=1.4;bird.intent={dive:true,vertical:0,brace:false,targetId:t.id,coreId:t.cores[0].id,tactic:'FORT SCALE'};
+  camX=t.x-80;camY=t.base-180;initScarf();return globalThis.__wingrushProbe();
 };
 globalThis.__wingrushMomentumFixture=()=>{
   // Find a full crest -> valley -> crest phrase, then compare honest policies:
@@ -517,7 +732,7 @@ globalThis.__wingrushMomentumFixture=()=>{
   const base=makeBird(start),dive=Object.assign({},base),coast=Object.assign({},base);dive.speed=coast.speed=1.35;
   const run=(r,useDive)=>{let bank=0,bankCharge=0,launchX=-1,launchY=0,apex=0,airFrames=0,flightDistance=0,landingSpeed=0,maxAirSpeed=0,launched=false;
     for(let i=0;i<720;i++){
-      const hold=useDive&&r.grounded&&r.x<release,ev=advanceBody(r,{dive:hold,trim:0,brace:false},{wind:0,lift:0,slick:0},true);
+      const hold=useDive&&r.grounded&&r.x<release,ev=advanceBody(r,{dive:hold,vertical:0,brace:false},{wind:0,lift:0,slick:0},true);
       if(r.grounded&&r.x>=start&&r.x<=release){bank=Math.max(bank,r.speed);bankCharge=Math.max(bankCharge,r.charge);}
       if(ev.launched&&!launched){launched=true;launchX=r.x;launchY=r.y;apex=r.y;}
       if(launched&&!r.grounded){airFrames++;apex=Math.min(apex,r.y);maxAirSpeed=Math.max(maxAirSpeed,Math.hypot(r.vx,r.vy));}
@@ -536,7 +751,7 @@ globalThis.__wingrushManual=()=>({playing:playing(),x:bird.x,y:bird.y,vx:bird.vx
 globalThis.__wingrushNextRandom=()=>E.random();
 globalThis.__soakProbe=()=>({sig:[Math.round(bird.x*10),Math.round(bird.y*10),bird.pose,towers.reduce((n,t)=>n+t.blocks.filter(b=>b.falling&&!b.settled).length,0)].join('|'),events:eventSerial,progress:progressSerial,finite:finite()});
 
-initSession('wingrush',[["DOWN / SPACE","DIVE · BANK SPEED"],["RELEASE","OPEN WINGS AT THE CREST"],["LEFT / RIGHT","TRIM IN FLIGHT"],["X / SHIFT","BRACE · SHATTER"]]);
+initSession('wingrush',[["DOWN / SPACE","DIVE · BANK LIFT ENERGY"],["RELEASE","LAUNCH INTO THE SKY"],["UP / DOWN","CLIMB · GLIDE · DIVE"],["X / SHIFT","BRACE · SHATTER"]]);
 resetRun(true);start(()=>step(),()=>render());
 </script>
 </html>
