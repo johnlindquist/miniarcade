@@ -27,7 +27,7 @@ const{controllerMux,skillProfile,createRng}=AI;
 // Runtime and the later greed planner share advanceShip; the integrator is pure
 // math on copied numeric state and never reads either engine RNG stream.
 const TAU=Math.PI*2,TOP=30,BOTTOM=329,LEFT=9,RIGHT=151,HOME_X=80,HOME_Y=311;
-const SHIFT_FRAMES=15*60*60,ARK_GOAL=260,SHIP_R=6,SHOT_SPEED=3.7;
+const SHIFT_FRAMES=15*60*60,ARK_GOAL=260,SHIP_R=6,SHOT_SPEED=3.7,CHAIN_PREMIUM=.28;
 const VOID='#050816',VOID2='#0b1230',INK='#07101f',STEEL='#31475f',STEEL2='#172238',
   CREAM='#f4e8c1',PALE='#d7e4ef',CYAN='#69e5ee',BLUE='#5b86e5',GOLD='#ffd166',
   CORAL='#ff6f61',MINT='#5ee6bd',ROCK='#566173',ROCKHI='#929bac',VIOLET='#ad8cff';
@@ -65,6 +65,7 @@ const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
 }});
 
 const angleWrap=a=>{a=(a+Math.PI)%TAU;if(a<0)a+=TAU;return a-Math.PI;};
+const avoidanceSide=turnDelta=>Math.abs(Math.abs(turnDelta)-Math.PI)<1e-7&&typeof globalThis.__NO_PORTABLE_FLANK==='undefined'?-1:(turnDelta>=0?1:-1);
 const finiteBody=b=>b&&['x','y','vx','vy'].every(k=>Number.isFinite(b[k]));
 const speed=b=>Math.hypot(b.vx,b.vy);
 const train=()=>fragments.filter(f=>f.tethered&&!f.dead).sort((a,b)=>a.order-b.order);
@@ -239,9 +240,11 @@ function directorNudge(){
   say('SALVAGE BEACON PING',MINT,75);offer('beacon',1,x,y,'CACHE');ring(x,y,MINT,1.7,28);markEvent();
 }
 
+// The premium is shared by every controller. A three-piece baseline earns one
+// step; only the planner's visible four-to-six-piece trains can compound it.
 function bankHaul(){
   const t=train();if(!t.length)return false;const n=t.length,raw=t.reduce((sum,f)=>sum+f.value,0),
-    value=Math.round(raw*(1+Math.max(0,n-2)*.18)),bonus=value-raw,before=arkStage;
+    value=Math.round(raw*(1+Math.max(0,n-2)*CHAIN_PREMIUM)),bonus=value-raw,before=arkStage;
   t.forEach((f,i)=>bankGhosts.push({x:f.x,y:f.y,fromX:f.x,fromY:f.y,kind:f.kind,index:i,count:n,delay:i*5,t:52+i*5}));
   for(const f of t)f.dead=true;fragments=fragments.filter(f=>!f.dead);
   bankedPieces+=n;bankedValue+=value;stats.bankTrips++;stats.bankedPieces+=n;stats.bankedValue+=value;stats.haulBonus+=bonus;
@@ -292,7 +295,11 @@ function aimIntent(tx,ty,tactic,options){
     if(gap<margin&&Math.hypot(a.x-ship.x,a.y-ship.y)<a.r+34+train().length*2){margin=gap;threat=a;}
   }
   if(threat&&margin<12){
-    const away=Math.atan2(ship.y-threat.y,ship.x-threat.x),side=angleWrap(want-away)>=0?1:-1,
+    const away=Math.atan2(ship.y-threat.y,ship.x-threat.x),turnDelta=angleWrap(want-away),
+      // The selected asteroid is antipodal to its own avoidance vector. Native
+      // libm rounding can represent that exact branch cut as +PI or -PI, so
+      // normalize the geometric tie to angleWrap's canonical -PI side.
+      side=avoidanceSide(turnDelta),
       evade=away+side*1.05,e2=angleWrap(evade-ship.a),close=Math.hypot(threat.x-ship.x,threat.y-ship.y)<threat.r+13;
     intent.turn=clamp(e2/.48,-1,1);intent.thrust=Math.abs(e2)<.9;intent.brake=close&&speed(ship)>.8;
     intent.fire=intent.fire&&threat.id===intent.targetId;intent.tactic=close?'DODGE THE ROCK':'THREAD THE GAP';
@@ -360,8 +367,8 @@ function greedPlan(){
     bank=t.length>0&&(hardHome||!best&&t.length>=cap-1||!worthwhile&&t.length>=4),
     // Prefer the now-reachable bank run over shedding cargo; cut the tail only
     // after the cable is genuinely beyond the recoverable reel window. MARA's
-    // hauler profile can make an earlier controlled cut; JAX/SOL keep the load
-    // aboard longer so their lower-risk bank order is visible before a shed.
+    // hauler profile can make an earlier controlled cut; JAX/SOL hold longer so
+    // the larger shared chain premium always arrives with visible physical risk.
     dropAt=persona.name==='MARA'?2.55:2.8,
     drop=bank&&stress>dropAt&&t.length>3;
   greedCache={at:runFrame,bank,targetId:bank||!best?0:best.f.id,drop,
@@ -653,6 +660,12 @@ globalThis.__starSalvageSetAct=kind=>{resetShift();act={kind,phase:'calm',warnAt
   for(let i=0;i<2;i++){const f=createFragment(ship.x-11-i*10,ship.y+2+i*2,i?'crystal':'iron');f.tethered=true;f.order=i;}return globalThis.__starSalvageActState();};
 globalThis.__starSalvageAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired:a.tactic,gated:b.tactic};};
 globalThis.__starSalvagePhysicsFixture=()=>{const b={x:80,y:180,vx:.3,vy:-.2,a:-1},intent={turn:.4,thrust:true,brake:false},load={mass:5,count:4},env={wind:1},before=signature();for(let i=0;i<90;i++)advanceShip(b,intent,load,env);const after=signature();return{body:b,pure:before===after,finite:finiteBody(b)};};
+globalThis.__starSalvageAvoidanceFixture=()=>{const before=signature(),had=Object.prototype.hasOwnProperty.call(globalThis,'__NO_PORTABLE_FLANK'),old=globalThis.__NO_PORTABLE_FLANK;
+  delete globalThis.__NO_PORTABLE_FLANK;const result={positivePi:avoidanceSide(Math.PI),negativePi:avoidanceSide(-Math.PI),positive:avoidanceSide(.5),negative:avoidanceSide(-.5)};
+  globalThis.__NO_PORTABLE_FLANK=1;const ablated={positivePi:avoidanceSide(Math.PI),negativePi:avoidanceSide(-Math.PI)};
+  if(had)globalThis.__NO_PORTABLE_FLANK=old;else delete globalThis.__NO_PORTABLE_FLANK;
+  const restored=Object.prototype.hasOwnProperty.call(globalThis,'__NO_PORTABLE_FLANK')===had&&(!had||globalThis.__NO_PORTABLE_FLANK===old);
+  return{...result,ablated,restored,pure:before===signature()};};
 globalThis.__starSalvagePlannerFixture=()=>{resetShift();const f=createFragment(95,170,'gold',9,1.35,.05,.02),before=signature(),a=simulateGreedRoute(f),middle=signature(),b=simulateGreedRoute(f),after=signature();return{pure:before===middle&&middle===after,repeat:JSON.stringify(a)===JSON.stringify(b),route:a,finite:allFinite()};};
 globalThis.__starSalvageNearApex=()=>{resetShift();bankedValue=ARK_GOAL-1;arkStage=2;const f=createFragment(HOME_X,HOME_Y-12,'gold',9,1);f.tethered=true;f.order=0;ship.x=HOME_X;ship.y=HOME_Y;ship.vx=ship.vy=0;bankHaul();return probe();};
 globalThis.__starSalvageSetVisualBeat=name=>{

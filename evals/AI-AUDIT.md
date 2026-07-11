@@ -694,11 +694,15 @@ warnings instead of deleting the dilemma.
   cable stress, and arrival time, and physically reels toward a swinging tail
   when the chain needs slack. The reel now yields to the emergency-home branch
   above 1.9 cable stress; MARA can make an earlier controlled tail cut while
-  JAX/SOL hold the bank order. Across ten permanent paired ten-minute seeds, it
-  wins banked value 10/10: Linux Node 24 measures 5,496 vs 4,196 aggregate
-  (+31.0%), while native macOS measures 5,478 vs 4,196 (+30.6%). The visible
-  maximum train rises from three to five or six pieces, and the 20% aggregate
-  floor remains unchanged.
+  JAX/SOL hold the bank order. The shared 28% chain step pays every controller,
+  but only the planner's visible four-to-six-piece trains compound it beyond the
+  baseline's single three-piece step. Across the permanent ten-seed ten-minute
+  A/B, native macOS wins 10/10 at 5,918 vs 4,418 aggregate (+34.0%); the exact
+  Linux x64 Node 24 environment wins 9/10 at 5,696 vs 4,671 (+21.9%). The 20%
+  aggregate floor and all policy bands remain unchanged. The reactive flank now
+  normalizes the exact antipodal +π/-π branch cut to the same side before steering;
+  `__NO_PORTABLE_FLANK` restores and the pure fixture exposes the old split. This
+  removes the libm-dependent fork that the first Linux CI run exposed.
 - **Human-flavored control.** Three salvager personas change precision, risk,
   and greed; `AI.skillProfile` supplies reaction delay and short hesitation
   lapses behind `__NO_LAPSE`. Human and bot emit the same game-owned intent
@@ -717,14 +721,21 @@ warnings instead of deleting the dilemma.
   is strict, and tier-three cues consume exactly 6 hold / 24 slow / 48 admire
   frames. `__NO_ADMIRE` gates only the bot pause and `__NO_PAYOFF_FX` is a
   perfect same-seed simulation no-op.
-- **Watchability calibration.** The current independent Linux Node 24 panel
-  (`0x5c000`, `0x5c65f`, `0x5ce90`, `0x5da65`) banks 469..701 value and
-  87..102 pieces in 28..33 homecomings; maximum train is 5..6, snaps 14..28,
-  and lost cargo 16..32. Every original two-sided watchability band remains
-  unchanged, including the 0..10 deliberate-drop ceiling. The ten paired smart
-  runs independently stay inside their registered policy bands. The shared
-  ten-minute soak records one still second, an 11-second quiet run, a
-  21-second progress stall, 298 events, and 175 progress marks.
+- **Watchability calibration.** A fresh 30-seed native macOS ten-minute sweep measures
+  364..856 banked value, 62..117 pieces, 100..315 bonus, 20..42 homecomings,
+  5..6 maximum train, 1..9 deliberate drops, 14..44 snaps, and 17..55 lost
+  cargo. Event/progress lulls are 701..721 and 1,002..1,964 frames. The economy-
+  sensitive ceilings were explicitly re-derived from that distribution with
+  margin: value 900, bonus 350, trips 46, overload homes 9, snaps 52, lost cargo
+  65, and events 390. The bonus floor tightens from 70 to 80; every other band,
+  including the 0..10 deliberate-drop ceiling, stays unchanged. Those are
+  measurement-driven boundaries, not a relaxation of the unchanged 20% A/B or
+  soak/story-lull contracts.
+  The independent Linux Node 24 panel (`0x5c000`, `0x5c65f`, `0x5ce90`,
+  `0x5da65`) banks 634..693 value and 92..97 pieces in 25..32 homecomings;
+  maximum train is 5..6, snaps 22..26, and lost cargo 27..33. Its shared soak
+  records one still second, an 11-second quiet run, a 26-second progress stall,
+  298 events, and 175 progress marks.
 - **Authored world and visual proof.** Planet-limb, orbital-ring, and ship-
   graveyard sectors change composition as the Ark grows. The wedge tug has
   articulated booms, cockpit/pilot, recoil, thrust, damage, and strain poses;

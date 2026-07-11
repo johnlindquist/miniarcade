@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "59fce4d3bb6e739621de75909c71b6e49015f2843dd4457e6add619d3c348fb0",
+  "montageSha256": "1619342e3a7ea132d76c4b5e37727d8bc3823914fbdeff281b8cc7721f099e25",
   "seed": "0x5a1a6e",
   "checkpoints": [
     "opening@12",
@@ -61,5 +61,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "6f761688918582a15b0c85c8ed71960a8b2794d2ac27c71e31da9daa9b9cc39f"
+  "reviewIdentitySha256": "96a2e520ed9a6840fb5c87d055679faee568e5547c540f4f920dd0f069d64cb6"
 }

@@ -21,19 +21,21 @@ const press=(game,code)=>{game.key('keydown',code);game.frames(1,false);game.key
 const mean=a=>a.reduce((n,v)=>n+v,0)/a.length;
 const sum=(a,key)=>a.reduce((n,p)=>n+(key?p.stats[key]:p),0);
 
-// Thirty fixed ten-minute seeds (0x5c000 + i*233), measured 2026-07-10
-// after the visible cache nudge and final chain economy. Observed min..max:
-// value 379..714, pieces 72..112, bonus 88..172, trips 21..36, rocks
-// 21..31, tethers 97..136, train 4..6, overloaded homes 0..4, deliberate
-// drops 0..7, snaps 12..31, lost cargo 16..37, impacts/rescues 0,
-// lapses 0..9, visible replans 0..6, apexes 3..4, events 245..337,
-// progress 141..198, event lull 721f, story lull 902..2190f, planner calls
-// 327..407. Bands add margin on both sides; they are not provisional vibes.
+// Thirty fixed ten-minute seeds (0x5c000 + i*233), remeasured 2026-07-10
+// after the portable flank and final chain-risk economy. Observed min..max:
+// value 364..856, pieces 62..117, bonus 100..315, trips 20..42, rocks
+// 19..35, tethers 99..143, train 5..6, overloaded homes 0..7, deliberate
+// drops 1..9, snaps 14..44, lost cargo 17..55, impacts/rescues 0,
+// lapses 0..9, visible replans 0..6, apexes 3..4, events 243..370,
+// progress 138..216, event lull 701..721f, story lull 1002..1964f, planner
+// calls 337..411. Bands add measured margin on both sides; they are not
+// provisional vibes. The independent Linux x64 Node 24 panel is recorded in
+// AI-AUDIT.md.
 const WATCH_BANDS={
-  bankedValue:[340,780],bankedPieces:[60,125],haulBonus:[70,200],bankTrips:[17,42],
-  rocksBroken:[17,38],tethers:[85,150],maxTrain:[4,7],overloadHomes:[0,7],
-  voluntaryDrops:[0,10],snaps:[7,40],cargoLost:[10,48],impacts:[0,2],rescues:[0,1],
-  lapses:[0,12],replans:[0,8],apexes:[2,6],events:[220,370],progress:[125,225],
+  bankedValue:[340,900],bankedPieces:[60,125],haulBonus:[80,350],bankTrips:[17,46],
+  rocksBroken:[17,38],tethers:[85,150],maxTrain:[4,7],overloadHomes:[0,9],
+  voluntaryDrops:[0,10],snaps:[7,52],cargoLost:[10,65],impacts:[0,2],rescues:[0,1],
+  lapses:[0,12],replans:[0,8],apexes:[2,6],events:[220,390],progress:[125,225],
   plannerCalls:[280,460]
 };
 const SMART_POLICY={bankedValue:[300,820],bankedPieces:[55,135],bankTrips:[15,48],
@@ -64,9 +66,10 @@ console.log('1) deterministic fixed-step replay, render parity, and batching');
 
 console.log('2) shared physics + copied greed planner are finite, pure, repeatable, and RNG-free');
 {
-  const game=bootGame('star-salvage',{seed:0x551010,footer:FOOTER}),physics=game.sandbox.__starSalvagePhysicsFixture(),plan=game.sandbox.__starSalvagePlannerFixture();
-  console.log(`  physics pure ${physics.pure}; planner pure ${plan.pure}, repeat ${plan.repeat}, ${plan.route.steps} exact integrator steps`);
+  const game=bootGame('star-salvage',{seed:0x551010,footer:FOOTER}),physics=game.sandbox.__starSalvagePhysicsFixture(),avoidance=game.sandbox.__starSalvageAvoidanceFixture(),plan=game.sandbox.__starSalvagePlannerFixture();
+  console.log(`  physics pure ${physics.pure}; avoidance +PI/-PI ${avoidance.positivePi}/${avoidance.negativePi}, ablated ${avoidance.ablated.positivePi}/${avoidance.ablated.negativePi}, ordinary +/- ${avoidance.positive}/${avoidance.negative}; planner pure ${plan.pure}, repeat ${plan.repeat}, ${plan.route.steps} exact integrator steps`);
   if(!physics.pure||!physics.finite)fail(`shared advanceShip fixture regressed: ${JSON.stringify(physics)}`);
+  if(!avoidance.pure||!avoidance.restored||avoidance.positivePi!==-1||avoidance.negativePi!==-1||avoidance.positive!==1||avoidance.negative!==-1||avoidance.ablated.positivePi!==1||avoidance.ablated.negativePi!==-1)fail(`portable avoidance branch regressed: ${JSON.stringify(avoidance)}`);
   if(!plan.pure||!plan.repeat||!plan.finite||!plan.route.got)fail(`greed planner fixture regressed: ${JSON.stringify(plan)}`);
   const control=bootGame('star-salvage',{seed:0x551011,footer:FOOTER}),planned=bootGame('star-salvage',{seed:0x551011,footer:FOOTER});
   planned.sandbox.__ssPlanOnce();const rp=planned.sandbox.__ssNextRandom(),rc=control.sandbox.__ssNextRandom();
