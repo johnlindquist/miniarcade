@@ -12,9 +12,13 @@ globalThis.__probe=()=>({
   demos:globalThis.__rocketStats.demos,matches:globalThis.__rocketStats.matches,
   car:{x:cars[0].x,y:cars[0].y,vx:cars[0].vx,vy:cars[0].vy,boost:cars[0].boost,
     boosting:cars[0].boosting},
+  profiles:cars.map(c=>c.profile?c.profile.id:null),salt:profileSalt,
+  stats:cars.map(c=>({...c.stats})),
   finite:[ball,...cars].every(o=>['x','y','vx','vy'].every(k=>Number.isFinite(o[k])))&&
     cars.every(c=>Number.isFinite(c.a)&&Number.isFinite(c.boost))
 });
+globalThis.__sig=()=>JSON.stringify([Math.round(ball.x*100),Math.round(ball.y*100),
+  ...cars.map(c=>[Math.round(c.x*100),Math.round(c.y*100),Math.round(c.a*100),c.dead]),score]);
 globalThis.__padFixture=big=>{
   resetGame();state='play';
   const p=pads[big?6:0],c=cars[1];
@@ -41,12 +45,38 @@ console.log('1) autonomous league: 3 x 6 simulated minutes');
 for(let run=1;run<=3;run++){
   const game=bootGame('rocket',{seed:0x710000+run,footer:FOOTER});
   game.frames(21600,false);const p=game.sandbox.__probe(),total=p.goals[0]+p.goals[1];
-  console.log(`  run ${run}: ${p.goals[0]}-${p.goals[1]} goals, ${p.matches} matches, ${p.demos} demos`);
+  const sum=k=>p.stats.reduce((a,s)=>a+s[k],0);
+  const ds=sum('driftStarts'),bo=sum('driftBoostOuts'),att=sum('demoAttempts'),lp=sum('lapses');
+  const lu=sum('lineupDrifts'),lt=sum('lineupTouches');
+  const ws=sum('wallSaves'),wc=sum('wallCrashes');
+  const share=sum('hardTurnDrifts')/Math.max(1,sum('hardTurns'));
+  console.log(`  run ${run}: ${p.goals[0]}-${p.goals[1]} goals, ${p.matches} matches, ${p.demos} demos, `+
+    `${ds} drifts (${bo} boost-outs, ${lu} line-ups -> ${lt} touches, ${ws} wall saves), `+
+    `${att} hunts, ${wc} wall crashes, ${(share*100).toFixed(0)}% hard turns drifted `+
+    `[${p.profiles.join(',')}]`);
   if(!p.finite)fail(`run ${run}: non-finite ball or car state`);
   if(p.matches<1||p.matches>3)fail(`run ${run}: ${p.matches} completed matches (expected 1..3)`);
   if(p.goals[0]<2||p.goals[1]<2)fail(`run ${run}: one team failed to score competently`);
   if(total<10||total>30)fail(`run ${run}: ${total} goals outside watchable band 10..30`);
   if(p.demos<2||p.demos>20)fail(`run ${run}: ${p.demos} demos outside watchable band 2..20`);
+  // floors from the 12-seed sweep (2026-07-11, cornering sim): drifts
+  // 1012..1191, boost-outs 367..462, demos 5..13 — wide margins
+  if(ds<500)fail(`run ${run}: only ${ds} drift starts (sweep floor 500)`);
+  if(bo<180)fail(`run ${run}: only ${bo} drift boost-outs (sweep floor 180)`);
+  // strategic drifting: swing around the ball onto the shot line. 12-seed
+  // sweep 2026-07-11: 104..143 line-ups, 23..41 converted to a touch <55f
+  // after the catch — floors at roughly half the observed minima
+  if(lu<40)fail(`run ${run}: only ${lu} line-up drifts (sweep floor 40) — bots stopped using drift to get behind the ball`);
+  if(lt<8)fail(`run ${run}: only ${lt} line-up drifts converted to a touch (sweep floor 8)`);
+  // cornering skill is a release gate: drift is THE fast-turn tool (12-seed
+  // sweep: 52..56% of hard turns drifted, 268..344 wall saves) and fast
+  // head-on wall impacts stay capped (sweep 167..222; pre-cornering 319..380)
+  if(share<0.40)fail(`run ${run}: only ${(share*100).toFixed(0)}% of hard turns drifted (floor 40%)`);
+  if(ws<120)fail(`run ${run}: only ${ws} wall-save drifts (sweep floor 120)`);
+  if(wc>300)fail(`run ${run}: ${wc} fast wall crashes (ceiling 300) — bots are pounding the boards again`);
+  if(att<2)fail(`run ${run}: only ${att} demo hunts committed (floor 2)`);
+  if(lp<5||lp>600)fail(`run ${run}: ${lp} lapse frames outside 5..600 seasoning band`);
+  if(new Set(p.profiles).size!==4)fail(`run ${run}: profiles not all distinct (${p.profiles})`);
 }
 
 console.log('2) mechanics: small/big pads, goal blast, prediction fidelity');
@@ -132,6 +162,244 @@ globalThis.__goals={t:0};const __g1=goal;goal=t=>{globalThis.__goals.t++;return 
   a.frames(10800,false);b.frames(10800,false);
   if(a.sandbox.__sig()!==b.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: goal confetti leaked into gameplay');
   else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
+console.log('6) power drift: physics fixture + same-seed A/B vs __NO_DRIFT');
+{
+  const FOOT=FOOTER+`
+;globalThis.__driftFixture=useDrift=>{
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:60,y:180,a:0,vx:2,vy:0,boost:100,dead:0,launch:0,drift:0,slip:0});
+  const a0=c.a,x0=c.x,y0=c.y;let peakSlip=0;
+  for(let i=0;i<30;i++){ // 15f committed turn, then 15f catch-and-drive-out
+    const turning=i<15;
+    advanceCar(c,{steer:turning?1:0,throttle:1,boosting:false,drifting:useDrift&&turning});
+    peakSlip=Math.max(peakSlip,Math.abs(c.slip));
+  }
+  return{heading:Math.abs(angDiff(c.a-a0)),peakSlip,
+    speed:Math.hypot(c.vx,c.vy),disp:Math.hypot(c.x-x0,c.y-y0),skid:c.skid.length,
+    finite:['x','y','vx','vy','a'].every(k=>Number.isFinite(c[k]))};
+};`;
+  const g=bootGame('rocket',{seed:0x710300,footer:FOOT});
+  const base=g.sandbox.__driftFixture(false),drift=g.sandbox.__driftFixture(true);
+  console.log(`  30f full-lock turn: heading ${base.heading.toFixed(2)} -> ${drift.heading.toFixed(2)} rad, `+
+    `slip ${drift.peakSlip.toFixed(2)} rad, speed ${base.speed.toFixed(2)} -> ${drift.speed.toFixed(2)}, `+
+    `travel ${drift.disp.toFixed(1)}px`);
+  if(!base.finite||!drift.finite)fail('drift fixture produced non-finite state');
+  if(drift.heading<base.heading+0.35)fail(`drift turned only ${drift.heading.toFixed(2)} rad vs base ${base.heading.toFixed(2)} — rear grip never broke`);
+  if(drift.peakSlip<0.30)fail(`peak slip ${drift.peakSlip.toFixed(2)} rad under 0.30 — no visible tail-out`);
+  // measured 2026-07-11: drift turns +0.80 rad over the grip turn while
+  // keeping 87% speed (2.00 vs 2.30) — the rotate-faster/carry-speed tradeoff
+  if(drift.speed<base.speed*0.80||drift.speed<1.85)
+    fail(`drift bled speed to ${drift.speed.toFixed(2)} (base ${base.speed.toFixed(2)}) — momentum not carried through the slide`);
+  if(drift.speed>base.speed*1.05)fail(`drift GAINED speed ${drift.speed.toFixed(2)} vs ${base.speed.toFixed(2)} — release must not invent velocity`);
+  if(drift.disp<35)fail(`drift displaced only ${drift.disp.toFixed(1)}px — reads as spinning in place`);
+  if(drift.skid<10)fail(`drift laid only ${drift.skid} skid samples — the rear-swing arc is invisible`);
+  if(base.skid!==0)fail(`grip driving deposited ${base.skid} skid samples — rubber must mean drift`);
+  g.sandbox.__NO_DRIFT=1;
+  const offA=g.sandbox.__driftFixture(false),offB=g.sandbox.__driftFixture(true);
+  if(JSON.stringify(offA)!==JSON.stringify(offB))fail('__NO_DRIFT did not make the drifting intent a physics no-op');
+  delete g.sandbox.__NO_DRIFT;
+  // same-seed A/B: drift bot vs ablated bot must diverge during live play,
+  // and the ablated run must never record a drift start
+  const a=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  const b=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  b.sandbox.__NO_DRIFT=1;
+  a.frames(21600,false);b.frames(21600,false);
+  const pa=a.sandbox.__probe(),pb=b.sandbox.__probe();
+  const sum=(p,k)=>p.stats.reduce((s2,s)=>s2+s[k],0);
+  console.log(`  A/B: drift run ${sum(pa,'driftStarts')} starts / ${sum(pa,'driftBoostOuts')} boost-outs, `+
+    `ablated ${sum(pb,'driftStarts')} starts; diverged ${a.sandbox.__sig()!==b.sandbox.__sig()}`);
+  if(sum(pa,'driftStarts')<250)fail('drift-enabled bots barely drifted in the A/B run');
+  if(sum(pb,'driftStarts')!==0||sum(pb,'driftBoostOuts')!==0)fail('__NO_DRIFT run still recorded drift activity');
+  if(a.sandbox.__sig()===b.sandbox.__sig())fail('drift A/B runs never diverged — the feature is simulation-invisible');
+  if(!pb.finite)fail('__NO_DRIFT run went non-finite');
+  // line-up ablation: __NO_LINEUP removes ONLY the strategic swing-behind-the-
+  // ball drift; reactive turn/kickoff drifts must survive
+  const c2=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  c2.sandbox.__NO_LINEUP=1;
+  c2.frames(21600,false);
+  const pc=c2.sandbox.__probe();
+  console.log(`  line-up A/B: full ${sum(pa,'lineupDrifts')} line-ups -> ${sum(pa,'lineupTouches')} touches; `+
+    `__NO_LINEUP ${sum(pc,'lineupDrifts')} line-ups, ${sum(pc,'driftStarts')} other drifts`);
+  if(sum(pa,'lineupDrifts')<40||sum(pa,'lineupTouches')<8)
+    fail('strategic line-up drifting under-fired on the A/B seed');
+  if(sum(pc,'lineupDrifts')!==0||sum(pc,'lineupTouches')!==0)
+    fail('__NO_LINEUP run still recorded line-up drifts');
+  if(sum(pc,'driftStarts')===0)fail('__NO_LINEUP wrongly disabled ALL drifting');
+  if(a.sandbox.__sig()===c2.sandbox.__sig())fail('line-up drifting never changed the sim on its A/B seed');
+  // cornering ablation: __NO_CORNERING restores the pre-cornering policy
+  // (high drift entry, near-wall suppression, no wall saves, no arrival
+  // braking). The full bot must drift a larger share of its hard turns AND
+  // crash into walls measurably less on the same seed.
+  const d2=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  d2.sandbox.__NO_CORNERING=1;
+  d2.frames(21600,false);
+  const pd=d2.sandbox.__probe();
+  const shr=p=>sum(p,'hardTurnDrifts')/Math.max(1,sum(p,'hardTurns'));
+  console.log(`  cornering A/B: full ${(shr(pa)*100).toFixed(0)}% hard turns drifted / `+
+    `${sum(pa,'wallCrashes')} wall crashes; __NO_CORNERING ${(shr(pd)*100).toFixed(0)}% / `+
+    `${sum(pd,'wallCrashes')} crashes, ${sum(pd,'wallSaves')} wall saves`);
+  if(shr(pa)<shr(pd)+0.10)
+    fail(`cornering did not raise the hard-turn drift share (${(shr(pa)*100).toFixed(0)}% vs ${(shr(pd)*100).toFixed(0)}%)`);
+  if(sum(pa,'wallCrashes')>sum(pd,'wallCrashes')*0.85)
+    fail(`cornering did not cut wall crashes (${sum(pa,'wallCrashes')} vs ${sum(pd,'wallCrashes')})`);
+  if(sum(pd,'wallSaves')!==0)fail('__NO_CORNERING run still recorded wall-save drifts');
+  if(a.sandbox.__sig()===d2.sandbox.__sig())fail('cornering never changed the sim on its A/B seed');
+  if(!pd.finite)fail('__NO_CORNERING run went non-finite');
+}
+
+console.log('7) personalities: deterministic assignment + measured divergence');
+{
+  const boot=seed=>{const g=bootGame('rocket',{seed,footer:FOOTER});g.frames(1,false);return g;};
+  const a=boot(0x710400),b=boot(0x710400);
+  const pa=a.sandbox.__probe(),pb=b.sandbox.__probe();
+  console.log(`  seed 0x710400 -> [${pa.profiles.join(',')}] salt ${pa.salt}`);
+  if(JSON.stringify(pa.profiles)!==JSON.stringify(pb.profiles)||pa.salt!==pb.salt)
+    fail('same seed produced different profile assignments');
+  if(new Set(pa.profiles).size!==4)fail('the four aggression levels are not all present');
+  const orders=new Set();
+  for(let i=0;i<6;i++)orders.add(boot(0x710410+i).sandbox.__probe().profiles.join(','));
+  if(orders.size<2)fail(`6 seeds produced only ${orders.size} profile ordering — assignment is not random`);
+  const legacy=bootGame('rocket',{seed:0x710400,footer:FOOTER});
+  legacy.sandbox.__NO_PROFILES=1;legacy.frames(7200,false);
+  const pl=legacy.sandbox.__probe();
+  if(pl.profiles.some(id=>id!=='LEGACY'))fail(`__NO_PROFILES still assigned personalities (${pl.profiles})`);
+  if(pl.stats.reduce((s2,s)=>s2+s.lapses,0)!==0)fail('__NO_PROFILES run recorded skill lapses');
+  // forced-profile A/B on one seed: swap ONLY car 0 between the two extremes
+  // (everyone else pinned) and require measurably different appetites
+  const FORCE=FOOTER+`
+;globalThis.__forceCar0=id=>{
+  const apply=()=>{const specs=[id,'BALANCED','PRESSER','BALANCED'];
+    cars.forEach((c,i)=>{const p=BOT_PROFILES[specs[i]];
+      c.profile=p;
+      c.skill=AI.skillProfile({...p.skill,rng:AI.createRng(AI.hashSeed('force:'+i+':'+p.id))});});};
+  apply();
+  const a0=assignProfiles;assignProfiles=()=>{a0();apply();};
+};`;
+  const runForced=(id,seed)=>{
+    const g=bootGame('rocket',{seed,footer:FORCE});
+    g.frames(1,false);g.sandbox.__forceCar0(id);g.frames(21600,false);
+    return g.sandbox.__probe().stats[0];
+  };
+  const combine=id=>[0x710420,0x710421].map(s2=>runForced(id,s2))
+    .reduce((a2,s)=>({starts:a2.starts+s.challengeStarts,dist:a2.dist+s.challengeDistanceSum,
+      boost:a2.boost+s.boostFrames,hunts:a2.hunts+s.demoAttempts}),{starts:0,dist:0,boost:0,hunts:0});
+  const rot=combine('ROTATOR'),man=combine('MANIAC');
+  const cd=s=>s.starts?s.dist/s.starts:0;
+  console.log(`  car0 over 2 seeds — ROTATOR: ${rot.starts} challenges (mean ${cd(rot).toFixed(1)}px), `+
+    `boost ${rot.boost}f, hunts ${rot.hunts} | MANIAC: ${man.starts} challenges (mean ${cd(man).toFixed(1)}px), `+
+    `boost ${man.boost}f, hunts ${man.hunts}`);
+  // measured 2026-07-11 (2 seeds): MANIAC 108 challenges / 8468 boost frames /
+  // 32 hunts vs ROTATOR 44 / 2688 / 0 — count and appetite carry the contrast;
+  // mean challenge DISTANCE barely separates (the near-goal emergency clause
+  // dominates both), so it stays telemetry, not a contract
+  if(rot.hunts!==0)fail('ROTATOR committed demo hunts — demoSeek 0 must mean zero intent');
+  if(man.hunts<2)fail(`MANIAC committed only ${man.hunts} demo hunts over 2 forced seeds`);
+  if(man.boost<rot.boost*1.5)
+    fail(`MANIAC boost appetite ${man.boost}f not >=1.5x ROTATOR ${rot.boost}f`);
+}
+
+console.log('8) demolitions v2: impact geometry, respawn contract, legacy branch');
+{
+  const FOOT=FOOTER+`
+;globalThis.__demoFixture=kind=>{
+  resetGame();state='play';
+  const a=cars[0],v=cars[2];
+  for(const c of cars)Object.assign(c,{vx:0,vy:0,dead:0,launch:0,demoImmune:0,respawn:null,boost:60});
+  cars[1].x=30;cars[1].y=300;cars[3].x=130;cars[3].y=60; // park the others
+  Object.assign(a,{x:40,y:120,a:0,vx:2.7,vy:0}); // clear of the kickoff ball
+  Object.assign(v,{x:49,y:120,a:Math.PI/2,vx:0,vy:0});
+  if(kind==='slow')a.vx=2.4;
+  if(kind==='sideswipe'){a.vx=0;a.vy=2.7;}
+  if(kind==='headon')v.vx=-2.7;
+  if(kind==='immune')v.demoImmune=10;
+  if(kind==='goalstate')state='goal';
+  for(const c of cars)c.sup=Math.hypot(c.vx,c.vy)>2.5; // legacy rules read the flag
+  const ballBefore=JSON.stringify([ball.x,ball.y,ball.vx,ball.vy]);
+  collisions();
+  const out={aDead:a.dead,vDead:v.dead,aVx:a.vx,vImmune:v.demoImmune,
+    ballSame:ballBefore===JSON.stringify([ball.x,ball.y,ball.vx,ball.vy])};
+  if(kind==='respawn'){
+    state='play';
+    let latchAt=-1;
+    for(let i=0;i<130;i++){const before=v.respawn;carStep(v);
+      if(!before&&v.respawn)latchAt=v.dead;}
+    out.latchAt=latchAt;out.back={x:v.x,y:v.y,dead:v.dead,boost:v.boost,immune:v.demoImmune};
+  }
+  if(kind==='kickoff'){ // mid-telegraph demolition swept up by a goal reset
+    v.dead=20;v.respawn={x:0,y:0,a:0};v.demoImmune=9;
+    kickoffPos();out.after={dead:v.dead,respawn:v.respawn,immune:v.demoImmune};
+  }
+  return out;
+};`;
+  const g=bootGame('rocket',{seed:0x710450,footer:FOOT});
+  const F=k=>g.sandbox.__demoFixture(k);
+  const valid=F('valid');
+  if(valid.vDead!==130)fail(`clean supersonic hit did not demolish (dead ${valid.vDead})`);
+  if(valid.aVx!==2.7)fail(`demoer velocity changed (${valid.aVx}) — the attacker must keep rolling`);
+  if(!valid.ballSame)fail('a demolition mutated the ball');
+  if(F('slow').vDead!==0)fail('sub-threshold hit (2.4) demolished — speed gate broken');
+  if(F('sideswipe').vDead!==0)fail('zero-closing side contact demolished — facing/closing gate broken');
+  const ho=F('headon');
+  if((ho.aDead>0)===(ho.vDead>0))fail(`head-on supersonic tie must demolish exactly one car (a:${ho.aDead} v:${ho.vDead})`);
+  if(F('immune').vDead!==0)fail('respawn immunity did not block a re-demo');
+  if(F('goalstate').vDead!==0)fail('a demo fired during the goal replay — demos are live-play only');
+  const rs=F('respawn');
+  if(rs.latchAt!==30)fail(`respawn telegraph latched at dead=${rs.latchAt}, expected 30`);
+  if(rs.back.dead!==0||rs.back.boost!==34||rs.back.immune!==75)
+    fail(`respawn contract broke (dead ${rs.back.dead}, boost ${rs.back.boost}, immunity ${rs.back.immune})`);
+  if(rs.back.y>120)fail(`orange victim respawned at y=${rs.back.y.toFixed(0)} — outside its defensive third`);
+  const ko=F('kickoff');
+  if(ko.after.dead!==0||ko.after.respawn!==null||ko.after.immune!==0)
+    fail('kickoffPos left stale demo state — goal replays could strand a dead car');
+  console.log(`  geometry gates hold; telegraph at 30f, back with 34 boost + 75f immunity; kickoff scrubs state`);
+  const lg=bootGame('rocket',{seed:0x710450,footer:FOOT});
+  lg.sandbox.__NO_DEMOS=1;
+  const lv=lg.sandbox.__demoFixture('valid');
+  if(lv.vDead!==130)fail('legacy sup-vs-non-sup demo lost under __NO_DEMOS');
+  if(lg.sandbox.__demoFixture('headon').vDead!==0)
+    fail('legacy branch demolished a supersonic victim — old rules must survive under __NO_DEMOS');
+  console.log('  __NO_DEMOS reproduces the legacy supersonic-only rules');
+}
+
+console.log('9) motion contract: no dead standing, measured pace');
+{
+  const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+  const MFOOT=FOOTER+`
+;globalThis.__motionProbe=()=>({
+  // cars are watched in EVERY state: countdown is an authored emote pause
+  // (115f, inside the 120f budget), goal launches them, and the match-over
+  // beat runs victory donuts / the sulk crawl home — never a frozen strip
+  actors:cars.filter(c=>c.dead<=0).map(c=>({id:'car-'+c.i,x:c.x,y:c.y,
+    emote:state==='countdown'})),
+  finite:[ball,...cars].every(o=>['x','y','vx','vy'].every(k=>Number.isFinite(o[k])))
+});`;
+  const run=runMotion('rocket',{seed:0x710460,footer:MFOOT,minutes:10});
+  const report=analyzeMotion(run,{});
+  console.log('  '+motionLine(report));
+  assertMotion('motion',report,fail);
+  // pace floor from the same samples: mean per-frame travel of live cars
+  let dist=0,steps=0,fast=0;
+  const last=new Map();
+  for(const s of run.samples){
+    const seen=new Set();
+    for(const a2 of s.actors){
+      seen.add(a2.id);
+      const p2=last.get(a2.id);
+      if(p2&&s.at-p2.at===run.step&&!a2.emote&&!p2.emote){
+        const d2=Math.hypot(a2.x-p2.x,a2.y-p2.y)/run.step;
+        dist+=d2;steps++;if(d2>0.5)fast++;
+      }
+      last.set(a2.id,{x:a2.x,y:a2.y,at:s.at,emote:a2.emote});
+    }
+    for(const k of[...last.keys()])if(!seen.has(k))last.delete(k);
+  }
+  const mean=steps?dist/steps:0,share=steps?fast/steps:0;
+  console.log(`  pace: mean ${mean.toFixed(2)} px/f over ${steps} samples, ${(share*100).toFixed(0)}% above 0.5`);
+  if(mean<0.85)fail(`mean live-car pace ${mean.toFixed(2)} px/f under the 0.85 floor`);
+  if(share<0.65)fail(`only ${(share*100).toFixed(0)}% of samples above 0.5 px/f (floor 65%)`);
 }
 
 console.log('5) ten-minute soak: moving, happening, progressing');

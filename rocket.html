@@ -14,7 +14,7 @@
 <script>
 'use strict';
 const{ctx,W,H,random,R,RI,rect,spawn,burst,stepParts,drawParts,ring,stepRings,drawRings,shake,preDraw,postDraw,start,keys,manual,axis2,
-  initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,fxBurst}=E;
+  initSession,sessionStep,drawSession,playing,addScore,gameOver,createShow,fxBurst,fxDust,clamp}=E;
 const FL={x0:10,x1:150,y0:28,y1:332,gx0:59,gx1:101}; // field + goal mouth
 const TEAM=[{c:'#3b7bff',c2:'#7fa8ff',name:'BLU'},{c:'#ff8a2a',c2:'#ffc37f',name:'ORG'}];
 const angDiff=d=>((d+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
@@ -25,9 +25,84 @@ const pads=[
   {x:80,y:62,big:0},{x:80,y:298,big:0},
   {x:16,y:180,big:1},{x:144,y:180,big:1},
 ].map(p=>({...p,t:0}));
-function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:false,boosting:false,launch:0,spinV:0};}
+function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:false,boosting:false,launch:0,spinV:0,
+  drift:0,drifting:false,driftHeld:false,wasDrifting:false,slip:0, // rear-grip break + tail-out posture
+  driftAge:0,skid:[], // presentation: swing telemetry + rubber laid by the rear wheels
+  demoImmune:0,respawn:null,
+  profile:null,skill:null,
+  ai:{tactic:'',lastTactic:'',driftUntil:0,driftMinUntil:0,driftCooldown:0,boostOutUntil:0,boostOutCounted:true,
+    kickoffDrift:false,demoTarget:-1,demoUntil:0,demoCooldown:0,demoConsiderAt:0,
+    driftKind:'',lineupCredit:0,
+    anchorX:0,anchorY:0,anchorF:0,escapeUntil:0,escapeRev:true},
+  stats:{driftStarts:0,driftFrames:0,driftBoostOuts:0,boostFrames:0,
+    lineupDrifts:0,lineupTouches:0,wallSaves:0,wallCrashes:0,
+    hardTurns:0,hardTurnDrifts:0,
+    challengeStarts:0,challengeDistanceSum:0,demoAttempts:0,demos:0,lapses:0}};}
 const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
 let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
+let matchNo=0,kickoffAge=0,profileSalt=0; // salt exposed for eval determinism fixtures
+// ---------- personalities ----------
+// Four aggression levels, all present every match. Aggression is a tactical
+// dial (challenge distance, boost appetite, demo hunger, drift eagerness),
+// not a skill ranking: the maniac reacts fast but aims sloppy and recovers
+// late, the rotator is careful without being incompetent.
+const BOT_PROFILES=Object.freeze({
+  ROTATOR:Object.freeze({id:'ROTATOR',tag:'ROT',aggression:0.18,
+    challengeDist:54,shadowInset:12,
+    boostReserve:42,boostAngle:0.22,boostDistance:58,
+    demoSeek:0,demoRange:0,demoLead:0,
+    driftEnter:1.05,driftExit:0.20,driftMinSpeed:1.55,kickoffDrift:0.05,
+    skill:{skill:0.76,precision:0.86,risk:0.20,recovery:0.88,
+      reactionFrames:[4,7],lapseChance:0.00028,lapseFrames:[10,18]}}),
+  BALANCED:Object.freeze({id:'BALANCED',tag:'BAL',aggression:0.48,
+    challengeDist:76,shadowInset:12,
+    boostReserve:24,boostAngle:0.30,boostDistance:44,
+    demoSeek:0.12,demoRange:52,demoLead:8,
+    driftEnter:0.90,driftExit:0.22,driftMinSpeed:1.35,kickoffDrift:0.30,
+    skill:{skill:0.82,precision:0.79,risk:0.48,recovery:0.79,
+      reactionFrames:[2,5],lapseChance:0.00034,lapseFrames:[8,16]}}),
+  PRESSER:Object.freeze({id:'PRESSER',tag:'PRS',aggression:0.72,
+    challengeDist:100,shadowInset:20,
+    boostReserve:12,boostAngle:0.36,boostDistance:34,
+    demoSeek:0.45,demoRange:78,demoLead:12,
+    driftEnter:0.72,driftExit:0.24,driftMinSpeed:1.20,kickoffDrift:0.60,
+    skill:{skill:0.84,precision:0.74,risk:0.72,recovery:0.72,
+      reactionFrames:[1,4],lapseChance:0.00034,lapseFrames:[7,14]}}),
+  MANIAC:Object.freeze({id:'MANIAC',tag:'MAN',aggression:0.95,
+    challengeDist:128,shadowInset:28,
+    boostReserve:6,boostAngle:0.44,boostDistance:24,
+    demoSeek:0.88,demoRange:112,demoLead:18,
+    driftEnter:0.58,driftExit:0.27,driftMinSpeed:1.05,kickoffDrift:0.90,
+    skill:{skill:0.80,precision:0.64,risk:0.96,recovery:0.58,
+      reactionFrames:[1,3],lapseChance:0.00055,lapseFrames:[6,12]}})
+});
+const LEGACY_STYLE=Object.freeze({id:'LEGACY',tag:'LEG',aggression:0.5,
+  demoSeek:0,demoRange:0,demoLead:0,
+  driftEnter:0.88,driftExit:0.22,driftMinSpeed:1.35,kickoffDrift:0.35,boostReserve:6});
+function assignProfiles(){ // once per match, deterministic from the sim seed
+  if(typeof globalThis.__NO_PROFILES!=='undefined'){
+    for(const c of cars){c.profile=LEGACY_STYLE;c.skill=null;} // zero RNG reads
+    return;
+  }
+  // Extreme pair + middle pair keeps team aggression totals close, so random
+  // assignment never produces one all-out team against one passive team.
+  let pairs=[[BOT_PROFILES.ROTATOR,BOT_PROFILES.MANIAC],
+             [BOT_PROFILES.BALANCED,BOT_PROFILES.PRESSER]];
+  // Exactly three assignment draws + one private-RNG salt draw per match.
+  if(RI(0,1))pairs=[pairs[1],pairs[0]];
+  const p0=RI(0,1)?[pairs[0][1],pairs[0][0]]:pairs[0];
+  const p1=RI(0,1)?[pairs[1][1],pairs[1][0]]:pairs[1];
+  const skillSalt=profileSalt=RI(1,0x7fffffff);
+  const assigned=[...p0,...p1];
+  cars.forEach((c,i)=>{
+    const p=assigned[i];
+    c.profile=p;
+    // Ongoing reaction/lapse/aim noise draws from a private stream so the
+    // planner never consumes engine RNG mid-match (replays stay identical).
+    c.skill=AI.skillProfile({...p.skill,
+      rng:AI.createRng(AI.hashSeed(`rocket:${skillSalt}:${matchNo}:${c.i}:${p.id}`))});
+  });
+}
 const readDrive=axis2({stickyFrames:2});
 // Payoff ladder: ball touches are muted tier-1 telemetry, demos tier 2, goals
 // tier 3 (the existing every-3rd-frame goal replay, now kernel-arbitrated).
@@ -71,11 +146,32 @@ const driveController=AI.controllerMux({
 function kickoffPos(){
   ball.x=80;ball.y=180;ball.vx=0;ball.vy=0;ball.trail=[];
   const KO=[[80,300,-Math.PI/2],[52,326,-Math.PI/2],[80,60,Math.PI/2],[108,34,Math.PI/2]];
+  kickoffAge=0;
   cars.forEach((c,i)=>{const k=KO[i];
-    c.x=k[0];c.y=k[1];c.a=k[2];c.vx=0;c.vy=0;c.dead=0;c.launch=0;c.boost=Math.max(c.boost,34);});
+    c.x=k[0];c.y=k[1];c.a=k[2];c.vx=0;c.vy=0;c.dead=0;c.launch=0;c.boost=Math.max(c.boost,34);
+    // hard-clear demo + drift transients so a demolition on a scoring frame
+    // can never leak a dead car or stale respawn across the goal replay
+    c.demoImmune=0;c.respawn=null;c.drift=0;c.drifting=false;c.driftHeld=false;c.slip=0;c.sup=false;
+    c.driftAge=0;c.skid.length=0;
+    const ai=c.ai;ai.driftUntil=0;ai.driftMinUntil=0;ai.driftCooldown=0;ai.boostOutUntil=0;ai.boostOutCounted=true;
+    ai.demoTarget=-1;ai.demoUntil=0;ai.demoConsiderAt=0;
+    ai.driftKind='';ai.lineupCredit=0;
+    ai.anchorX=c.x;ai.anchorY=c.y;ai.anchorF=frame;ai.escapeUntil=0;
+    if(c.skill)c.skill.reset();
+    latchKickoffDrift(c);
+  });
+}
+// diagonal cars may open with a showy drift approach; latch once per kickoff
+// from the PRIVATE stream (same draws whether drift is ablated, so __NO_DRIFT
+// A/B divergence is caused by drift alone)
+function latchKickoffDrift(c){
+  c.ai.kickoffDrift=c.i%2===1&&
+    (c.skill?c.skill.takeRisk(c.profile.kickoffDrift):!!c.profile&&c.profile.kickoffDrift>=0.5);
 }
 function resetGame(){ // fresh match for a new run (player or attract)
   score=[0,0];clock=180*60;overtime=false;winner=0;
+  matchNo++;assignProfiles(); // personalities persist for the whole match
+  for(const c of cars)c.ai.demoCooldown=0; // stats stay cumulative per boot
   kickoffPos();state='countdown';stateT=100;
   windPhase='calm';windDir=1;windAx=0;windActIx=0;
   SHOW.reset(frame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
@@ -100,7 +196,48 @@ function predictBall(frames){
   }
   return{x,y};
 }
-function decide(c){
+function decide(c){ // dispatcher: legacy baseline vs profiled personality
+  if(typeof globalThis.__NO_PROFILES!=='undefined')
+    return applyBotDrift(c,decideLegacy(c),LEGACY_STYLE);
+  // scrum breaker OUTSIDE the skill layer: a lapse must never freeze the
+  // unstick reflex, or a car jammed mid-lapse grinds the corner for 18 frames
+  const ai=c.ai;
+  if(Math.hypot(c.x-ai.anchorX,c.y-ai.anchorY)>2.5){ai.anchorX=c.x;ai.anchorY=c.y;ai.anchorF=frame;}
+  if(frame<ai.escapeUntil){ai.lastTactic='escape';return escapeIntent(c);}
+  if(frame-ai.anchorF>6&&kickoffAge>20){
+    ai.escapeUntil=frame+26;ai.anchorF=frame;
+    // latch the escape direction for the whole window — re-deciding each
+    // frame chatters on the wall test and the car vibrates in place. Pick
+    // whichever end of the car has more open road: thrust only works along
+    // the body axis, so nose-into-corner MUST back out, tail-into-corner
+    // must drive out, and cars shadow whichever end they sit on.
+    const fxv=Math.cos(c.a),fyv=Math.sin(c.a);
+    const clear=(dx,dy)=>{
+      let t=40;
+      if(dx>1e-6)t=Math.min(t,(FL.x1-c.x)/dx);else if(dx<-1e-6)t=Math.min(t,(FL.x0-c.x)/dx);
+      if(dy>1e-6)t=Math.min(t,(FL.y1-2-c.y)/dy);else if(dy<-1e-6)t=Math.min(t,(FL.y0+2-c.y)/dy);
+      return t;
+    };
+    let fwdC=clear(fxv,fyv),revC=clear(-fxv,-fyv);
+    for(const o of cars)if(o!==c&&o.dead<=0){
+      const d2=Math.hypot(o.x-c.x,o.y-c.y);
+      if(d2<16){ // cars shade an end but are PUSHABLE — never let one make an
+        // end look worse than a nearby wall, or the escape grinds the wall
+        if(fxv*(o.x-c.x)+fyv*(o.y-c.y)>0)fwdC=Math.min(fwdC,Math.max(8,d2-9));
+        else revC=Math.min(revC,Math.max(8,d2-9));
+      }}
+    ai.escapeRev=revC>fwdC+2;
+    ai.lastTactic='escape';return escapeIntent(c);
+  }
+  return c.skill.decide(frame,c,
+    car=>applyBotDrift(car,decideProfiled(car),car.profile),
+    (car,last)=>{ // lapse: coast, never freeze (motion contract)
+      car.stats.lapses++;
+      return last?{...last,steer:last.steer*0.45,boosting:false,drifting:false,tactic:'hesitate'}
+        :{steer:0,throttle:0.45,boosting:false,drifting:false,tactic:'hesitate'};
+    });
+}
+function decideLegacy(c){ // pre-personality bot, byte-for-byte: the A/B floor
   const atkUp=c.team===0; // blue attacks the top goal
   const oppY=atkUp?20:340,ownY=atkUp?340:20;
   // drive at where the ball will be when the car can plausibly arrive there
@@ -152,15 +289,341 @@ function decide(c){
   const dist=Math.hypot(tx-c.x,ty-c.y);
   return{steer:Math.max(-1,Math.min(1,da*2.6+R(-0.15,0.15))),
     throttle:Math.abs(da)>2.3?0.35:R(0.85,1),
-    boosting:c.boost>6&&Math.abs(da)<0.3&&(dist>40||(attacker&&behind&&ballNearOwn))};
+    boosting:c.boost>6&&Math.abs(da)<0.3&&(dist>40||(attacker&&behind&&ballNearOwn)),
+    drifting:false,turnError:da,targetDist:dist,tactic:'legacy'};
+}
+function chooseDemoTarget(c,mate,ballNearOwn){
+  // Hysteretic demo hunt: commit to one opponent for up to 1.5s so the chase
+  // reads as intent, with cooldowns so the maniac never spawn-camps.
+  const p=c.profile,ai=c.ai;
+  if(typeof globalThis.__NO_DEMOS!=='undefined')return null;
+  if(p.demoSeek<=0||ballNearOwn)return null;
+  if(!mate||mate.dead>0)return null; // never abandon an uncovered ball
+  if(c.boost<=p.boostReserve)return null;
+  if(frame<ai.demoCooldown)return null;
+  const myBall=Math.hypot(ball.x-c.x,ball.y-c.y);
+  const mateBall=Math.hypot(ball.x-mate.x,ball.y-mate.y);
+  if(mateBall>myBall-8)return null; // hunt only while the mate covers the ball
+  if(ai.demoTarget>=0&&frame<ai.demoUntil){
+    const held=cars[ai.demoTarget];
+    if(held&&held.dead<=0&&held.team!==c.team)return held;
+    ai.demoTarget=-1;
+  }
+  if(frame<ai.demoConsiderAt)return null;
+  ai.demoConsiderAt=frame+90;
+  let best=null,bestScore=-Infinity;
+  for(const o of cars){
+    if(o.team===c.team||o.dead>0||o.demoImmune>0)continue;
+    const d=Math.hypot(o.x-c.x,o.y-c.y);
+    if(d>p.demoRange)continue;
+    const defendingTop=o.team===1;
+    const blockingLane=Math.abs(o.x-ball.x)<28&&(defendingTop?o.y<ball.y:o.y>ball.y);
+    const nearBall=Math.hypot(o.x-ball.x,o.y-ball.y)<34;
+    const s2=p.demoSeek*80-d+(blockingLane?28:0)+(nearBall?16:0);
+    if(s2>bestScore){bestScore=s2;best=o;}
+  }
+  if(!best||bestScore<10)return null;
+  if(c.skill&&!c.skill.takeRisk(p.demoSeek))return null;
+  ai.demoTarget=best.i;ai.demoUntil=frame+90;
+  c.stats.demoAttempts++;
+  return best;
+}
+function decideProfiled(c){ // personality-parameterized planner (private RNG only)
+  const p=c.profile,ai=c.ai;
+  const atkUp=c.team===0;
+  const oppY=atkUp?20:340,ownY=atkUp?340:20;
+  const eta=Math.min(40,Math.hypot(ball.x-c.x,ball.y-c.y)/2.2)|0;
+  const bp=globalThis.__NO_PREDICT?{x:ball.x,y:ball.y}:predictBall(eta);
+  const behind=atkUp?c.y>bp.y+4:c.y<bp.y-4;
+  const ballNearOwn=Math.abs(ball.y-ownY)<110;
+  const mate=cars.find(o=>o!==c&&o.team===c.team&&o.dead<=0);
+  // aggression tilts who claims the attacker role
+  const posScore=o=>{const op=o.profile||LEGACY_STYLE;
+    return((atkUp?o.y>ball.y+4:o.y<ball.y-4)?90:0)-Math.hypot(ball.x-o.x,ball.y-o.y)+op.aggression*18;};
+  const attacker=!mate||posScore(c)+(c.i<mate.i?0.01:0)>=posScore(mate);
+  let tx,ty,tactic;
+  const demoTarget=chooseDemoTarget(c,mate,ballNearOwn);
+  if(demoTarget){ // committed hunt: lead the victim's travel
+    const d=Math.hypot(demoTarget.x-c.x,demoTarget.y-c.y);
+    const lead=Math.min(p.demoLead,Math.max(4,d/2.8));
+    tx=demoTarget.x+demoTarget.vx*lead;ty=demoTarget.y+demoTarget.vy*lead;
+    tactic='demo';
+  }else if(attacker){
+    // aim fuzz scaled so precision 0.75 matches the legacy ±fuzz spread
+    if(!globalThis.__NO_PREDICT){const fuzz=2+eta*0.5;
+      bp.x+=c.skill.noise(fuzz*4);bp.y+=c.skill.noise(fuzz*4);}
+    if(behind){
+      const gx=80-bp.x,gy=oppY-bp.y,gl=Math.hypot(gx,gy)||1;
+      tx=bp.x-gx/gl*9;ty=bp.y-gy/gl*9;tactic='attack';
+    }else{
+      tx=bp.x+(c.x<bp.x?-24:24);
+      ty=bp.y+(atkUp?28:-28);tactic='reposition';
+    }
+    if(c.boost<24&&!ballNearOwn){
+      let bpad=null,bd=70;
+      for(const pd of pads){if(pd.t>0)continue;
+        const d=Math.hypot(pd.x-c.x,pd.y-c.y);if(d<bd){bd=d;bpad=pd;}}
+      if(bpad){tx=bpad.x;ty=bpad.y;tactic='refuel';}
+    }
+  }else{
+    const toBall=Math.hypot(bp.x-c.x,bp.y-c.y);
+    // challenge appetite is the loudest personality signal: the rotator holds
+    // the mouth, the maniac dives from across the field
+    if(behind&&ballNearOwn&&(toBall<p.challengeDist||Math.abs(ball.y-ownY)<48)){
+      const gx=80-bp.x,gy=oppY-bp.y,gl=Math.hypot(gx,gy)||1;
+      tx=bp.x-gx/gl*9;ty=bp.y-gy/gl*9;tactic='challenge';
+      if(c.ai.lastTactic!=='challenge'){
+        c.stats.challengeStarts++;c.stats.challengeDistanceSum+=toBall;}
+    }else{
+      tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,bp.x));
+      if(windPhase!=='calm')tx=Math.max(FL.gx0+8,Math.min(FL.gx1-8,tx+windDir*(windPhase==='live'?8:5)));
+      // patrol sweep: a goalie parked dead-still in the mouth is a motion-
+      // contract stall — sweep the line instead (deterministic, no RNG)
+      tx=Math.max(FL.gx0+6,Math.min(FL.gx1-6,tx+Math.sin((frame+c.i*37)*0.07)*9));
+      ty=atkUp?Math.min(326,ownY-p.shadowInset):Math.max(34,ownY+p.shadowInset);
+      tactic='shadow';
+      if(c.boost<40){
+        let bpad=null,bd=44;
+        for(const pd of pads){if(pd.t>0)continue;
+          const d=Math.hypot(pd.x-c.x,pd.y-c.y);if(d<bd){bd=d;bpad=pd;}}
+        if(bpad){tx=bpad.x;ty=bpad.y;tactic='refuel';}
+      }
+    }
+  }
+  c.ai.lastTactic=tactic;
+  const da=angDiff(Math.atan2(ty-c.y,tx-c.x)-c.a);
+  const dist=Math.hypot(tx-c.x,ty-c.y);
+  // arrival braking on positional targets: the shadow line sits 4px off the
+  // goal wall, and a full-throttle arrival overshoots and pounds it forever —
+  // the single loudest "unskilled bot" read. Strike tactics stay full-send.
+  // Brake distance scales with speed (weak drag: throttle-off alone is not a
+  // brake), and the wanted arrival speed floors at 0.5 (motion contract).
+  let throttle=Math.abs(da)>2.3?0.55:Math.min(1,Math.max(0.8,0.925+c.skill.noise(0.3)));
+  if(typeof globalThis.__NO_CORNERING==='undefined'&&
+     (tactic==='shadow'||tactic==='refuel')){
+    const sp=Math.hypot(c.vx,c.vy),want=Math.max(0.5,dist*0.05);
+    if(sp>want&&dist<sp*22)throttle=sp>want+0.7?-0.5:0.1;
+  }
+  return{steer:Math.max(-1,Math.min(1,da*2.6+c.skill.noise(0.6))),
+    // arc the U-turns instead of pirouetting: momentum reads better and the
+    // car never hovers sub-pixel while it swings its nose around
+    throttle,
+    // a committed demolition spends the whole tank and holds boost through
+    // the strike — chases were arriving at the 2.3 cruise cap (under the
+    // 2.55 demo gate) because the reserve cut boost right before impact
+    boosting:tactic==='demo'?c.boost>0&&Math.abs(da)<Math.max(p.boostAngle,0.8)
+      :c.boost>p.boostReserve&&Math.abs(da)<p.boostAngle&&
+      (dist>p.boostDistance||(attacker&&behind&&ballNearOwn)),
+    drifting:false,turnError:da,targetDist:dist,tactic,
+    ballDist:Math.hypot(ball.x-c.x,ball.y-c.y)};
+}
+function escapeIntent(c){ // back out of a jam, or power through if walled in
+  if(c.ai.escapeRev){
+    // back out HARD, swinging the tail toward open field so the retreat
+    // vector leaves the wall instead of scraping along it
+    const away=angDiff(Math.atan2(c.y-180,c.x-80)-c.a);
+    return{steer:Math.max(-0.5,Math.min(0.5,away*1.5)),throttle:-1.15,boosting:false,
+      drifting:false,turnError:0,targetDist:0,tactic:'escape'};
+  }
+  // walled in behind: drive out toward the field center on a WIDE arc — full
+  // lock at low speed just pirouettes in place against the wall. Boost while
+  // slow: turn rate scales with speed, and a nose-to-nose jam against another
+  // car only breaks if the escapee shoves hard enough to move the blocker
+  const da=angDiff(Math.atan2(180-c.y,80-c.x)-c.a);
+  const sp=Math.hypot(c.vx,c.vy);
+  return{steer:Math.max(-0.45,Math.min(0.45,da)),throttle:1,
+    boosting:sp<1.4&&c.boost>0,drifting:false,
+    turnError:0,targetDist:0,tactic:'escape'};
+}
+function celebrationIntent(c){ // match-over showpiece: donuts or the sad drive home
+  if(c.team===winner){
+    // drift donuts around mid-field: drive in if the wall is close, then
+    // hold full lock with the rear grip broken
+    const da=angDiff(Math.atan2(180-c.y,80-c.x)-c.a);
+    const dc=Math.hypot(80-c.x,180-c.y);
+    if(dc>52)return{steer:Math.max(-1,Math.min(1,da*2.2)),throttle:1,
+      boosting:false,drifting:false};
+    return{steer:1,throttle:0.95,boosting:false,drifting:true};
+  }
+  // losers creep back toward their own goal line, heads down
+  const homeY=c.team===0?FL.y1-30:FL.y0+30;
+  const da=angDiff(Math.atan2(homeY-c.y,80-c.x)-c.a);
+  return{steer:Math.max(-0.5,Math.min(0.5,da)),throttle:0.42,
+    boosting:false,drifting:false};
+}
+function applyBotDrift(c,intent,p){
+  // Drift as a committed maneuver: start -> hold (tail out) -> catch -> a
+  // short aligned boost-out window. Never flickered per-frame off raw angle.
+  intent.drifting=false;
+  if(typeof globalThis.__NO_DRIFT!=='undefined')return intent;
+  const ai=c.ai;
+  const speed=Math.hypot(c.vx,c.vy);
+  const da=Math.abs(intent.turnError||0);
+  const dist=intent.targetDist||0;
+  const corner=typeof globalThis.__NO_CORNERING==='undefined';
+  const nearWall=c.x<FL.x0+11||c.x>FL.x1-11||c.y<FL.y0+13||c.y>FL.y1-13;
+  // frames until the current travel vector smacks a wall: cornering treats an
+  // imminent wall exactly like a hairpin — rotate NOW while the drift grip
+  // bleeds the wall-bound momentum, instead of arcing wide into the boards
+  let ttw=999;
+  if(c.vx>0.02)ttw=Math.min(ttw,(FL.x1-c.x)/c.vx);
+  else if(c.vx<-0.02)ttw=Math.min(ttw,(FL.x0-c.x)/c.vx);
+  if(c.vy>0.02)ttw=Math.min(ttw,(FL.y1-2-c.y)/c.vy);
+  else if(c.vy<-0.02)ttw=Math.min(ttw,(FL.y0+2-c.y)/c.vy);
+  const tally=()=>{if(speed>1.25&&da>0.9){
+    c.stats.hardTurns++;if(intent.drifting)c.stats.hardTurnDrifts++;}};
+  if(frame<ai.driftUntil){ // holding the slide
+    const mustHold=frame<ai.driftMinUntil;
+    // sliding ALONG a wall is fine — only bail when the slide is about to
+    // smack one (position-based nearWall kept for the __NO_CORNERING policy)
+    const wallOk=corner?ttw>7:!nearWall;
+    if(speed>0.80&&wallOk&&(mustHold||da>p.driftExit)){
+      intent.drifting=true;intent.boosting=false;
+      intent.throttle=Math.max(0.75,intent.throttle);
+      tally();
+      return intent;
+    }
+    ai.driftUntil=0; // caught the slide: open the boost-out window
+    ai.boostOutUntil=frame+10;ai.boostOutCounted=false;
+    // a line-up drift earns a conversion window: a ball touch soon after the
+    // catch means the swing genuinely set up the shot
+    if(ai.driftKind==='lineup')ai.lineupCredit=frame+55;
+    ai.driftKind='';
+  }
+  if(frame<ai.boostOutUntil&&da<Math.max(0.24,p.driftExit+0.05)&&dist>24&&
+     c.boost>p.boostReserve){
+    intent.boosting=true; // punch out along the new heading
+    if(!ai.boostOutCounted){ai.boostOutCounted=true;c.stats.driftBoostOuts++;}
+  }
+  if(frame<ai.driftCooldown){tally();return intent;}
+  // cornering: drift is the default fast-turn tool, not a special occasion —
+  // lower entry, no far-target cap, and a dedicated wall-save trigger
+  const enter=corner?p.driftEnter*0.66:p.driftEnter;
+  const hardTurn=speed>p.driftMinSpeed&&da>enter&&da<2.55&&
+    (corner?dist>12:dist>15&&dist<92);
+  const touchRotation=intent.tactic==='attack'&&speed>p.driftMinSpeed&&
+    dist<58&&da>Math.max(0.55,enter*0.8);
+  const kickoffTurn=kickoffAge<68&&ai.kickoffDrift&&speed>1.05&&da>0.17;
+  // THE drift play: on the wrong side of the ball, throw the tail out and
+  // swing around it — the hold releases as the shot line comes on, and the
+  // boost-out punches straight into the strike
+  const bd2=intent.ballDist===undefined?1e9:intent.ballDist;
+  const lineupTurn=typeof globalThis.__NO_LINEUP==='undefined'&&
+    intent.tactic==='reposition'&&speed>p.driftMinSpeed*0.9&&
+    bd2>16&&bd2<60&&da>0.35;
+  // wall save: fast, about to hit the boards, and the target needs rotation —
+  // the skilled line is a drift that whips the nose around before contact
+  const wallSave=corner&&ttw<20&&speed>1.15&&da>0.45&&da<2.7&&dist>10;
+  const startOk=corner?(wallSave||ttw>16):!nearWall;
+  if(startOk&&(hardTurn||touchRotation||kickoffTurn||lineupTurn||wallSave)){
+    const duration=kickoffTurn?18:
+      lineupTurn?Math.min(42,16+Math.floor(da*10)):
+      hardTurn||touchRotation?Math.min(30,10+Math.floor(da*9)):
+      Math.min(26,10+Math.floor(da*8));
+    ai.driftUntil=frame+duration;ai.driftMinUntil=frame+8;
+    ai.driftCooldown=ai.driftUntil+(corner?14:24);ai.boostOutUntil=0;
+    ai.driftKind=kickoffTurn?'kickoff':lineupTurn?'lineup':
+      hardTurn||touchRotation?'turn':'wallsave';
+    if(ai.driftKind==='lineup')c.stats.lineupDrifts++;
+    if(wallSave)c.stats.wallSaves++;
+    intent.drifting=true;intent.boosting=false;
+    intent.throttle=Math.max(0.75,intent.throttle);
+  }
+  tally();
+  return intent;
 }
 // ---------- physics ----------
-function playerDrive(c){ // arrows/WASD steer+throttle, space boosts
+function playerDrive(c){ // arrows/WASD steer+throttle, space boosts, x/z drifts
   const move=readDrive();
   const boosting=keys.a&&c.boost>0; // boost IS full throttle — never gated on the
   return{steer:move.x, // sticky shared axis bridges keyboard ghosting
     throttle:boosting||move.y<0?1:(move.y>0?-0.6:0.15),
-    boosting};
+    boosting,
+    drifting:keys.b||keys.c}; // same intent field the bots use
+}
+function advanceCar(c,d){ // one physics path: human and bot intents land here
+  c.boosting=d.boosting&&c.boost>0;
+  const sp0=Math.hypot(c.vx,c.vy);
+  // power drift: break rear grip so the body yaws ~1.9x faster than the
+  // velocity vector while momentum carries through. Needs speed, throttle and
+  // real steering — no low-speed pirouettes (motion contract).
+  const wantsDrift=typeof globalThis.__NO_DRIFT==='undefined'&&
+    !!d.drifting&&d.throttle>0.15&&sp0>0.90&&Math.abs(d.steer)>0.18;
+  if(typeof globalThis.__NO_DRIFT!=='undefined')c.drift=0;
+  else c.drift=clamp(c.drift+(wantsDrift?0.20:-0.16),0,1);
+  c.driftHeld=wantsDrift;c.drifting=c.drift>0.22;
+  c.a+=d.steer*0.068*Math.min(1,sp0*0.9+0.35)*(1+c.drift*0.90);
+  const th=c.boosting?0.15:0.08*d.throttle;
+  c.vx+=Math.cos(c.a)*th;c.vy+=Math.sin(c.a)*th;
+  if(c.boosting){c.boost-=0.45;c.stats.boostFrames++;
+    spawn({x:c.x-Math.cos(c.a)*6,y:c.y-Math.sin(c.a)*6,
+      vx:-Math.cos(c.a)*1.2+R(-0.3,0.3),vy:-Math.sin(c.a)*1.2+R(-0.3,0.3),t:R(6,14),c:random()<0.5?'#ffd166':'#ff8a2a'});}
+  const fx=Math.cos(c.a),fy=Math.sin(c.a);
+  if(c.drift<=0){
+    // grip: damp lateral velocity (the untouched pre-drift integration)
+    const fwd=c.vx*fx+c.vy*fy;
+    let lx=c.vx-fwd*fx,ly=c.vy-fwd*fy;
+    lx*=0.87;ly*=0.87;
+    c.vx=fx*fwd*0.985+lx;c.vy=fy*fwd*0.985+ly;
+  }else{
+    const rx=-fy,ry=fx; // car-right basis
+    let fwd=c.vx*fx+c.vy*fy;
+    let side=c.vx*rx+c.vy*ry;
+    // full drift keeps nearly all lateral motion while the body yaws
+    const sideKeep=0.87+(0.98-0.87)*c.drift;
+    const fwdKeep=0.985+(0.992-0.985)*c.drift;
+    fwd*=fwdKeep;side*=sideKeep;
+    side-=d.steer*c.drift*Math.min(0.04,sp0*0.015); // readable rear kick
+    c.vx=fx*fwd+rx*side;c.vy=fy*fwd+ry*side;
+    if(!wantsDrift){ // release: rotate momentum toward the new heading —
+      const speed=Math.hypot(c.vx,c.vy); // the catch, no invented speed
+      if(speed>0.05){
+        const va=Math.atan2(c.vy,c.vx);
+        const caught=va+angDiff(c.a-va)*(0.04+0.10*(1-c.drift));
+        c.vx=Math.cos(caught)*speed;c.vy=Math.sin(caught)*speed;
+      }
+    }
+  }
+  const max=c.boosting?2.9:2.3,sp=Math.hypot(c.vx,c.vy);
+  if(sp>max){c.vx*=max/sp;c.vy*=max/sp;}
+  c.sup=sp>2.5;
+  const finalSp=Math.hypot(c.vx,c.vy);
+  c.slip=finalSp>0.12?angDiff(Math.atan2(c.vy,c.vx)-c.a):0;
+  if(wantsDrift){c.stats.driftFrames++;if(!c.wasDrifting)c.stats.driftStarts++;}
+  const released=!wantsDrift&&c.wasDrifting;
+  c.wasDrifting=wantsDrift;
+  c.x+=c.vx;c.y+=c.vy;
+  // stats-only: a fast near-normal wall impact is the "unskilled bot" tell
+  // the cornering eval bands down (counter never feeds back into the sim)
+  const wallHit=Math.max(c.x<FL.x0?-c.vx:0,c.x>FL.x1?c.vx:0,
+    c.y<FL.y0+2?-c.vy:0,c.y>FL.y1-2?c.vy:0);
+  if(wallHit>1.5)c.stats.wallCrashes++;
+  if(c.x<FL.x0){c.x=FL.x0;c.vx*=-0.4;}
+  if(c.x>FL.x1){c.x=FL.x1;c.vx*=-0.4;}
+  if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy*=-0.4;}
+  if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy*=-0.4;}
+  // ---- drift presentation (sim-inert: no engine RNG, nothing reads back) ----
+  c.driftAge=wantsDrift?c.driftAge+1:0;
+  const rearX=c.x-fx*5,rearY=c.y-fy*5,rxv=-fy,ryv=fx;
+  if(c.drift>0.25&&finalSp>0.9){
+    // rubber laid by BOTH rear wheels: the pair of arcs the tail sweeps is
+    // what sells "the back swung around" at 160px
+    c.skid.push({x:rearX+rxv*2.5,y:rearY+ryv*2.5,f:frame},
+                {x:rearX-rxv*2.5,y:rearY-ryv*2.5,f:frame});
+  }
+  while(c.skid.length&&frame-c.skid[0].f>34)c.skid.shift();
+  if(c.skid.length>68)c.skid.splice(0,c.skid.length-68);
+  if(c.drift>0.35&&finalSp>1.10&&(frame+c.i*2)%2===0){
+    // tire smoke pours off the outer rear wheel while grip is broken
+    const sideSign=Math.sign(c.slip)||Math.sign(d.steer)||1;
+    fxDust(rearX+rxv*sideSign*2,rearY+ryv*sideSign*2,c.drift>0.7?3:2,'#aab4c2');
+  }
+  if(c.driftAge>=10&&frame%3===0) // charged: gold sparks say the boost-out is loaded
+    fxDust(rearX,rearY,1,'#ffd166');
+  if(released&&c.drift>0.4){ // the catch: grip bites again
+    fxDust(rearX+rxv*2.5,rearY+ryv*2.5,2,'#e8ecf2');
+    fxDust(rearX-rxv*2.5,rearY-ryv*2.5,2,'#e8ecf2');
+  }
 }
 function carStep(c){
   if(c.launch>0){ // sent tumbling by the goal blast
@@ -181,31 +644,15 @@ function carStep(c){
     return;
   }
   if(c.dead>0){c.dead--;
-    if(c.dead===0){c.x=c.i%2?130:30;c.y=c.team?50:310;c.a=c.team?Math.PI/2:-Math.PI/2;c.vx=0;c.vy=0;}
+    if(typeof globalThis.__NO_DEMOS!=='undefined'){ // legacy fixed respawn
+      if(c.dead===0){c.x=c.i%2?130:30;c.y=c.team?50:310;c.a=c.team?Math.PI/2:-Math.PI/2;c.vx=0;c.vy=0;}
+      return;}
+    if(c.dead===DEMO_TELEGRAPH)c.respawn=chooseRespawn(c); // latch the telegraph
+    if(c.dead===0)respawnCar(c);
     return;}
+  if(c.demoImmune>0)c.demoImmune--;
   const d=driveController(c);
-  c.boosting=d.boosting&&c.boost>0;
-  const sp0=Math.hypot(c.vx,c.vy);
-  c.a+=d.steer*0.068*Math.min(1,sp0*0.9+0.35);
-  const th=c.boosting?0.15:0.08*d.throttle;
-  c.vx+=Math.cos(c.a)*th;c.vy+=Math.sin(c.a)*th;
-  if(c.boosting){c.boost-=0.45;
-    spawn({x:c.x-Math.cos(c.a)*6,y:c.y-Math.sin(c.a)*6,
-      vx:-Math.cos(c.a)*1.2+R(-0.3,0.3),vy:-Math.sin(c.a)*1.2+R(-0.3,0.3),t:R(6,14),c:random()<0.5?'#ffd166':'#ff8a2a'});}
-  // grip: damp lateral velocity
-  const fx=Math.cos(c.a),fy=Math.sin(c.a);
-  const fwd=c.vx*fx+c.vy*fy;
-  let lx=c.vx-fwd*fx,ly=c.vy-fwd*fy;
-  lx*=0.87;ly*=0.87;
-  c.vx=fx*fwd*0.985+lx;c.vy=fy*fwd*0.985+ly;
-  const max=c.boosting?2.9:2.3,sp=Math.hypot(c.vx,c.vy);
-  if(sp>max){c.vx*=max/sp;c.vy*=max/sp;}
-  c.sup=sp>2.5;
-  c.x+=c.vx;c.y+=c.vy;
-  if(c.x<FL.x0){c.x=FL.x0;c.vx*=-0.4;}
-  if(c.x>FL.x1){c.x=FL.x1;c.vx*=-0.4;}
-  if(c.y<FL.y0+2){c.y=FL.y0+2;c.vy*=-0.4;}
-  if(c.y>FL.y1-2){c.y=FL.y1-2;c.vy*=-0.4;}
+  advanceCar(c,d);
   // boost pads
   for(const p of pads){
     if(p.t>0)continue;
@@ -248,6 +695,7 @@ function collisions(){
       ball.x=c.x+nx*(ball.r+7);ball.y=c.y+ny*(ball.r+7);
       burst(ball.x,ball.y,4,'#e8ecf2',0.9);
       SHOW.offer({id:'touch',tier:1,at:frame,x:ball.x,y:ball.y}); // muted telemetry
+      if(frame<c.ai.lineupCredit){c.ai.lineupCredit=0;c.stats.lineupTouches++;}
     }
   }
   for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
@@ -256,19 +704,104 @@ function collisions(){
     const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
     if(d<11){
       const nx=dx/(d||1),ny=dy/(d||1);
-      if(a.team!==b.team&&a.sup&&!b.sup)demo(b,a);
-      else if(a.team!==b.team&&b.sup&&!a.sup)demo(a,b);
-      else{a.x-=nx*(11-d)/2;a.y-=ny*(11-d)/2;b.x+=nx*(11-d)/2;b.y+=ny*(11-d)/2;
-        const tvx=a.vx;a.vx=b.vx*0.7;b.vx=tvx*0.7;
-        const tvy=a.vy;a.vy=b.vy*0.7;b.vy=tvy*0.7;}
+      if(typeof globalThis.__NO_DEMOS!=='undefined'){ // legacy demolition rules
+        if(a.team!==b.team&&a.sup&&!b.sup)demo(b,a);
+        else if(a.team!==b.team&&b.sup&&!a.sup)demo(a,b);
+        else bounceCars(a,b,nx,ny,d);
+        continue;
+      }
+      if(state==='play'&&a.team!==b.team){ // demo v2: real impact geometry
+        const ap=demoPower(a,b,nx,ny),bp=demoPower(b,a,-nx,-ny);
+        if(ap>-Infinity||bp>-Infinity){
+          // head-on ties resolve deterministically — no RNG in collisions
+          if(ap>bp+1e-9||(Math.abs(ap-bp)<=1e-9&&((frame+i+j)&1)===0))demo(b,a);
+          else demo(a,b);
+          continue;
+        }
+      }
+      // demo-v2 bump: elastic impulse along the contact normal instead of the
+      // legacy full-velocity swap — the swap lets a nose-to-nose scrum trade
+      // the same momentum forever (a motion-contract deadlock); a real bounce
+      // repels every approach and preserves slide-past motion.
+      a.x-=nx*(11-d)/2;a.y-=ny*(11-d)/2;b.x+=nx*(11-d)/2;b.y+=ny*(11-d)/2;
+      const rel=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;
+      if(rel<0){const imp=0.875*-rel;
+        a.vx-=nx*imp;a.vy-=ny*imp;b.vx+=nx*imp;b.vy+=ny*imp;}
+      a.vx-=nx*0.12;a.vy-=ny*0.12;b.vx+=nx*0.12;b.vy+=ny*0.12;
     }
   }
 }
+function bounceCars(a,b,nx,ny,d){
+  a.x-=nx*(11-d)/2;a.y-=ny*(11-d)/2;b.x+=nx*(11-d)/2;b.y+=ny*(11-d)/2;
+  const tvx=a.vx;a.vx=b.vx*0.7;b.vx=tvx*0.7;
+  const tvy=a.vy;a.vy=b.vy*0.7;b.vy=tvy*0.7;
+}
+// demo v2: a hit only demolishes when the attacker is truly fast AND actually
+// driving into the victim — no side-swipe demos, supersonic victims fair game
+const DEMO_SPEED=2.55,DEMO_CLOSING=0.65,DEMO_FACING=0.48;
+const DEMO_RESPAWN=130,DEMO_TELEGRAPH=30,DEMO_GRACE=75;
+function demoPower(attacker,victim,nx,ny){
+  if(victim.demoImmune>0)return-Infinity;
+  const speed=Math.hypot(attacker.vx,attacker.vy);
+  if(speed<DEMO_SPEED)return-Infinity;
+  const closing=(attacker.vx-victim.vx)*nx+(attacker.vy-victim.vy)*ny;
+  if(closing<DEMO_CLOSING)return-Infinity;
+  const facing=(attacker.vx*nx+attacker.vy*ny)/(speed||1);
+  if(facing<DEMO_FACING)return-Infinity;
+  return speed+closing*0.35+facing*0.15;
+}
+const RESPAWNS=[
+  [{x:30,y:310,a:-Math.PI/2},{x:130,y:310,a:-Math.PI/2},{x:80,y:310,a:-Math.PI/2}],
+  [{x:130,y:50,a:Math.PI/2},{x:30,y:50,a:Math.PI/2},{x:80,y:50,a:Math.PI/2}]];
+function chooseRespawn(c){ // pure math: safest home slot, no RNG
+  const options=RESPAWNS[c.team];
+  let best=options[0],bestScore=-Infinity;
+  for(let i=0;i<options.length;i++){
+    const r=options[(i+c.i)%options.length];
+    let enemyClear=Infinity,mateClear=Infinity;
+    for(const o of cars){
+      if(o===c||o.dead>0)continue;
+      const d=Math.hypot(r.x-(o.x+o.vx*DEMO_TELEGRAPH),r.y-(o.y+o.vy*DEMO_TELEGRAPH));
+      if(o.team===c.team)mateClear=Math.min(mateClear,d);
+      else enemyClear=Math.min(enemyClear,d);
+    }
+    const s2=enemyClear+Math.hypot(r.x-ball.x,r.y-ball.y)*0.20+mateClear*0.10;
+    if(s2>bestScore){bestScore=s2;best=r;}
+  }
+  return{...best};
+}
+function respawnCar(c){
+  const r=c.respawn||chooseRespawn(c);
+  c.x=r.x;c.y=r.y;c.a=r.a;c.vx=0;c.vy=0;c.boost=34;c.dead=0;c.respawn=null;
+  c.demoImmune=DEMO_GRACE;
+  c.drift=0;c.drifting=false;c.slip=0;c.sup=false;c.driftAge=0;c.skid.length=0;
+  c.ai.demoTarget=-1;c.ai.demoUntil=0;c.ai.driftUntil=0;c.ai.boostOutUntil=0;
+  if(c.skill)c.skill.reset();
+}
 function demo(victim,by){
-  victim.dead=130;shake(8);
-  burst(victim.x,victim.y,24,TEAM[victim.team].c,2.4);
-  burst(victim.x,victim.y,10,'#ffd166',1.6);
-  SHOW.offer({id:'demo-'+victim.i,tier:2,at:frame,x:victim.x,y:victim.y,data:{by:by.i}});
+  if(typeof globalThis.__NO_DEMOS!=='undefined'){ // legacy branch, untouched
+    victim.dead=130;shake(8);
+    burst(victim.x,victim.y,24,TEAM[victim.team].c,2.4);
+    burst(victim.x,victim.y,10,'#ffd166',1.6);
+    SHOW.offer({id:'demo-'+victim.i,tier:2,at:frame,x:victim.x,y:victim.y,data:{by:by.i}});
+    return;
+  }
+  const x=victim.x,y=victim.y;
+  victim.dead=DEMO_RESPAWN;victim.respawn=null;victim.demoImmune=0;
+  victim.vx=0;victim.vy=0;victim.boosting=false;victim.sup=false;
+  victim.drift=0;victim.drifting=false;victim.slip=0;
+  by.stats.demos++;
+  by.ai.demoTarget=-1;by.ai.demoUntil=0;
+  by.ai.demoCooldown=frame+Math.round(270-(by.profile?by.profile.demoSeek||0:0)*90);
+  shake(6);ring(x,y,'#ffffff',2.4,20);
+  // the demoer keeps rolling; every explosion particle rides the inert fxRng
+  fxBurst(x,y,20,TEAM[victim.team].c2,2.5);
+  fxBurst(x,y,10,'#ffffff',1.7);
+  fxBurst(x,y,6,'#ffd166',1.2);
+  SHOW.note({kind:'demo',id:'demo',at:frame,tag:by.profile?by.profile.id:'LEGACY',
+    data:{victim:victim.i,by:by.i}});
+  SHOW.offer({id:'demo-'+victim.i,tier:2,at:frame,x,y,
+    data:{by:by.i,profile:by.profile?by.profile.id:'LEGACY'}});
 }
 function goal(team){
   score[team]++;shake(12);
@@ -321,6 +854,7 @@ function physicsStep(){
   collisions();
   for(const p of pads)if(p.t>0)p.t--;
   if(state==='play'){
+    kickoffAge++;
     clock--;
     if(clock<=0&&!overtime){
       if(score[0]!==score[1]){matchOver(score[0]>score[1]?0:1);}
@@ -405,15 +939,53 @@ function drawWind(){ // telegraphed crosswind: drifting chevrons, blink on warn
   ctx.fillText(s,(W-s.length*3.6)/2,213);
   ctx.globalAlpha=1;
 }
+const PROFILE_ACCENT={ROTATOR:'#2de2e6',BALANCED:'#ffffff',PRESSER:'#ffd166',MANIAC:'#ff5a8a'};
 function drawCar(c){
-  if(c.dead>0)return;
+  if(c.dead>0){drawRespawnTelegraph(c);return;}
   ctx.save();ctx.translate(Math.round(c.x),Math.round(c.y));ctx.rotate(c.a);
-  if(c.sup){ctx.globalAlpha=0.35;rect(-11,-2,4,1,'#fff');rect(-13,1,4,1,'#fff');ctx.globalAlpha=1;}
-  rect(-5,-3,10,6,TEAM[c.team].c);
+  if(c.demoImmune>0)ctx.globalAlpha=0.55+0.45*((frame>>2)&1); // respawn blink
+  if(c.sup){const ga=ctx.globalAlpha;ctx.globalAlpha=ga*0.35;rect(-11,-2,4,1,'#fff');rect(-13,1,4,1,'#fff');ctx.globalAlpha=ga;}
+  // drift pose: the rear half articulates on a hinge behind the cockpit and
+  // swings with the slip angle while the nose holds its line — the fishtail
+  // is the drift read, so it is amplified well past the physical angle
+  const swing=c.drift>0.15?clamp(c.slip*1.6,-0.85,0.85):0;
+  if(swing){
+    ctx.save();ctx.translate(2,0);ctx.rotate(-swing);
+    rect(-7,-3,7,6,TEAM[c.team].c);   // swung rear
+    rect(-7,-3,2,6,TEAM[c.team].c2);  // rear accent rides the swing
+    ctx.restore();
+    rect(0,-3,5,6,TEAM[c.team].c);    // steady front
+  }else{
+    rect(-5,-3,10,6,TEAM[c.team].c);
+    rect(-5,-3,2,6,TEAM[c.team].c2);
+  }
   rect(3,-2,2,4,TEAM[c.team].c2);
   rect(0,-2,3,4,'#141a2e');
-  rect(-5,-3,2,6,TEAM[c.team].c2);
-  ctx.restore();
+  if(c.profile&&c.profile.id!=='LEGACY') // 1px personality accent
+    rect(-2,-1,1,2,PROFILE_ACCENT[c.profile.id]);
+  ctx.restore();ctx.globalAlpha=1;
+}
+function drawSkids(){ // fading scorch the rear wheels swept during a drift —
+  for(const c of cars)for(const s of c.skid){ // neon burn, not black rubber:
+    ctx.globalAlpha=0.5*(1-(frame-s.f)/34); // dark-on-dark never read
+    rect(Math.round(s.x)-1,Math.round(s.y),2,1,'#63e0f5');
+  }
+  ctx.globalAlpha=1;
+}
+function drawRespawnTelegraph(c){
+  // where the demolished car is coming back — a place marker, not a route
+  if(typeof globalThis.__NO_DEMOS!=='undefined')return;
+  if(c.dead>DEMO_TELEGRAPH||!c.respawn)return;
+  const t=1-c.dead/DEMO_TELEGRAPH,r=c.respawn;
+  ctx.globalAlpha=0.25+t*0.4;
+  ctx.strokeStyle=TEAM[c.team].c2;
+  ctx.beginPath();ctx.arc(r.x,r.y,7-t*3,0,7);ctx.stroke();
+  if(c.dead<=12&&(frame>>2)&1){ // silhouette blink just before return
+    ctx.globalAlpha=0.35;
+    ctx.save();ctx.translate(r.x,r.y);ctx.rotate(r.a);
+    rect(-5,-3,10,6,TEAM[c.team].c);ctx.restore();
+  }
+  ctx.globalAlpha=1;
 }
 function drawBall(){
   const sp=Math.hypot(ball.vx,ball.vy);
@@ -474,11 +1046,30 @@ function drawHUD(){
       ctx.fillStyle='#ffd166';ctx.fillText(n,74,190);
       ctx.lineWidth=1;
     }
+    // match intro: name tonight's temperaments (first kickoff only)
+    if(clock===180*60&&cars[0].profile&&cars[0].profile.id!=='LEGACY'){
+      ctx.font='bold 6px monospace';
+      for(let t2=0;t2<2;t2++){
+        const pair=cars.filter(c=>c.team===t2).map(c=>c.profile.tag).join('+');
+        ctx.fillStyle=TEAM[t2].c2;
+        ctx.fillText(pair,t2===0?8:W-8-pair.length*3.6,32);
+      }
+    }
+  }
+  // demo callout rides the tier-2 cue window
+  if(pres.cue&&pres.cue.tier===2&&String(pres.cue.id).startsWith('demo')&&pres.t<0.5){
+    const cx=Math.max(14,Math.min(W-34,pres.cue.x-10));
+    const cy=Math.max(34,Math.min(H-24,pres.cue.y-8));
+    ctx.font='bold 7px monospace';
+    ctx.lineWidth=2;ctx.strokeStyle='#0a0d20';ctx.strokeText('DEMO!',cx,cy);
+    ctx.fillStyle='#ffd166';ctx.fillText('DEMO!',cx,cy);
+    ctx.lineWidth=1;
   }
 }
 function draw(){
   preDraw();
   drawField();
+  drawSkids();
   drawParts();
   drawRings();
   drawBall();
@@ -490,10 +1081,22 @@ function draw(){
 // ---------- main ----------
 function step(){
   frame++;
+  if(needProfiles){ // first match: assign on frame 1, not at boot, so eval
+    needProfiles=false; // ablation switches set right after boot are honored
+    matchNo++;assignProfiles();
+    for(const c of cars)latchKickoffDrift(c);
+  }
   sessionStep({reset:resetGame});
   pres=SHOW.step(frame);
   stepWind();
-  if(state==='countdown'){stateT--;if(stateT<=-15)state='play';}
+  if(state==='countdown'){stateT--;
+    // rolling start: engines bite on "GO" wind-up and the pack creeps at the
+    // ball — race-start anticipation, and the kickoff pause never freezes
+    // past its emote budget (no RNG; gated with the other presentation beats)
+    if(typeof globalThis.__NO_CELEBRATION==='undefined'&&stateT<=10)
+      for(const c of cars)if(c.dead<=0)
+        advanceCar(c,{steer:0,throttle:0.5,boosting:false,drifting:false});
+    if(stateT<=-15)state='play';}
   else if(state==='goal'){stateT--;
     if(frame%pres.physicsEvery===0)physicsStep();
     if(stateT<=0){
@@ -504,12 +1107,19 @@ function step(){
     if(frame%3===0)spawn({x:R(FL.gx0-8,FL.gx1+8),y:winner===0?FL.y0+2:FL.y1-2, // victory confetti
       vx:R(-0.5,0.5),vy:winner===0?R(0.4,1.4):R(-1.4,-0.4),t:R(30,70),drag:1,
       c:random()<0.7?TEAM[winner].c:'#ffffff'});
+    // match-end beat is ALIVE, not frozen (motion contract): winners rip
+    // victory donuts on the new drift physics, losers sulk-crawl home.
+    // No engine RNG (boost off) and kickoffPos re-seats everyone, so the
+    // celebration cannot leak into the next match.
+    if(typeof globalThis.__NO_CELEBRATION==='undefined')
+      for(const c of cars)if(c.dead<=0)advanceCar(c,celebrationIntent(c));
     if(stateT<=0)resetGame(); // same path as session resets: wind + show state too
   }else physicsStep();
   stepParts();stepRings();
 }
-initSession('rocket',[['UP / DOWN','GAS · REVERSE'],['LEFT / RIGHT','STEER'],['SPACE','BOOST']]);
+initSession('rocket',[['UP / DOWN','GAS · REVERSE'],['LEFT / RIGHT','STEER'],['SPACE','BOOST'],['X / Z','POWER DRIFT']]);
 kickoffPos();
+let needProfiles=true; // deferred first-match personality assignment
 start(()=>{step();},()=>{draw();});
 </script>
 </html>

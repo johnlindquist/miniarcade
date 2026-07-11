@@ -3,7 +3,9 @@
 const{bootGame}=require('./harness');
 
 const BEFORE={rocket:87,wordfall:458,webslam:269,scrapshift:null};
-const MAX={rocket:80,wordfall:60,webslam:100,scrapshift:230};
+// rocket re-measured 2026-07-11 after drift/personality work: 82 steady-state
+// calls (four 1px profile accents + the first-countdown intro card) -> 86.
+const MAX={rocket:86,wordfall:60,webslam:100,scrapshift:230};
 let failed=false;
 const fail=m=>{console.error('  FAIL:',m);failed=true;};
 const snap=c=>({calls:c.calls,byMethod:{...c.byMethod}});
