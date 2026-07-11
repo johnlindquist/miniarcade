@@ -298,7 +298,6 @@ async function main(){
     ],outPath:CONTACT_PATH
   });
   fs.mkdirSync(path.dirname(TRACKED_CONTACT_PATH),{recursive:true});
-  fs.writeFileSync(TRACKED_CONTACT_PATH,sheet.png);
 
   const candidateMetrics=Object.fromEntries(beats.map(beat=>[beat.id,analyzeFrame(candidate[beat.id],{native:false,crop:WORLD_CROP})]));
   const horizonMetrics=beats.map(beat=>analyzeFrame(horizonByBeat[beat.id],{native:false,crop:WORLD_CROP}));
@@ -414,7 +413,7 @@ async function main(){
 
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256,beats,evidence.specs));
   let review;
-  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});
+  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});
   else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then copy and complete ${REVIEW_TEMPLATE_PATH}`]};
   const semanticGate={name:'fresh semantic comparison receipt',ok:review.ok,detail:review.errors};
   const gates=[...automatedGates,semanticGate],automatedOk=automatedGates.every(value=>value.ok);

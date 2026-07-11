@@ -91,10 +91,10 @@ for(const seed of watchSeeds){
   if(personas.size<2)fail('representative panel did not vary persona');if(lapses<2)fail('skill-profile imperfection disappeared');
 }
 
-console.log('4) greed-plan A/B: eight same-seed ten-minute pairs vs fixed three-piece return');
+console.log('4) greed-plan A/B: ten same-seed ten-minute pairs vs fixed three-piece return');
 {
   const smart=[],base=[];let wins=0;
-  for(let i=0;i<8;i++){
+  for(let i=0;i<10;i++){
     const seed=0x5b100+i*191,a=bootGame('star-salvage',{seed,footer:FOOTER}),b=bootGame('star-salvage',{seed,footer:FOOTER});b.sandbox.__NO_GREED_PLAN=1;
     a.frames(36000,false);b.frames(36000,false);const pa=a.sandbox.__starSalvageProbe(),pb=b.sandbox.__starSalvageProbe();smart.push(pa);base.push(pb);if(pa.stats.bankedValue>pb.stats.bankedValue)wins++;
     inBands(pa,SMART_POLICY,`${seed.toString(16)} smart`);inBands(pb,BASE_POLICY,`${seed.toString(16)} baseline`);
@@ -102,8 +102,8 @@ console.log('4) greed-plan A/B: eight same-seed ten-minute pairs vs fixed three-
     console.log(`  ${seed.toString(16)} ${pa.persona.padEnd(4)} smart ${pa.stats.bankedValue} value/train ${pa.stats.maxTrain} vs baseline ${pb.stats.bankedValue}/train ${pb.stats.maxTrain}`);
   }
   const sv=sum(smart,'bankedValue'),bv=sum(base,'bankedValue'),gain=sv/bv-1;
-  console.log(`  ${wins}/8 value wins; aggregate ${sv} vs ${bv} (+${(gain*100).toFixed(1)}%)`);
-  if(wins<7)fail(`greed planner won only ${wins}/8 paired seeds`);if(gain<.20)fail(`greed planner aggregate gain ${(gain*100).toFixed(1)}% below 20%`);
+  console.log(`  ${wins}/10 value wins; aggregate ${sv} vs ${bv} (+${(gain*100).toFixed(1)}%)`);
+  if(wins<9)fail(`greed planner won only ${wins}/10 paired seeds`);if(gain<.20)fail(`greed planner aggregate gain ${(gain*100).toFixed(1)}% below 20%`);
   if(Math.max(...smart.map(p=>p.stats.maxTrain))<5||Math.max(...base.map(p=>p.stats.maxTrain))!==3)fail('A/B lost the visible train-length tradeoff');
   if(sum(smart,'cargoLost')<=0)fail('smart policy erased honest cargo losses');
 }

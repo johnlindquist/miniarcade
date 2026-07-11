@@ -21,6 +21,20 @@ Every game is watched, not played. Optimize every decision for the viewer.
   motion gates, and a hashed semantic review receipt. Behavior needs multi-seed
   natural runs, a ten-minute soak, watchability bands, and causal same-seed A/Bs.
   Evals must fail the cheap or boring implementation they are intended to prevent.
+- **Keep semantic receipts strict across native renderers.** Exact montage bytes
+  are mandatory on the review platform. Another OS may accept native-canvas
+  rasterization drift only when the game, MACHINE HUNT and BLOCK MINE reference
+  sources, visual eval, capture harness, offline renderer, fonts, committed
+  visual baselines, runtime, and render dependency lock are byte-exact; all local pixel, scale,
+  detail, motion, fixture-truth, and reference-comparison gates must still execute
+  and pass. Never solve platform drift by deleting or broadly weakening visual
+  gates.
+- **Preserve what was actually reviewed.** Every visual suite has a matching
+  `evals/visual-reviews/<game>.json` and an immutable reviewed PNG under
+  `evals/visual-receipts/`. Ordinary eval runs write only `.artifacts/`; they may
+  never overwrite the committed review image. After an intentional native-size
+  review, preserve matching bytes explicitly with
+  `node evals/preserve-visual-review.js <game>`.
 
 ## Level and environment contract: Zelda rooms, not pathfinding demos
 
@@ -39,6 +53,12 @@ Hard rules:
   objective state, and consequences in the world.
 - Ordinary walking, turning, replanning, or crossing a graph junction does not
   count as entertainment and must not reset a dead-air clock.
+- A watched AI actor may not stand or spin in place for more than 30 simulation
+  frames unless an authored emote/thought makes the pause legible; even then the
+  pause and its share of the run must stay bounded. Prove this with
+  `evals/motion.js`, not a game-local imitation. Motion probes must be non-empty,
+  use stable role IDs, and keep a persistent protagonist ID; rotating IDs or
+  briefly omitting an actor may not reset a stationary streak.
 - Enemies need agency beyond contact damage: patrol/guard/investigate/intercept/
   windup/attack/recover states as appropriate. Their behavior must force a
   visible dodge, counter, detour, timing choice, or plan reversal before contact.
@@ -47,7 +67,8 @@ Hard rules:
   dependencies, and solvability across relevant player forms/inventory states.
 - Natural-run evals must separately count puzzle transitions, enemy actions,
   player responses, combat/near-misses, and completions. Require multiple
-  categories so one noisy counter cannot fake decision density.
+  categories with distinct declared telemetry sources so one noisy counter
+  cannot fake decision density.
 - Carry a rolling dead-air ceiling that resets only on a viewer-visible tactical
   beat: puzzle-state change, enemy tell/engagement, player response, combat or
   near-miss, environmental reversal, or payoff. Set the band from a measured
@@ -55,17 +76,29 @@ Hard rules:
 - Include a causal ablation such as `__NO_ENEMY_AI`, `__NO_PUZZLE_PLAN`, or the
   narrowest honest switch. On identical seeds, prove that the live mechanic
   changes decisions during the setup/telegraph window while the baseline remains
-  active and capable of progress.
+  active and capable of progress. The switch may disable only the named mechanic;
+  do not add baseline-only hesitation, physics changes, or unrelated handicaps.
 - Visual evidence for this genre must include the room setup, puzzle dependency,
   enemy tell/pressure, player response, state-changing solve, and aftermath. A
   beauty shot plus totals is not proof of an entertaining level.
+- In addition to source bans, contaminate private future waypoint/planner buffers
+  in a frozen fixture and require an exact real-pixel no-op. Facing and diegetic
+  attack tells may communicate local intent; future computed route chains may not.
 
 ## Verify
 
-Run `npm test` before every commit. New games must include focused eval coverage,
+Run `npm --prefix render test && npm test` before every commit. The renderer test
+must execute ffmpeg, probe the H.264 stream, and reproduce byte-identical output;
+`--help` or module loading alone is not a renderer test. New games must include focused eval coverage,
 including a deterministic ten-minute autoplay soak that proves movement, activity,
 and progress. Exploration/pathfinding games must also use the level-entertainment
 contract in `evals/entertainment.js`; movement alone never satisfies that gate.
+Register every active exploration game in `evals/entertainment-eval.js`, which
+also rejects route renderers, route-plan copy, and visual route-point probes.
+
+Render a deterministic review clip with
+`node render/render.js <game> <seconds> [out.mp4] --seed N --probe --fps 30`.
+The simulation remains 60 Hz regardless of output FPS.
 
 ## Publishing and deployment
 

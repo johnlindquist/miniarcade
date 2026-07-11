@@ -64,5 +64,8 @@
       "meetsBlockMine": true,
       "note": "Municipal panels, emergency amber, mint rescue, coral threat, cyan power, compact civic icons, parcel materials, disaster scars, route telemetry, act overlays and recovery sweeps share one authored city-crisis grammar. The montage is cohesive beside both references while retaining a distinct emergency-control identity rather than borrowing their wilderness or mining language."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "583295c5de024771cd83eb430100ade45fa57524aea22482af13e6accf2a05c0"
 }

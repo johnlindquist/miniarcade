@@ -53,14 +53,16 @@ const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
 }});
 
 let showFrame=0,runFrame=0,worldSeed=1,stage=0,state='climb',extractT=0,zone=ZONES[0],layout=null;
-let hero=null,workers=[],barrels=[],fires=[],machines=[],route=[],abandonedRoute=[],routeFlash=0,planSerial=0;
+let hero=null,workers=[],barrels=[],fires=[],machines=[],route=[],planSerial=0;
 let history=[],persona=PERSONAS[0],profile=null,pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 let act={phase:'calm',warnAt:1500,landAt:1740,endAt:2280,index:0,purgeCol:3,notes:[]};
-let texts=[],eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,barrelSerial=0;
+let texts=[],eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastDecisionFrame=0,barrelSerial=0;
 let visualFixture='',visualExtraction=false;
 const stats={rescues:0,extractions:0,hits:0,downs:0,deflections:0,nearMisses:0,convoyScares:0,
   reroutes:0,smartPlans:0,baselinePlans:0,lapses:0,acts:0,barrels:0,floors:0,events:0,progress:0,
-  maxEventLull:0,maxProgressLull:0,invisibleResets:0,plannerCalls:0};
+  maxEventLull:0,maxProgressLull:0,invisibleResets:0,plannerCalls:0,objectiveTransitions:0,
+  objectiveCompletions:0,enemyActions:0,playerResponses:0,puzzleDecisions:0,threatDecisions:0,
+  responseDecisions:0,payoffDecisions:0,maxDecisionDeadAir:0};
 
 const mod=(n,d)=>((n%d)+d)%d;
 const node=(f,c)=>f*COLS+c;
@@ -75,6 +77,7 @@ const alpha=(a,fn)=>{const old=ctx.globalAlpha;ctx.globalAlpha=a;fn();ctx.global
 
 function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score)}
 function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score)}
+function markDecision(kind){const key=kind+'Decisions';if(!(key in stats))throw new Error('unknown decision kind '+kind);stats.maxDecisionDeadAir=Math.max(stats.maxDecisionDeadAir,showFrame-lastDecisionFrame);lastDecisionFrame=showFrame;stats[key]++}
 function say(s,c,x,y,t){texts.push({s,c:c||CREAM,x:x===undefined?hero.x:x,y:y===undefined?hero.y-15:y,t:t||70});if(texts.length>8)texts.shift()}
 function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+40})}
 
@@ -105,7 +108,7 @@ function buildLayout(){
   const seen=new Set([node(0,0)]),q=[node(0,0)];for(let h=0;h<q.length;h++)for(const n of neighbors(q[h]))if(!seen.has(n)){seen.add(n);q.push(n)}
   if(seen.size<COLS*6)layout.gaps.clear();
 }
-function makeHero(){const start=node(0,stage%2?5:0),p=nodePos(start);return{node:start,from:start,to:start,moveT:0,moveDur:0,x:p.x,y:p.y,face:stage%2?-1:1,pose:'idle',intent:null,stun:0,hitFlash:0,health:3,maxFloor:0,braceT:0,lastX:p.x,lastY:p.y}}
+function makeHero(){const start=node(0,stage%2?5:0),p=nodePos(start);return{node:start,from:start,to:start,moveT:0,moveDur:0,x:p.x,y:p.y,face:stage%2?-1:1,pose:'idle',intent:null,stun:0,hitFlash:0,health:3,maxFloor:0,braceT:0,lastX:p.x,lastY:p.y,extractFromX:p.x,extractFromY:p.y}}
 function buildWorkers(){workers=[];for(let i=0;i<4;i++){const f=i+1,c=mod((worldSeed>>(i*3))+stage*2+i*2,COLS),p=nodePos(node(f,c));workers.push({id:'worker-'+i,type:i,node:node(f,c),rescued:false,done:false,join:-1,x:p.x,y:p.y,face:i%2?1:-1,panicT:0,visualX:null,visualY:null})}}
 function buildHazards(){
   barrels=[];fires=[];machines=[];barrelSerial=0;
@@ -116,12 +119,12 @@ function buildHazards(){
 function resetAct(){Object.assign(act,{phase:'calm',warnAt:showFrame+1500,landAt:showFrame+1740,endAt:showFrame+2280,index:0,purgeCol:3,notes:[]})}
 function resetRun(full){
   worldSeed=RI(1,0x7fffff);stage=0;state='climb';extractT=0;showFrame=Math.max(0,showFrame);runFrame=0;
-  for(const k in stats)stats[k]=0;eventSerial=progressSerial=0;lastEventFrame=lastProgressFrame=showFrame;texts=[];history=[];route=[];abandonedRoute=[];routeFlash=0;planSerial=0;
+  for(const k in stats)stats[k]=0;eventSerial=progressSerial=0;lastEventFrame=lastProgressFrame=lastDecisionFrame=showFrame;texts=[];history=[];route=[];planSerial=0;
   persona=PERSONAS[worldSeed%PERSONAS.length];profile=skillProfile({rng:createRng(worldSeed^0x54a77e),skill:.82,precision:persona.precision,risk:persona.risk,recovery:.9,reactionFrames:[2,5],lapseChance:.0018,lapseFrames:[10,22]});
   buildLayout();hero=makeHero();buildWorkers();buildHazards();resetAct();if(full)SHOW.reset(showFrame);planRoute(true);history.push({x:hero.x,y:hero.y});
 }
 function nextTower(){
-  stage++;state='climb';extractT=0;route=[];abandonedRoute=[];routeFlash=0;history=[];buildLayout();hero=makeHero();buildWorkers();buildHazards();planRoute(true);history.push({x:hero.x,y:hero.y});markProgress(250);say(zone.name,zone.accent,80,178,120);
+  stage++;state='climb';extractT=0;route=[];history=[];buildLayout();hero=makeHero();buildWorkers();buildHazards();planRoute(true);history.push({x:hero.x,y:hero.y});markProgress(250);say(zone.name,zone.accent,80,178,120);
 }
 
 const BARREL_SPEED=.72,ROLL_FRAMES=Math.round((RIGHT-LEFT)/BARREL_SPEED),DROP_FRAMES=48,BARREL_SEG=ROLL_FRAMES+DROP_FRAMES;
@@ -131,7 +134,7 @@ function barrelAt(b,extra){
   if(phase<=ROLL_FRAMES)return{x:from+(to-from)*(phase/ROLL_FRAMES),y:Y[floor]-5,floor,falling:false,dir};
   const u=(phase-ROLL_FRAMES)/DROP_FRAMES;return{x:to,y:Y[floor]+(Y[Math.max(0,floor-1)]-Y[floor])*u-5,floor,falling:true,dir};
 }
-function spawnBarrel(dir,age){const b={id:'barrel-'+barrelSerial++,startDir:dir||1,age:age||0,x:0,y:0,floor:5,falling:false,dir:dir||1,hitAt:-9999,nearAt:-9999};const q=barrelAt(b,0);if(q)Object.assign(b,q);barrels.push(b);stats.barrels++;markEvent();return b}
+function spawnBarrel(dir,age){const b={id:'barrel-'+barrelSerial++,startDir:dir||1,age:age||0,x:0,y:0,floor:5,falling:false,dir:dir||1,hitAt:-9999,nearAt:-9999};const q=barrelAt(b,0);if(q)Object.assign(b,q);barrels.push(b);stats.barrels++;stats.enemyActions++;markDecision('threat');markEvent();return b}
 function fireActive(f,extra){if(f.suppressedUntil!==undefined&&runFrame+(extra||0)<f.suppressedUntil)return false;if(f.force)return true;return mod(runFrame+(extra||0)+f.phase,420)<112}
 function machineReach(m,extra){if(m.force)return 1;const t=mod(runFrame+(extra||0)+m.phase,300)/300;return t<.18?Math.sin(t/.18*Math.PI):0}
 function nodeRisk(n,eta){
@@ -157,7 +160,7 @@ function routeIdentity(r){return r.slice(0,8).join('-')}
 function planRoute(force){
   const smart=typeof globalThis.__NO_CASCADE_LOOKAHEAD==='undefined',old=route.slice(),next=findPath(hero.node,goalNodes(),smart);
   stats.plannerCalls++;if(smart)stats.smartPlans++;else stats.baselinePlans++;
-  if(old.length&&next.length&&routeIdentity(old)!==routeIdentity(next)&&showFrame-planSerial>80){abandonedRoute=old;routeFlash=90;stats.reroutes++;markEvent();if(stats.reroutes%3===1)offer('reroute',2,hero.x,hero.y,'LIVE REROUTE')}
+  if(old.length&&next.length&&routeIdentity(old)!==routeIdentity(next)&&showFrame-planSerial>80){stats.reroutes++;markEvent();if(stats.reroutes%3===1)offer('reroute',2,hero.x,hero.y,'PURGE DODGE')}
   route=next;planSerial=showFrame;return route;
 }
 function routeSafe(){if(!route.length)return false;let cur=hero.node;for(const n of route){if(!adjacent(cur,n))return false;cur=n}return true}
@@ -171,11 +174,11 @@ function rawBotIntent(){
   if(state!=='climb')return idleIntent('ROOFTOP EXTRACTION');
   const smart=typeof globalThis.__NO_CASCADE_LOOKAHEAD==='undefined';
   if(hero.stun>0)return idleIntent('SHAKE IT OFF');
-  if(hero.moveT>0)return{dx:Math.sign(hero.x-nodePos(hero.from).x),dy:Math.sign(hero.y-nodePos(hero.from).y),brace:false,assist:smart,next:hero.to,tactic:hero.pose==='climb'?'CLIMB THE LINE':'MOVE THE CONVOY'};
+  if(hero.moveT>0)return{dx:Math.sign(hero.x-nodePos(hero.from).x),dy:Math.sign(hero.y-nodePos(hero.from).y),brace:false,assist:smart,next:hero.to,tactic:hero.pose==='climb'?'CLIMB UNDER COVER':'MOVE THE CONVOY'};
   if(!routeSafe()||showFrame-planSerial>=72)planRoute();
   if(smart&&immediateDanger(0))return{dx:0,dy:0,brace:true,assist:false,next:-1,tactic:'BRACE BEHIND RAIL'};
-  const n=route[0];if(n===undefined)return idleIntent('CHECK THE PLAN');const p=nodePos(n),dx=Math.sign(p.x-hero.x),dy=Math.sign(p.y-hero.y);
-  let tactic=dy<0?'CLIMB TO '+zone.code:dx?'CROSS THE GANTRY':'HOLD THE LINE';
+  const n=route[0];if(n===undefined)return idleIntent('SCAN FOR SURVIVORS');const p=nodePos(n),dx=Math.sign(p.x-hero.x),dy=Math.sign(p.y-hero.y);
+  let tactic=dy<0?'CLIMB TO '+zone.code:dx?'CROSS THE GANTRY':'GUARD THE CONVOY';
   if(act.phase==='warn'&&smart)tactic='REROUTE BEFORE PURGE';
   return{dx,dy,brace:false,assist:smart,next:n,tactic};
 }
@@ -216,12 +219,17 @@ function arriveNode(){
   if(workers.every(w=>w.rescued||w.done)&&hero.node===node(5,stage%2?1:4))beginExtraction();else planRoute(true);
 }
 function rescueWorker(w){
-  w.rescued=true;w.join=workers.filter(v=>v.rescued).length-1;w.x=hero.x;w.y=hero.y;stats.rescues++;markProgress(35);offer('rescue',1,hero.x,hero.y,w.type);fxBurst(hero.x,hero.y-4,9,WORKER_STYLES[w.type].helmet,1.2,.025);say(WORKER_STYLES[w.type].name+' JOINS',MINT,hero.x,hero.y-15,62);
+  w.rescued=true;w.join=workers.filter(v=>v.rescued).length-1;w.x=hero.x;w.y=hero.y;stats.rescues++;stats.objectiveTransitions++;markDecision('puzzle');markProgress(35);offer('rescue',1,hero.x,hero.y,w.type);fxBurst(hero.x,hero.y-4,9,WORKER_STYLES[w.type].helmet,1.2,.025);say(WORKER_STYLES[w.type].name+' JOINS',MINT,hero.x,hero.y-15,62);
   if(workers.filter(v=>v.rescued).length===3){offer('convoy',2,hero.x,hero.y,'THREE HELMETS');markEvent()}
 }
 function extractionFx(){for(let i=0;i<6;i++){const x=40+i*16,y=66+(i%2)*9;fxBurst(x,y,16,i%3===0?GOLD:i%3===1?MINT:CREAM,2.4,.025)}}
 function beginExtraction(){
-  if(state!=='climb')return;state='extract';extractT=180;visualExtraction=true;stats.extractions++;markProgress(180);offer('extraction',3,80,58,'ALL HANDS CLEAR');extractionFx();shake(7);say('ALL HANDS CLEAR',GOLD,80,96,120);
+  if(state!=='climb')return;state='extract';extractT=180;visualExtraction=true;hero.extractFromX=hero.x;hero.extractFromY=hero.y;stats.extractions++;stats.objectiveCompletions++;markDecision('payoff');markProgress(180);offer('extraction',3,80,58,'ALL HANDS CLEAR');extractionFx();shake(7);say('ALL HANDS CLEAR',GOLD,80,96,120);
+}
+function cageY(){if(state!=='extract')return 59;const t=180-extractT;if(t<=60){const u=clamp(t/60,0,1);return 54+15*u*u*(3-2*u)}const u=clamp((t-60)/120,0,1);return 69-38*u*u*(3-2*u)}
+function stepExtraction(){
+  extractT--;const t=180-extractT;if(t<=60){const u=clamp(t/60,0,1),ease=u*u*(3-2*u);hero.x=hero.extractFromX+(80-hero.extractFromX)*ease;hero.y=hero.extractFromY+(69-hero.extractFromY)*ease;hero.face=80<hero.extractFromX?-1:1;hero.pose='run'}
+  else{hero.x=80;hero.y=cageY();hero.pose='climb'}updateHistory();stepHazards();if(extractT<=0)nextTower()
 }
 function updateHistory(){
   history.unshift({x:hero.x,y:hero.y,face:hero.face,pose:hero.pose});if(history.length>280)history.length=280;
@@ -232,7 +240,7 @@ function updateHistory(){
 
 function hitHero(kind,x,y){
   if(hero.hitFlash>0)return;const braced=hero.intent&&((hero.intent.brace&&hero.braceT>2)||hero.intent.assist);hero.hitFlash=96;
-  if(braced){stats.deflections++;markEvent(8);offer('deflect',1,x,y,'RAIL HOLDS');fxBurst(x,y,9,CYAN,1.6,.03);shake(2);return true}
+  if(braced){stats.deflections++;stats.playerResponses++;markDecision('response');markEvent(8);offer('deflect',1,x,y,'RAIL HOLDS');fxBurst(x,y,9,CYAN,1.6,.03);shake(2);return true}
   stats.hits++;hero.health--;hero.stun=48;hero.pose='hurt';markEvent();offer('hit',1,x,y,kind.toUpperCase());fxBurst(hero.x,hero.y,11,CORAL,1.8,.04);shake(4);say(kind==='fire'?'TOO HOT':'BARREL CLANG',CORAL,hero.x,hero.y-16,52);
   if(hero.health<=0){hero.health=3;hero.stun=132;stats.downs++;markProgress();offer('down',2,hero.x,hero.y,'CONVOY COVERS');say('CONVOY COVERS',GOLD,hero.x,hero.y-18,80)}return false
 }
@@ -256,8 +264,7 @@ function stepAct(){
 }
 function stepWorld(){
   runFrame++;if(state==='climb'){hero.intent=controller();applyIntent(hero.intent);updateHistory();stepHazards()}
-  else if(state==='extract'){extractT--;updateHistory();stepHazards();if(extractT<=0)nextTower()}
-  if(routeFlash>0)routeFlash--;
+  else if(state==='extract')stepExtraction();stats.maxDecisionDeadAir=Math.max(stats.maxDecisionDeadAir,showFrame-lastDecisionFrame)
 }
 function step(){
   showFrame++;sessionStep({reset:()=>resetRun(true)});pres=SHOW.step(showFrame);stepAct();
@@ -299,14 +306,6 @@ function drawProps(z,zi){
   else{for(const f of[1,3]){const x=f===1?27:130,y=Y[f]-5;rect(x-9,y-20,18,18,'#5c4436');rect(x-7,y-18,14,13,'#b06b3a');line([[x-7,y-18],[x+7,y-5]],GOLD);line([[x+7,y-18],[x-7,y-5]],GOLD)}}
   for(let i=0;i<12;i++){const x=10+hash(i,worldSeed+stage)*140,y=58+hash(i+33,worldSeed)*245;if(hash(i+stage,7)>.35)alpha(.35,()=>rect(x,y,1+(i%2),1,i%3?z.hi:z.accent))}
 }
-function drawRoutePath(points,color,alphaValue,dash){
-  if(points.length<2)return;ctx.save();ctx.globalAlpha=alphaValue;ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dash||[3,4]);ctx.lineDashOffset=-(showFrame*.18);ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=1;i<points.length;i++)ctx.lineTo(points[i].x,points[i].y);ctx.stroke();ctx.setLineDash([]);ctx.lineWidth=1;ctx.restore();
-}
-function drawRoute(){
-  if(typeof globalThis.__TP_HIDE_ROUTE!=='undefined')return;const points=[{x:hero.x,y:hero.y},...route.map(nodePos)];
-  if(routeFlash>0&&abandonedRoute.length)drawRoutePath([{x:hero.x,y:hero.y},...abandonedRoute.map(nodePos)],CORAL,clamp(routeFlash/90*.45,0,.45),[2,5]);
-  drawRoutePath(points,act.phase==='warn'?GOLD:MINT,.78,[3,3]);if(route.length){const p=nodePos(route[0]),pulse=4+Math.sin(showFrame*.15);ctx.strokeStyle=act.phase==='warn'?GOLD:CREAM;ctx.strokeRect(Math.round(p.x-pulse)+.5,Math.round(p.y-pulse)+.5,pulse*2,pulse*2)}
-}
 function actorAllowed(id){const s=globalThis.__TP_VISUAL_ONLY_ACTOR;return s===undefined||s===null||s==='all'||s===id}
 function workerDrawPos(w){return{x:w.visualX===null?w.x:w.visualX,y:w.visualY===null?w.y:w.visualY}}
 function drawHero(){
@@ -334,7 +333,7 @@ function drawMachine(m){
   if(!actorAllowed(m.id))return;const x=X[m.col],y=Y[m.floor]-3,r=machineReach(m),reach=3+r*7;rect(x-9,y-10,18,10,'#1a252d');rect(x-8,y-9,16,8,zone.beam);rect(x-6,y-8,12,4,zone.hi);rect(x-2,y-7,4,3,r>.5?CORAL:zone.accent);rect(x-3,y-1,6,reach,'#6f7d7e');rect(x-6,y-1+reach,12,3,'#28343a');rect(x-5,y+reach,10,1,CREAM);
 }
 function drawCage(){
-  if(!(state==='extract'||visualExtraction)||!actorAllowed('extraction-cage'))return;const lift=state==='extract'?clamp((180-extractT)/110,0,1):.35,x=80,y=54+lift*15;ctx.save();ctx.translate(x,y);line([[0,-12],[0,-9]],CREAM,2);rect(-12,-9,24,19,'#1b2731');rect(-11,-8,22,17,zone.beam);rect(-9,-6,18,12,'#19252e');for(let q=-7;q<=7;q+=7)rect(q,-6,2,12,zone.hi);rect(-12,6,24,3,GOLD);rect(-8,-11,16,3,zone.accent);rect(-2,-9,4,2,CREAM);ctx.restore();
+  if(!(state==='extract'||visualExtraction)||!actorAllowed('extraction-cage'))return;const x=80,y=state==='extract'?cageY():59;ctx.save();ctx.translate(x,y);line([[0,-12],[0,-9]],CREAM,2);rect(-12,-9,24,19,'#1b2731');rect(-11,-8,22,17,zone.beam);rect(-9,-6,18,12,'#19252e');for(let q=-7;q<=7;q+=7)rect(q,-6,2,12,zone.hi);rect(-12,6,24,3,GOLD);rect(-8,-11,16,3,zone.accent);rect(-2,-9,4,2,CREAM);ctx.restore();
 }
 function drawActors(){for(const f of fires)drawFire(f);for(const m of machines)drawMachine(m);for(const b of barrels)drawBarrel(b);for(const w of workers)if(!w.done)drawWorker(w);drawHero();drawCage()}
 function drawAct(){
@@ -343,39 +342,40 @@ function drawAct(){
   else{alpha(.12,()=>rect(0,40,W,282,CORAL));for(let f=0;f<5;f++){const y=Y[f+1]+15+((showFrame+f*11)%13);alpha(.55,()=>rect(x-18,y,36,2,f%2?CREAM:CORAL))}}
 }
 function drawForeground(){rect(0,312,W,10,'#11171d');for(let x=0;x<W;x+=16){poly([[x,312],[x+8,322],[x+16,312]],'#293239')}rect(0,318,W,4,'#030508');rect(1,42,3,280,'#1a2228');rect(156,42,3,280,'#05080b')}
+function rescuePriority(){const pending=workers.find(w=>!w.rescued&&!w.done);if(pending)return WORKER_STYLES[pending.type].name+' // DECK '+(floorOf(pending.node)+1);return state==='extract'?'LIFT ASCENDING':'ROOFTOP EXTRACTION'}
 function drawHUD(){
   rect(0,0,W,40,INK);rect(4,4,152,20,'#101923');rect(5,5,150,18,'#1a2832');rect(7,7,3,14,zone.accent);ctx.fillStyle=CREAM;ctx.font='bold 10px monospace';ctx.fillText('TOWER PANIC',14,15);ctx.fillStyle=zone.accent;ctx.font='5px monospace';ctx.fillText(zone.name+' // '+zone.code,14,21);ctx.textAlign='right';ctx.fillStyle=persona.c;ctx.fillText(persona.name,151,14);ctx.fillStyle=STEEL;ctx.fillText('T'+(stage+1),151,21);ctx.textAlign='left';
   rect(4,27,152,10,'#121c25');ctx.fillStyle=hero.intent&&hero.intent.tactic&&hero.intent.tactic.includes('REROUTE')?GOLD:MINT;ctx.font='bold 6px monospace';ctx.fillText((hero.intent&&hero.intent.tactic||'READ THE TOWER').slice(0,22),8,34);
   for(let i=0;i<4;i++){const w=workers[i],x=126+i*7;rect(x,29,5,5,w&&w.rescued?WORKER_STYLES[i].helmet:'#30404a');if(w&&w.rescued)rect(x+2,27,2,2,CREAM)}
-  rect(0,322,W,38,INK);rect(4,325,152,31,'#111b24');rect(6,327,148,27,'#1a2730');ctx.fillStyle=STEEL;ctx.font='5px monospace';ctx.fillText('VISIBLE PLAN',10,335);ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(route.length?(floorOf(route.at(-1))===5&&workers.every(w=>w.rescued||w.done)?'ROOFTOP EXTRACTION':'WORKER '+(stats.rescues+1)):'HOLD POSITION',10,344);ctx.fillStyle=hero.health===1?CORAL:hero.health===2?GOLD:MINT;ctx.fillText('HELMETS '+workers.filter(w=>w.rescued).length+'/4  RAIL '+hero.health+'/3',10,352);ctx.textAlign='right';ctx.fillStyle=zone.accent;ctx.fillText('X'+stats.extractions+'  ↻'+stats.reroutes,150,352);ctx.textAlign='left';
+  rect(0,322,W,38,INK);rect(4,325,152,31,'#111b24');rect(6,327,148,27,'#1a2730');ctx.fillStyle=STEEL;ctx.font='5px monospace';ctx.fillText(act.phase==='warn'?'THREAT // PURGE COLUMN':'RESCUE PRIORITY',10,335);ctx.fillStyle=act.phase==='warn'?GOLD:CREAM;ctx.font='bold 7px monospace';ctx.fillText(act.phase==='warn'?'CLEAR COLUMN '+(act.purgeCol+1):rescuePriority(),10,344);ctx.fillStyle=hero.health===1?CORAL:hero.health===2?GOLD:MINT;ctx.fillText('HELMETS '+workers.filter(w=>w.rescued).length+'/4  RAIL '+hero.health+'/3',10,352);ctx.textAlign='right';ctx.fillStyle=zone.accent;ctx.fillText('X'+stats.extractions+'  ↻'+stats.reroutes,150,352);ctx.textAlign='left';
   if(pres.cue){const c=pres.cue.tier===3?GOLD:pres.cue.tier===2?MINT:CREAM;rect(25,329,110,18,'rgba(5,8,12,.94)');ctx.strokeStyle=c;ctx.strokeRect(25.5,329.5,109,17);ctx.fillStyle=c;ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.fillText(pres.cue.tag||pres.cue.id,80,341);ctx.textAlign='left'}drawSession();
 }
 function render(){
-  const zi=ZONES.indexOf(zone);drawSky(zone,zi);drawTowerShell(zone,zi);drawDecks(zone);drawLadders(zone);drawProps(zone,zi);drawRoute();preDraw();drawAct();drawActors();drawParts();for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/16);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,28,132),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;postDraw();drawForeground();if(pres.cue&&pres.cue.tier===3){alpha(.09,()=>rect(0,40,W,282,GOLD))}drawHUD();
+  const zi=ZONES.indexOf(zone);drawSky(zone,zi);drawTowerShell(zone,zi);drawDecks(zone);drawLadders(zone);drawProps(zone,zi);preDraw();drawAct();drawActors();drawParts();for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/16);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,28,132),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;postDraw();drawForeground();if(pres.cue&&pres.cue.tier===3){alpha(.09,()=>rect(0,40,W,282,GOLD))}drawHUD();
 }
 
 function finite(){return[showFrame,runFrame,stage,hero.x,hero.y,hero.moveT,hero.moveDur,...barrels.flatMap(b=>[b.age,b.x,b.y]),...workers.flatMap(w=>[w.x,w.y])].every(Number.isFinite)}
 function simSignature(){return JSON.stringify({runFrame,stage,state,extractT,worldSeed,hero:[hero.node,hero.from,hero.to,round(hero.x),round(hero.y),hero.moveT,hero.moveDur,hero.health,hero.stun,hero.hitFlash,hero.braceT,hero.pose],workers:workers.map(w=>[w.node,w.rescued,w.done,w.join,round(w.x),round(w.y),w.panicT]),barrels:barrels.map(b=>[b.id,b.age,round(b.x),round(b.y),b.floor,b.falling,b.startDir]),route:route.slice(),act:[act.phase,act.warnAt,act.landAt,act.endAt,act.index,act.purgeCol],stats:{...stats}})}
 function physicalSignature(){return JSON.stringify([round(hero.x),round(hero.y),hero.node,hero.from,hero.to,hero.moveT,hero.intent&&hero.intent.next,hero.intent&&hero.intent.tactic,route.slice(0,4)])}
-function probe(){return{showFrame,runFrame,stage,state,zone:zone.name,persona:persona.name,finite:finite(),hero:{node:hero.node,x:hero.x,y:hero.y,pose:hero.pose,health:hero.health,stun:hero.stun,intent:hero.intent&&{...hero.intent}},workers:workers.map(w=>({id:w.id,type:WORKER_STYLES[w.type].name,node:w.node,rescued:w.rescued,x:w.x,y:w.y,panicT:w.panicT})),barrels:barrels.map(b=>({id:b.id,x:b.x,y:b.y,floor:b.floor,falling:b.falling,age:b.age})),route:route.slice(),routeHash:routeIdentity(route),stats:{...stats},act:{phase:act.phase,warnAt:act.warnAt,landAt:act.landAt,endAt:act.endAt,purgeCol:act.purgeCol,notes:act.notes.slice()},show:SHOW.probe(),events:eventSerial,progress:progressSerial}}
+function probe(){return{showFrame,runFrame,stage,state,zone:zone.name,persona:persona.name,finite:finite(),hero:{node:hero.node,x:hero.x,y:hero.y,pose:hero.pose,health:hero.health,stun:hero.stun,intent:hero.intent&&{...hero.intent}},workers:workers.map(w=>({id:w.id,type:WORKER_STYLES[w.type].name,node:w.node,rescued:w.rescued,x:w.x,y:w.y,panicT:w.panicT})),barrels:barrels.map(b=>({id:b.id,x:b.x,y:b.y,floor:b.floor,falling:b.falling,age:b.age})),stats:{...stats},act:{phase:act.phase,warnAt:act.warnAt,landAt:act.landAt,endAt:act.endAt,purgeCol:act.purgeCol,notes:act.notes.slice()},show:SHOW.probe(),events:eventSerial,progress:progressSerial}}
 
-function setHeroNode(n){const p=nodePos(n);Object.assign(hero,{node:n,from:n,to:n,moveT:0,moveDur:0,x:p.x,y:p.y,lastX:p.x,lastY:p.y,stun:0,hitFlash:0,pose:'idle'})}
+function setHeroNode(n){const p=nodePos(n);Object.assign(hero,{node:n,from:n,to:n,moveT:0,moveDur:0,x:p.x,y:p.y,lastX:p.x,lastY:p.y,extractFromX:p.x,extractFromY:p.y,stun:0,hitFlash:0,pose:'idle'})}
 function clearVisualOverrides(){visualExtraction=false;for(const w of workers){w.visualX=null;w.visualY=null;w.done=false;w.panicT=0}for(const f of fires)f.force=false;for(const m of machines)m.force=false}
-function setStageVisual(s){stage=s;state='climb';buildLayout();hero=makeHero();buildWorkers();buildHazards();history=[];history.push({x:hero.x,y:hero.y});route=[];abandonedRoute=[];routeFlash=0;texts=[];clearVisualOverrides();SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};act.phase='calm';act.warnAt=999999;planRoute(true)}
+function setStageVisual(s){stage=s;state='climb';buildLayout();hero=makeHero();buildWorkers();buildHazards();history=[];history.push({x:hero.x,y:hero.y});route=[];texts=[];clearVisualOverrides();SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};act.phase='calm';act.warnAt=999999;planRoute(true)}
 function setVisualBeat(name){
-  const allowed=['opening','plan','climb','cascade','reroute','rescue','convoy','later','danger','warning-calm','warning','land','apex','scale-contract'];if(!allowed.includes(name))return false;visualFixture=name;const desiredZone=name==='later'||name==='land'?2:name==='apex'?3:0;setStageVisual(name==='later'||name==='land'?2:name==='apex'?3:0);zone=ZONES[desiredZone];
-  if(name==='opening'||name==='plan'){setHeroNode(node(0,0));planRoute(true)}
+  const allowed=['opening','objective','climb','cascade','purge-response','rescue','convoy','later','danger','warning-calm','warning','land','apex','scale-contract'];if(!allowed.includes(name))return false;visualFixture=name;const desiredZone=name==='later'||name==='land'?2:name==='apex'?3:0;setStageVisual(name==='later'||name==='land'?2:name==='apex'?3:0);zone=ZONES[desiredZone];
+  if(name==='opening'||name==='objective'){setHeroNode(node(0,0));planRoute(true)}
   else if(name==='climb'){setHeroNode(node(1,3));hero.from=node(1,3);hero.to=node(2,3);hero.moveT=36;hero.moveDur=72;hero.x=X[3];hero.y=(Y[1]+Y[2])*.5;hero.pose='climb';workers[0].rescued=true;workers[0].join=0;workers[0].visualX=X[3];workers[0].visualY=Y[1]}
   else if(name==='cascade'){setHeroNode(node(2,4));for(let i=0;i<3;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=hero.x-12-i*11;workers[i].visualY=hero.y}barrels=[];for(const age of[0,120,330,520])spawnBarrel(1,age);fires[2].force=true;route= findPath(hero.node,goalNodes(),true)}
-  else if(name==='reroute'){setHeroNode(node(0,3));workers.forEach((w,i)=>{w.done=i!==0;w.node=node(2,3)});route=findPath(hero.node,[node(2,3)],false);abandonedRoute=route.slice();routeFlash=90;act.phase='warn';act.purgeCol=3;act.landAt=showFrame+150;route=findPath(hero.node,[node(2,3)],true);hero.intent=rawBotIntent()}
+  else if(name==='purge-response'){setHeroNode(node(0,3));workers.forEach((w,i)=>{w.done=i!==0;w.node=node(2,3)});route=findPath(hero.node,[node(2,3)],false);act.phase='warn';act.purgeCol=3;act.landAt=showFrame+150;route=findPath(hero.node,[node(2,3)],true);hero.intent=rawBotIntent()}
   else if(name==='rescue'){setHeroNode(workers[0].node);rescueWorker(workers[0]);workers[0].visualX=hero.x-7;workers[0].visualY=hero.y;hero.intent=idleIntent('CLIP THE SAFETY LINE')}
   else if(name==='convoy'){setHeroNode(node(3,4));for(let i=0;i<4;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=hero.x-12-i*10;workers[i].visualY=hero.y+(i%2)}planRoute(true);hero.intent=rawBotIntent()}
   else if(name==='later'){setHeroNode(node(3,1));for(let i=0;i<2;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=hero.x+12+i*10;workers[i].visualY=hero.y}barrels=[];spawnBarrel(-1,250);planRoute(true)}
   else if(name==='danger'){setHeroNode(node(2,4));hero.hitFlash=35;hero.pose='hurt';workers[0].rescued=true;workers[0].join=0;workers[0].visualX=hero.x-12;workers[0].visualY=hero.y;workers[0].panicT=50;barrels=[];const b=spawnBarrel(1,0);b.x=hero.x-8;b.y=hero.y;b.floor=2;b.age=340;fires[2].force=true}
-  else if(name==='warning-calm'||name==='warning'){setHeroNode(node(0,3));planRoute(true);act.phase=name==='warning'?'warn':'calm';act.purgeCol=3;act.landAt=showFrame+150;if(name==='warning'){abandonedRoute=route.slice();route=findPath(hero.node,goalNodes(),true);routeFlash=90}}
+  else if(name==='warning-calm'||name==='warning'){setHeroNode(node(0,3));planRoute(true);act.phase=name==='warning'?'warn':'calm';act.purgeCol=3;act.landAt=showFrame+150;if(name==='warning')route=findPath(hero.node,goalNodes(),true)}
   else if(name==='land'){setHeroNode(node(3,1));act.phase='live';act.purgeCol=2;act.endAt=showFrame+400;barrels=[];for(const age of[20,95,210,410])spawnBarrel(1,age);fires.forEach((f,i)=>f.force=i%2===0)}
-  else if(name==='apex'){setHeroNode(node(5,4));for(let i=0;i<4;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=58+i*14;workers[i].visualY=70+(i%2)*2}state='extract';extractT=145;visualExtraction=true;hero.x=112;hero.y=70;offer('visual-extraction',3,80,64,'ALL HANDS CLEAR');extractionFx();hero.intent=idleIntent('COUNT EVERY HELMET')}
-  else if(name==='scale-contract'){setHeroNode(node(3,3));hero.intent=idleIntent();for(let i=0;i<4;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=28+i*27;workers[i].visualY=134+(i%2)*28}barrels=[];const b=spawnBarrel(1,260);b.x=18;b.y=Y[2]-5;b.floor=2;b.falling=false;spawnBarrel(-1,ROLL_FRAMES+10);fires[0].force=true;fires[0].col=5;fires[0].floor=1;machines[0].force=true;machines[0].col=0;machines[0].floor=4;state='extract';extractT=160;visualExtraction=true}
+  else if(name==='apex'){setHeroNode(node(5,4));for(let i=0;i<4;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=58+i*14;workers[i].visualY=70+(i%2)*2}state='extract';extractT=145;visualExtraction=true;hero.x=112;hero.y=70;hero.extractFromX=112;hero.extractFromY=70;offer('visual-extraction',3,80,64,'ALL HANDS CLEAR');extractionFx();hero.intent=idleIntent('COUNT EVERY HELMET')}
+  else if(name==='scale-contract'){setHeroNode(node(3,3));hero.intent=idleIntent();for(let i=0;i<4;i++){workers[i].rescued=true;workers[i].join=i;workers[i].visualX=28+i*27;workers[i].visualY=134+(i%2)*28}barrels=[];const b=spawnBarrel(1,260);b.x=18;b.y=Y[2]-5;b.floor=2;b.falling=false;spawnBarrel(-1,ROLL_FRAMES+10);fires[0].force=true;fires[0].col=5;fires[0].floor=1;machines[0].force=true;machines[0].col=0;machines[0].floor=4;state='extract';extractT=160;visualExtraction=true;hero.extractFromX=hero.x;hero.extractFromY=hero.y}
   return true;
 }
 function actorProbe(){
@@ -384,13 +384,16 @@ function actorProbe(){
   for(const b of barrels)out.push({id:b.id,kind:'barrel',type:b.falling?'falling':'rolling',box:{x:b.x-7,y:b.y-7,width:14,height:14}});
   for(const f of fires)if(fireActive(f))out.push({id:f.id,kind:'hazard',type:'fire',box:{x:X[f.col]-8,y:Y[f.floor]-19,width:16,height:22}});
   for(const m of machines)out.push({id:m.id,kind:'machine',type:'piston',box:{x:X[m.col]-11,y:Y[m.floor]-15,width:22,height:24}});
-  if(state==='extract'||visualExtraction){const lift=state==='extract'?clamp((180-extractT)/110,0,1):.35,y=54+lift*15;out.push({id:'extraction-cage',kind:'structure',type:'cage',box:{x:68,y:y-13,width:24,height:24}})}return out;
+  if(state==='extract'||visualExtraction){const y=state==='extract'?cageY():59;out.push({id:'extraction-cage',kind:'structure',type:'cage',box:{x:68,y:y-13,width:24,height:24}})}return out;
 }
-function visualProbe(){return{fixture:visualFixture,finite:finite(),stage,zone:zone.name,state,act:act.phase,routePoints:route.length+1,routeHash:routeIdentity(route),rescued:workers.filter(w=>w.rescued).length,cue:pres.cue&&pres.cue.id,actors:actorProbe(),layout:{playfield:{...WORLD},approaches:[{id:'barrel-run',axis:'x',visibleSpawn:LEFT,contact:X[4],goal:RIGHT,reported:Math.abs(X[4]-LEFT)/Math.abs(RIGHT-LEFT)}]},heroBox:{x:hero.x-8,y:hero.y-12,width:16,height:22},workerBox:workers[0]?{x:workerDrawPos(workers[0]).x-8,y:workerDrawPos(workers[0]).y-10,width:16,height:19}:null,barrelBox:barrels[0]?{x:barrels[0].x-7,y:barrels[0].y-7,width:14,height:14}:null}}
+function visualProbe(){return{fixture:visualFixture,finite:finite(),stage,zone:zone.name,state,act:act.phase,guidelines:0,rescued:workers.filter(w=>w.rescued).length,cue:pres.cue&&pres.cue.id,actors:actorProbe(),layout:{playfield:{...WORLD},approaches:[{id:'barrel-run',axis:'x',visibleSpawn:LEFT,contact:X[4],goal:RIGHT,reported:Math.abs(X[4]-LEFT)/Math.abs(RIGHT-LEFT)}]},heroBox:{x:hero.x-8,y:hero.y-12,width:16,height:22},workerBox:workers[0]?{x:workerDrawPos(workers[0]).x-8,y:workerDrawPos(workers[0]).y-10,width:16,height:19}:null,barrelBox:barrels[0]?{x:barrels[0].x-7,y:barrels[0].y-7,width:14,height:14}:null}}
 function actFixture(){
   setStageVisual(0);state='climb';setHeroNode(node(0,3));workers.forEach((w,i)=>{w.done=i!==0;w.rescued=false});workers[0].node=node(2,3);const p=nodePos(workers[0].node);workers[0].x=p.x;workers[0].y=p.y;barrels=[];fires.forEach(f=>f.force=false);machines.forEach(m=>m.force=false);route=findPath(hero.node,[workers[0].node],false);act.phase='calm';act.warnAt=showFrame+1;act.landAt=showFrame+241;act.endAt=showFrame+781;act.index=0;act.purgeCol=3;act.notes=[];hero.intent=idleIntent();return physicalSignature();
 }
 function plannerFixture(){const before=simSignature(),a=findPath(hero.node,goalNodes(),true),mid=simSignature(),b=findPath(hero.node,goalNodes(),true),after=simSignature();return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),path:a}}
+function plannerContamination(){if(route.length<2)planRoute(true);const first=route[0];route=[first,node(5,0),node(4,5),node(3,0),node(2,5)];planSerial=showFrame;return true}
+function topologyFixture(){let branches=0,maxStraight=1;for(let n=0;n<COLS*6;n++)if(neighbors(n).length>=3)branches++;for(let f=0;f<6;f++){let run=1;for(let c=0;c<COLS-1;c++){if(hasGap(f,c))run=1;else{run++;maxStraight=Math.max(maxStraight,run)}}}return{rooms:6,nodes:COLS*6,branches,maxStraight}}
+function motionProbe(){const thinking=hero.intent&&hero.intent.tactic==='SECOND-GUESS',emote=thinking?'thinking':pres.admire?'admire':hero.stun>12?'hurt':hero.pose==='brace'?'brace':'';return{frame:showFrame,actors:[{id:'hero',kind:'rigger',x:hero.x,y:hero.y,emote,action:state==='extract'?'extract':hero.pose}],finite:finite()}}
 function intentFixture(){const ai=rawBotIntent(),old={left:keys.left,right:keys.right,up:keys.up,down:keys.down,a:keys.a,b:keys.b,c:keys.c};keys.right=true;const human=humanIntent();Object.assign(keys,old);return{ai,human,aiKeys:Object.keys(ai).sort(),humanKeys:Object.keys(human).sort()}}
 function admireFixture(){const old=pres;pres={cue:{id:'fixture',tier:3},admire:true,holdWorld:false,physicsEvery:1};delete globalThis.__NO_ADMIRE;const admired=rawBotIntent();globalThis.__NO_ADMIRE=1;const gated=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired,gated}}
 function forceShow(tier,id){return offer(id||('fixture-'+tier),tier,hero.x,hero.y,'TIER '+tier)}
@@ -402,15 +405,18 @@ globalThis.__towerPanicSetVisualBeat=setVisualBeat;
 globalThis.__towerPanicVisualProbe=visualProbe;
 globalThis.__towerPanicActFixture=actFixture;
 globalThis.__towerPanicPlannerFixture=plannerFixture;
+globalThis.__towerPanicPlannerContamination=plannerContamination;
+globalThis.__towerPanicTopologyFixture=topologyFixture;
 globalThis.__towerPanicIntentFixture=intentFixture;
 globalThis.__towerPanicAdmireFixture=admireFixture;
 globalThis.__towerPanicForceShow=forceShow;
 globalThis.__towerPanicFreezeShow=()=>{state='fixture';route=[];act.phase='calm';act.warnAt=showFrame+999999;SHOW.reset(showFrame)};
 globalThis.__towerPanicReset=()=>resetRun(true);
 globalThis.__towerPanicNextRandom=()=>random();
+globalThis.__motionProbe=motionProbe;
 globalThis.__soakProbe=()=>({sig:[round(hero.x,1),round(hero.y,1),hero.pose,barrels.length,barrels.reduce((n,b)=>n+Math.round(b.x+b.y),0),workers.filter(w=>w.rescued).length,state].join('|'),events:eventSerial,progress:progressSerial,finite:finite()});
 
-initSession('tower-panic',[["ARROWS / WASD","CHOOSE A GANTRY OR LADDER"],["SPACE / X","BRACE BEHIND THE RAIL"],["FOLLOW THE LINE","LEAD EVERY WORKER TO THE ROOF"]]);
+initSession('tower-panic',[["ARROWS / WASD","CHOOSE A GANTRY OR LADDER"],["SPACE / X","BRACE BEHIND THE RAIL"],["READ THE HAZARDS","LEAD EVERY WORKER TO THE ROOF"]]);
 resetRun(true);start(step,render);
 </script>
 </html>

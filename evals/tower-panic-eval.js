@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs=require('fs');
+const path=require('path');
 const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+const{assertEntertainment}=require('./entertainment');
+const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+const GAME_SOURCE=fs.readFileSync(path.join(__dirname,'..','tower-panic.html'),'utf8');
+const forbiddenPresentation=[/\bfunction\s+draw(?:Route|Path)s?\b/,/\bdrawRoutes?\s*\(/,/\broute(?:Points|Hash)\s*:/,/function\s+(?:probe|visualProbe)\(\)\{[^\n]*\broute\s*:/,/VISIBLE (?:ROUTE )?PLAN|FOLLOW THE (?:PATH|LINE)|CLIMB THE LINE|CHECK THE PLAN/,/\.setLineDash\s*\(/];
+const noVisiblePath=forbiddenPresentation.every(pattern=>!pattern.test(GAME_SOURCE));
 
 const FOOTER=String.raw`
 globalThis.__tpApplied=[];
@@ -117,12 +124,41 @@ console.log('6) exact SHOW ladder budgets, admire gate, and skill-profile lapse 
 }
 
 console.log('7) two independent ten-minute soaks keep moving, escalating, rescuing, and extracting');
+const entertainmentPanel=[];
 for(const seed of[0x74000,0x75a5d]){
   const{game,samples}=runSoak('tower-panic',{seed,minutes:10,footer:FOOTER}),report=analyzeSoak(samples),p=game.sandbox.__towerPanicProbe();
-  console.log('  '+seed.toString(16)+' '+soakLine(report)+'; rescues '+p.stats.rescues+', extractions '+p.stats.extractions+', hits '+p.stats.hits+', acts '+p.stats.acts);
+  const topology=game.sandbox.__towerPanicTopologyFixture();console.log('  '+seed.toString(16)+' '+soakLine(report)+'; rescues '+p.stats.rescues+', extractions '+p.stats.extractions+', responses '+p.stats.playerResponses+', enemy actions '+p.stats.enemyActions+', dead air '+p.stats.maxDecisionDeadAir+'f');
   assertSoak(seed.toString(16),report,{still:1,quiet:6,stall:5,minEvents:1300,minProgress:720},fail);bands(p.stats,SOAK_BANDS,'seed '+seed.toString(16)+' soak');notePairs(p,'seed '+seed.toString(16),8);
   if(!p.finite||p.stats.invisibleResets!==0||p.stats.extractions<11||p.stats.rescues<45)fail('seed '+seed.toString(16)+': soak lost visible progress');
+  if(p.stats.objectiveTransitions!==p.stats.rescues||p.stats.objectiveCompletions!==p.stats.extractions||p.stats.enemyActions!==p.stats.barrels||p.stats.playerResponses!==p.stats.deflections||p.stats.puzzleDecisions!==p.stats.objectiveTransitions||p.stats.threatDecisions!==p.stats.enemyActions||p.stats.responseDecisions!==p.stats.playerResponses||p.stats.payoffDecisions!==p.stats.objectiveCompletions)fail('seed '+seed.toString(16)+': entertainment telemetry aliases walking/replans or lost its truthful event source');
   const offered=p.show.offeredByTier,shown=p.show.shownByTier;if(!((offered[1]||0)>(offered[2]||0)&&(offered[2]||0)>(offered[3]||0)))fail('seed '+seed.toString(16)+': offered tiers not ordered');if(!((shown[1]||0)>(shown[2]||0)&&(shown[2]||0)>(shown[3]||0)))fail('seed '+seed.toString(16)+': shown tiers not ordered');
+  entertainmentPanel.push({p,topology});
+}
+
+console.log('7b) authored tower choices, active hazards, responses, and payoff pass the shared entertainment contract');
+{
+  const total=key=>entertainmentPanel.reduce((n,item)=>n+item.p.stats[key],0),topologies=entertainmentPanel.map(item=>item.topology),evidence={
+    noVisiblePath,
+    topology:{rooms:Math.min(...topologies.map(q=>q.rooms)),branches:Math.min(...topologies.map(q=>q.branches)),maxStraight:Math.max(...topologies.map(q=>q.maxStraight))},
+    puzzle:{transitions:total('objectiveTransitions'),completions:total('objectiveCompletions')},
+    agency:{enemyActions:total('enemyActions'),playerResponses:total('playerResponses')},
+    decisions:{
+      puzzle:{count:total('puzzleDecisions'),source:'stats.puzzleDecisions'},
+      threat:{count:total('threatDecisions'),source:'stats.threatDecisions'},
+      response:{count:total('responseDecisions'),source:'stats.responseDecisions'},
+      payoff:{count:total('payoffDecisions'),source:'stats.payoffDecisions'}
+    },
+    maxDeadAir:Math.max(...entertainmentPanel.map(item=>item.p.stats.maxDecisionDeadAir))
+  };
+  const receipt=assertEntertainment('TOWER PANIC natural panel',evidence,{minRooms:6,minBranches:8,maxStraight:6,minPuzzleTransitions:90,minPuzzleCompletions:22,minEnemyActions:350,minPlayerResponses:190,requiredDecisionKinds:['puzzle','threat','response','payoff'],minPerDecisionKind:20,maxDeadAir:270,deadAirUnit:'tactical frames'},fail);
+  console.log('  entertainment receipt '+JSON.stringify(receipt.report));if(!noVisiblePath)fail('computed planner state regained a route renderer, public route probe, guideline dash, or follow-the-line copy');
+}
+
+console.log('7c) shared motion contract proves a persistent rigger, bounded authored braces, and physical pace');
+for(const seed of[0x74000,0x75a5d]){
+  const run=runMotion('tower-panic',{seed,minutes:10,sampleEvery:5}),report=analyzeMotion(run,{stillRadius:2,emoteFrames:120,emoteShare:.15,requiredIds:['hero']}),heroSamples=run.samples.map(sample=>sample.actors.find(actor=>actor.id==='hero')).filter(Boolean);let physicalPairs=0,movingPairs=0,physicalDistance=0;
+  for(let i=1;i<heroSamples.length;i++){const d=Math.hypot(heroSamples[i].x-heroSamples[i-1].x,heroSamples[i].y-heroSamples[i-1].y);if(d>25)continue;physicalPairs++;physicalDistance+=d;if(d>.5)movingPairs++}
+  const pace=physicalDistance/(run.samples.length*run.step),movingShare=physicalPairs?movingPairs/physicalPairs:0,meanCarry=movingPairs?physicalDistance/movingPairs:0;console.log('  '+seed.toString(16)+' '+motionLine(report)+', pace '+pace.toFixed(3)+'px/f, moving '+(movingShare*100).toFixed(1)+'%, carry '+meanCarry.toFixed(2)+'px');assertMotion(seed.toString(16),report,fail);if(pace<.65||movingShare<.90||meanCarry<3.4)fail('seed '+seed.toString(16)+': physical momentum regressed: '+pace.toFixed(3)+'px/f, '+movingShare.toFixed(3)+' moving, '+meanCarry.toFixed(2)+'px carry')
 }
 
 console.log('8) payoff FX is a non-vacuous perfect same-seed simulation no-op');

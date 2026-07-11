@@ -7,6 +7,20 @@
     "blockmine"
   ],
   "montageSha256": "ac337487675d0cbdad553bc52ae0ab462df60f4dbe851e6c3611074b6883117a",
+  "seed": "0x4e454f4e",
+  "checkpoints": [
+    "opening@12",
+    "street@13",
+    "alley@12",
+    "ramp@12",
+    "swapReady@12",
+    "swap@12",
+    "later@12",
+    "warning@12",
+    "land@12",
+    "danger@13",
+    "apex@6"
+  ],
   "reviewedAt": "2026-07-10",
   "reviewer": "Codex native-size reference review",
   "categories": {
@@ -40,5 +54,8 @@
       "meetsBlockMine": true,
       "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road markings, warning grammar, and gold payoff effects stay consistent across the full city. The actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "1f2931beb92392c88a10a15cca650f0007f34c87d3b766e9bb83a3c19083a424"
 }

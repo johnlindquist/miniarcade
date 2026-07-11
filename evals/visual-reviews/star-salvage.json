@@ -7,6 +7,15 @@
     "blockmine"
   ],
   "montageSha256": "59fce4d3bb6e739621de75909c71b6e49015f2843dd4457e6add619d3c348fb0",
+  "seed": "0x5a1a6e",
+  "checkpoints": [
+    "opening@12",
+    "normal@12",
+    "overloaded@12",
+    "later@12",
+    "danger@12",
+    "apex@24"
+  ],
   "reviewedAt": "2026-07-10",
   "reviewer": "Codex native-size reference review",
   "seed": "0x5a1a6e",
@@ -49,5 +58,8 @@
       "meetsBlockMine": true,
       "note": "Industrial steel construction, faceted salvage shapes, cyan navigation language, gold reward language, coral danger language, repeated beacon geometry, and the evolving Ark tie every sector and payoff together with the deliberate material grammar visible in MACHINE HUNT and BLOCK MINE."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "6f761688918582a15b0c85c8ed71960a8b2794d2ac27c71e31da9daa9b9cc39f"
 }

@@ -128,9 +128,13 @@ function main(){
   gate('sacrifice is bodily visible and spatially authored',candidate.sacrifice.probe.sacrifice===true&&sacrificeDelta.changedFraction>=.012&&sacrificeDelta.changedGridFraction>=.12&&sacrificeBurst.changedFraction.max>=.035&&sacrificeBurst.firstLast.structureDistance>=.035,{probe:candidate.sacrifice.probe,sacrificeDelta,sacrificeBurst});
   gate('whole-family arrival is truthful and spatially broad',candidate.apex.probe.whole===true&&candidate.apex.probe.passengers===5&&apexDelta.changedFraction>=.09&&apexDelta.changedGridFraction>=.55&&apexBurst.changedFraction.max>=.08&&apexBurst.changedGridFraction.max>=.65&&apexBurst.firstLast.structureDistance>=.10,{probe:candidate.apex.probe,apexDelta,apexBurst});
 
-  gate('preserved native contact sheet matches current render',fs.existsSync(PRESERVED_CONTACT_PATH)&&sha256(PRESERVED_CONTACT_PATH)===sheet.sha256,
-    {path:PRESERVED_CONTACT_PATH,expected:sheet.sha256,actual:fs.existsSync(PRESERVED_CONTACT_PATH)?sha256(PRESERVED_CONTACT_PATH):null});
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256));let review=fs.existsSync(REVIEW_PATH)?verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256}):{ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then complete ${REVIEW_TEMPLATE_PATH}`]};
+  const preservedHash=fs.existsSync(PRESERVED_CONTACT_PATH)?sha256(PRESERVED_CONTACT_PATH):null,
+    exactPreserved=preservedHash===sheet.sha256,
+    approvedCrossPlatform=review.platformDriftAccepted===true&&preservedHash===review.receipt.montageSha256;
+  gate('preserved native contact sheet is exact or source-bound cross-platform',exactPreserved||approvedCrossPlatform,
+    {path:PRESERVED_CONTACT_PATH,expected:sheet.sha256,actual:preservedHash,reviewed:review.receipt&&review.receipt.montageSha256,
+      platformDriftAccepted:review.platformDriftAccepted===true,approvedCrossPlatform});
   gate('fresh semantic comparison receipt',review.ok,review.errors);
   const report={schema:1,game:'frog-convoy',seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,contactSheet:{path:CONTACT_PATH,sha256:sheet.sha256,width:sheet.width,height:sheet.height},
     checkpoints:Object.fromEntries(beats.map(b=>[b.id,{fixture:b.id,offset:b.offset,probe:candidate[b.id].probe}])),thresholds:{referenceEdgeFloor:refEdge,referenceRichFloor:refRich},

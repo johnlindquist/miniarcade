@@ -61,5 +61,8 @@
     "bytes": 2541227,
     "sha256": "9f3715109ab6af34fb06c79acd6fb9a3ff5baf3a1f8e7b9c5cdf3b0aa5013a7b",
     "command": "node render/render.js robo-rally 30 .artifacts/visual/robo-rally/robo-rally-30s.mp4 --seed 41216 --probe --fps 30"
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "6345909f3aecaf29a1f5be8cd30fbaa14d96f95114af88be4b54d95f65938f7c"
 }

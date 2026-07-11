@@ -8,9 +8,13 @@
 const fs=require('fs'),path=require('path'),vm=require('vm'),crypto=require('crypto');
 const{createCanvas}=require('../render/node_modules/@napi-rs/canvas');
 const{ROOT,seededRandom,inlineScript}=require('./harness');
+const{verifyReviewReceipt,writeJson}=require('./visual-harness');
 
 const ARTIFACTS=path.join(ROOT,'..','.artifacts','swarm-keeper-visual');
 const RECEIPTS=path.join(__dirname,'visual-receipts');
+const REVIEW_PATH=path.join(__dirname,'visual-reviews','swarm-keeper.json');
+const REVIEW_TEMPLATE_PATH=path.join(ARTIFACTS,'review-template.json');
+const PRESERVED_CONTACT_PATH=path.join(RECEIPTS,'swarm-keeper-contact-sheet.png');
 fs.mkdirSync(ARTIFACTS,{recursive:true});
 fs.mkdirSync(RECEIPTS,{recursive:true});
 let failed=false;
@@ -123,8 +127,8 @@ const bmLateBoot=bootPixels('blockmine',0x6500,BM_FOOTER);bmLateBoot.frames(1080
 const comparison=createCanvas(3*160,2*360),comparisonCtx=comparison.getContext('2d');comparisonCtx.imageSmoothingEnabled=false;
 [[opening,horizon,blockEarly],[late,horizonLate,blockLate]].forEach((row,y)=>row.forEach((f,x)=>comparisonCtx.drawImage(f.canvas,x*160,y*360)));
 const comparisonPng=comparison.toBuffer('image/png');
+const montageSha256=crypto.createHash('sha256').update(comparisonPng).digest('hex');
 fs.writeFileSync(path.join(ARTIFACTS,'reference-contact-sheet.png'),comparisonPng);
-fs.writeFileSync(path.join(RECEIPTS,'swarm-keeper-contact-sheet.png'),comparisonPng);
 console.log('  comparison: columns SWARM KEEPER / MACHINE HUNT / BLOCK MINE; rows opening / late');
 const all={opening:region(opening,0,0,160,360),horizon:region(horizon,0,0,160,360),block:region(blockLate,0,0,160,360),late:region(late,0,0,160,360)};
 for(const[k,s]of Object.entries(all))console.log(`  ${k.padEnd(7)} unique ${String(s.unique).padStart(3)}, entropy ${s.entropy.toFixed(2)}, edge ${(s.edge*100).toFixed(1)}%, sat ${s.meanSat.toFixed(1)}, bright ${(s.bright*100).toFixed(1)}%`);
@@ -185,6 +189,19 @@ if(apexGold<openGold+120||apexDelta.ratio<.28)fail('tier-3 payoff lacks authored
 if(fxNear.pixels<18)fail('payoff particles are missing or projected away from their world actors');
 const apexProbe=apexBoot.sandbox.__swarmKeeperProbe();
 if(!apexProbe.show.active||apexProbe.show.active.tier!==3)fail('apex receipt was not captured from a real active tier-3 cue');
+
+const pending=note=>({meetsMachineHunt:false,meetsBlockMine:false,note});
+writeJson(REVIEW_TEMPLATE_PATH,{schema:1,game:'swarm-keeper',verdict:'pending',references:['horizon','blockmine'],montageSha256,reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size reference review',seed:'0x6500',checkpoints:['opening@300','late@fixture'],categories:{
+  characterCraft:pending('Inspect the coral keeper, four distinct worker roles, facing detail, locomotion, rescue state, and group silhouette at native size.'),
+  environmentCraft:pending('Inspect meadow road, layered foliage, flood water, built bridge, garden props, foreground material, and readable depth planes.'),
+  levelVariety:pending('Confirm meadow and Star Garden materially change palette, architecture, water treatment, props, and atmosphere rather than applying a tint.'),
+  animationImpact:pending('Confirm swarm locomotion, bridge work, rescue danger, flood warning, and ALL ACROSS apex have readable anticipation and payoff.'),
+  readability:pending('Confirm the keeper, role colors, route surface, water hazard, bridge state, warnings, and rescue subject remain legible beside video.'),
+  artDirectionCohesion:pending('Confirm characters, swarm roles, landscape materials, HUD, weather, and payoff effects form one authored expedition world.')
+}});
+const review=fs.existsSync(REVIEW_PATH)?verifyReviewReceipt(REVIEW_PATH,{montageSha256,preservedPath:PRESERVED_CONTACT_PATH}):{ok:false,errors:['missing semantic review '+REVIEW_PATH]};
+if(!review.ok)fail('semantic reference receipt: '+review.errors.join('; '));
+console.log(`  montage sha256: ${montageSha256}`);
 
 console.log(failed?'\nVISUAL EVAL FAILED':'\nVISUAL EVAL PASSED');
 process.exit(failed?1:0);

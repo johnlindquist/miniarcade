@@ -6,16 +6,17 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "a385fe90080d14939f24da6781e55e791fde1390b0946f9149af125c13618989",
+  "montageSha256": "7d2657ee0625f28472fdc975b2117b62c453226e36a3609a90f419f398cd2624",
   "reviewedAt": "2026-07-10",
   "reviewer": "Codex native-size reference and autoplay-clip review",
   "seed": "0xded011",
   "checkpoints": [
-    "opening@2",
-    "scout@6",
-    "route@8",
-    "danger@8",
-    "warning@8",
+    "puzzle-setup@8",
+    "puzzle-dependency@8",
+    "enemy-tell@8",
+    "player-response@8",
+    "puzzle-solve@8",
+    "aftermath@8",
     "later@2",
     "ossuary@2",
     "deep@2",
@@ -40,17 +41,17 @@
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The 30-second autoplay clip shows readable walking, enemy gait and flight, attacks, recoil, discoveries, a full-screen floor-routed payoff, and the transition into a materially new floor. Biome-specific warnings occupy the whole dungeon before their gates land, while tier-three presentation adds exact hitstop, slow motion, admire, physical overlay, and subordinate sim-inert particles."
+      "note": "The inspected 30-second autoplay clip shows continuous hero and enemy travel, a readable guard tell, displaced sidestep and blocked-lane brace responses, sword counters, sigil and vault payoffs, the full-screen FLOOR ROUTED apex, and a transition into a materially rebuilt floor. Biome warnings occupy the dungeon before land; tier-three presentation retains exact hitstop, slow motion, admire, physical overlay, and subordinate sim-inert particles."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Gold planned lines, cyan execution trails, coral superseded plans, fogged unknown rooms, the mini-map, and split readout make intent and revision legible beside video. The drawn warden is forecast across more than 90% of its route axis; normal sampled actor occupancy is only 3.2-6.5%, preserving the small-actors, big-world breathing room of the references."
+      "note": "Numbered sigils visibly feed 0/2 and 1/2 vault states; the guard's ring/exclamation tell, charge streak, hero SIDESTEPPING or BLOCK response, and room-changing solve carry intent without a route overlay. Unknown rooms remain fogged, the mini-map reveals only discovered topology, the HUD reports local room/actor state rather than the planner target, and an exact contamination fixture proves target, tactic, route, old-route, and trail buffers cannot change one pixel."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Cream stone highlights, ink recesses, biome accents, gold route memory, cyan execution, and coral danger form one consistent retro-adventure language across architecture, actors, HUD, telegraphs, and payoffs. The dense tiled craft is distinct from both references while meeting their authored-world floor at the actual 160x360 viewing size."
+      "note": "Cream stone highlights, ink recesses, biome accents, gold sigils and rewards, cyan interaction energy, and coral danger form one consistent retro-adventure language across architecture, actors, local-state HUD, enemy tells, and payoffs. The dense tiled craft is distinct from both references while meeting their authored-world floor at the actual 160x360 viewing size."
     }
   },
   "renderReceipt": {
@@ -59,8 +60,11 @@
     "fps": 30,
     "codec": "h264",
     "dimensions": "320x720",
-    "bytes": 3244304,
-    "sha256": "59c0408c1e7cc87bf3a2052d4423421c7eb6f1b75172724018a9209f8d589773",
+    "bytes": 2959638,
+    "sha256": "dfb35c554b4ffe09ec5fcca8cb8de879b7ee6f71b04df5c76e5de8a2e6de5a1a",
     "command": "node render/render.js dungeon-express 30 .artifacts/visual/dungeon-express/dungeon-express-30s.mp4 --seed 14602257 --probe --fps 30"
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "c0592a05d20adbbeffdfb2fc32df1b8efd4dca01ff6e40d3f8d9f6b8fdeb39e8"
 }

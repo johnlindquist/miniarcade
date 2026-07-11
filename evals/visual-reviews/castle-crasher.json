@@ -53,5 +53,8 @@
       "meetsBlockMine": true,
       "note": "Warm timber-and-sandstone Amber and cool slate-and-metal Azure share one modular siege-broadcast language: heraldic flags, masonry units, engineered machines, dotted forecast graphics, compact navy HUD, safety-gold targets, and geometric payoff effects all reinforce the announced-shot premise."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "843e205892a3452a24dea37847243730c77d16e18cb665a679cc9cef67e789d5"
 }

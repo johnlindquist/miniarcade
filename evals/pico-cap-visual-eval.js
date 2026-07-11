@@ -24,6 +24,8 @@ const CONTACT_PATH=path.join(ARTIFACT_DIR,'contact-sheet.png');
 const METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json');
 const REVIEW_TEMPLATE_PATH=path.join(ARTIFACT_DIR,'review-template.json');
 const REVIEW_PATH=path.join(__dirname,'visual-reviews','pico-cap.json');
+const PRESERVED_CONTACT_PATH=path.join(__dirname,'visual-receipts','pico-cap-contact-sheet.png');
+const GAME_SOURCE=fs.readFileSync(GAME_PATH,'utf8');
 const SEED=0x9c0cab,RENDER_EVERY=2,PRE_ROLL=120;
 const WORLD_CROP={x:0,y:46,width:160,height:276};
 const TILE=14;
@@ -45,10 +47,11 @@ function visualProbe(runtime){
 
 function captureFixture(name,offsets,options){
   options=options||{};
-  const runtime=bootRenderedGame('pico-cap',{seed:SEED});
+  const runtime=bootRenderedGame('pico-cap',{seed:SEED,footer:options.footer||''});
   const setBeat=runtime.sandbox.__picoCapSetVisualBeat;
   if(typeof setBeat!=='function')throw new Error('pico-cap.html must expose __picoCapSetVisualBeat(name)');
   if(setBeat(name)!==true)throw new Error('unknown Pico Cap visual beat: '+name);
+  if(options.afterSet)options.afterSet(runtime);
   const frames=new Map();
   for(const target of [...new Set(offsets)].sort((a,b)=>a-b)){
     runtime.advanceTo(target,{renderEvery:RENDER_EVERY,renderLast:true});
@@ -140,6 +143,14 @@ function buildCandidateEvidence(){
   const specs={
     opening:{fixture:'opening',offsets:[12]},
     travel:{fixture:'travel',offsets:[1,3,5,7,9,13]},
+    choice:{fixture:'choice',offsets:[6,12,24]},
+    gateClosed:{fixture:'gate-closed',offsets:[6]},
+    gateOpen:{fixture:'gate-open',offsets:[1,3,6,12,24]},
+    windupBefore:{fixture:'windup-before',offsets:[6]},
+    windup:{fixture:'windup',offsets:[1,3,6,12,24]},
+    charge:{fixture:'charge',offsets:[1,3,6,12,24]},
+    dodge:{fixture:'dodge',offsets:[1,3,6,12,24]},
+    parry:{fixture:'parry',offsets:[1,3,6,12,24]},
     small:{fixture:'small',offsets:[1,3,5,7,9,13]},
     chase:{fixture:'chase',offsets:[1,3,5,7,9,13]},
     shrinkBefore:{fixture:'shrink-before',offsets:[6]},
@@ -161,21 +172,24 @@ function buildCandidateEvidence(){
     restoreBefore:{fixture:'restore-before',offsets:[6]},
     restore:{fixture:'restore',offsets:[1,3,6,12,24,48]},
     portrait:{fixture:'portrait',offsets:[6]},
+    portraitHidden:{fixture:'portrait',offsets:[6],footer:'globalThis.__HIDE_HERO=true;'},
     portraitAway:{fixture:'portrait-away',offsets:[6]},
     portraitPico:{fixture:'portrait-pico',offsets:[6]},
+    portraitPicoHidden:{fixture:'portrait-pico',offsets:[6],footer:'globalThis.__HIDE_HERO=true;'},
     portraitPicoAway:{fixture:'portrait-pico-away',offsets:[6]},
     portraitGnawer:{fixture:'portrait-gnawer',offsets:[6]},
+    portraitGnawerHidden:{fixture:'portrait-gnawer',offsets:[6],footer:'globalThis.__HIDE_GNAWER_INDEX=0;'},
     portraitGnawerAway:{fixture:'portrait-gnawer-away',offsets:[6]}
   };
   const runs={};
-  for(const[id,spec]of Object.entries(specs))runs[id]=captureFixture(spec.fixture,spec.offsets,{id});
+  for(const[id,spec]of Object.entries(specs))runs[id]=captureFixture(spec.fixture,spec.offsets,{id,footer:spec.footer});
   const beats=[
     {id:'opening',label:'opening',run:'opening',offset:12},
-    {id:'small',label:'pico form',run:'small',offset:9},
-    {id:'chase',label:'hunted',run:'chase',offset:9},
-    {id:'shrink',label:'shrink ring',run:'shrink',offset:6},
-    {id:'slash',label:'sword slash',run:'slash',offset:6},
-    {id:'shard',label:'sun shard',run:'shard',offset:6},
+    {id:'choice',label:'two-route room',run:'choice',offset:12},
+    {id:'windup',label:'charge tell',run:'windup',offset:6},
+    {id:'dodge',label:'pico dodge',run:'dodge',offset:6},
+    {id:'parry',label:'big parry',run:'parry',offset:6},
+    {id:'gateOpen',label:'sun gate opens',run:'gateOpen',offset:6},
     {id:'later',label:'creek hollow',run:'later',offset:12},
     {id:'deep',label:'moon shrine',run:'deep',offset:12},
     {id:'storm',label:'rainstorm',run:'storm',offset:6},
@@ -197,7 +211,7 @@ function reviewTemplate(montageSha256){
       environmentCraft:pending('Inspect hedge/creek/hearth/moon walls, floors, cracks, mushroom rings, brambles, shrine, light pools, canopy shade, rain, and ambient motes with the HUD mentally removed.'),
       levelVariety:pending('Confirm glade, creek, hearth, and moon biomes change architectural composition, materials, landmarks, and silhouette rather than only palette.'),
       animationImpact:pending('Confirm walking, scuttling, shrink/grow morphs, slash, squish, shard grab, storm landing, bloom, channel beam, and restore have anticipation, impact, and follow-through.'),
-      readability:pending('Confirm hero (both sizes), gnawers, shards, rings, cracks, shrine, storm state, and the bot route remain legible at native size beside video.'),
+      readability:pending('Confirm the two room solutions, closed/open sun gates, enemy charge lane, pico dodge, big parry, shrine, and storm state remain legible at native size without exposing the computed navigation path.'),
       artDirectionCohesion:pending('Confirm actors, garden architecture, props, lighting, HUD, and payoff grammar feel authored as one storybook-garden world.')
     }
   };
@@ -207,7 +221,10 @@ async function main(){
   if(fs.existsSync(FRAME_DIR))for(const file of fs.readdirSync(FRAME_DIR))if(file.endsWith('.png'))fs.unlinkSync(path.join(FRAME_DIR,file));
   fs.mkdirSync(FRAME_DIR,{recursive:true});
 
-  const evidence=buildCandidateEvidence(),repeat=buildCandidateEvidence();
+  const evidence=buildCandidateEvidence(),repeat=buildCandidateEvidence(),
+    plannerClean=captureFixture('opening',[1],{id:'planner-clean'}).get(1),
+    plannerDirty=captureFixture('opening',[1],{id:'planner-dirty',afterSet:runtime=>runtime.sandbox.__picoCapPlannerContamination()}).get(1),
+    plannerHashes={clean:sha256(plannerClean.rgba),contaminated:sha256(plannerDirty.rgba)};
   const determinism=evidence.all.map(value=>{
     const other=repeat.runs[value.id].get(value.offset),a=sha256(value.frame.rgba),b=sha256(other.rgba);
     return{fixture:value.id,offset:value.offset,a,b,ok:a===b};
@@ -253,9 +270,9 @@ async function main(){
 
   // ---- "small actors, big worlds" scale law, measured from rendered pixels
   const pf=(id)=>evidence.runs[id].get(6);
-  const heroExtent=drawnExtent(pf('portrait'),pf('portraitAway'),pf('portrait').probe.heroBox);
-  const picoExtent=drawnExtent(pf('portraitPico'),pf('portraitPicoAway'),pf('portraitPico').probe.heroBox);
-  const gnawerExtent=drawnExtent(pf('portraitGnawer'),pf('portraitGnawerAway'),pf('portraitGnawer').probe.gnawerBox);
+  const heroExtent=drawnExtent(pf('portrait'),pf('portraitHidden'),pf('portrait').probe.heroBox);
+  const picoExtent=drawnExtent(pf('portraitPico'),pf('portraitPicoHidden'),pf('portraitPico').probe.heroBox);
+  const gnawerExtent=drawnExtent(pf('portraitGnawer'),pf('portraitGnawerHidden'),pf('portraitGnawer').probe.gnawerBox);
   const declaredBoxes=['opening','travel','small','chase','later','deep'].map(id=>{
     const probe=candidate[id]?candidate[id].probe:evidence.runs[id].get(9).probe;
     return{id,hero:probe.heroBox,gnawer:probe.gnawerBox,shrine:probe.shrineBox,footprint:probe.footprintFraction,
@@ -270,12 +287,18 @@ async function main(){
   const stormBurst=analyzeBurst([1,3,6,12,24].map(offset=>evidence.runs.storm.get(offset)),{native:false,crop:WORLD_CROP});
   const shrinkDelta=frameDifference(evidence.runs.shrinkBefore.get(6),evidence.runs.shrink.get(6),{native:false,crop:WORLD_CROP});
   const slashDelta=frameDifference(evidence.runs.slashBefore.get(6),evidence.runs.slash.get(6),{native:false,crop:WORLD_CROP});
-  const shardDelta=frameDifference(evidence.runs.shardBefore.get(6),candidate.shard,{native:false,crop:WORLD_CROP});
+  const shardDelta=frameDifference(evidence.runs.shardBefore.get(6),evidence.runs.shard.get(6),{native:false,crop:WORLD_CROP});
   const squishBurst=analyzeBurst([1,3,6,12,24].map(offset=>evidence.runs.squish.get(offset)),{native:false,crop:WORLD_CROP});
   const bloomDelta=frameDifference(evidence.runs.bloomBefore.get(6),evidence.runs.bloom.get(6),{native:false,crop:WORLD_CROP});
   const channelBurst=analyzeBurst([6,24,48].map(offset=>evidence.runs.channel.get(offset)),{native:false,crop:WORLD_CROP});
   const restoreDelta=frameDifference(evidence.runs.restoreBefore.get(6),candidate.restore,{native:false,crop:WORLD_CROP});
   const restoreBurst=analyzeBurst([1,3,6,12,24,48].map(offset=>evidence.runs.restore.get(offset)),{native:false,crop:WORLD_CROP});
+  const gateDelta=frameDifference(evidence.runs.gateClosed.get(6),evidence.runs.gateOpen.get(6),{native:false,crop:WORLD_CROP});
+  const tellDelta=frameDifference(evidence.runs.windupBefore.get(6),evidence.runs.windup.get(6),{native:false,crop:WORLD_CROP});
+  const chargeBurst=analyzeBurst([1,3,6,12,24].map(offset=>evidence.runs.charge.get(offset)),{native:false,crop:WORLD_CROP});
+  const dodgeDelta=frameDifference(evidence.runs.windup.get(6),evidence.runs.dodge.get(6),{native:false,crop:WORLD_CROP});
+  const parryDelta=frameDifference(evidence.runs.charge.get(6),evidence.runs.parry.get(6),{native:false,crop:WORLD_CROP});
+  const noVisiblePath=!/\bfunction\s+drawRoute\b/.test(GAME_SOURCE)&&!/\bdrawRoute\s*\(/.test(GAME_SOURCE)&&!/\.setLineDash\s*\(/.test(GAME_SOURCE)&&!/routePoints\s*:/.test(GAME_SOURCE);
 
   // Fixed-seed calibration for the approved native candidate capture, with
   // roughly 10-25% regression margin below the measured values recorded in
@@ -293,6 +316,7 @@ async function main(){
     shrinkChanged:.015,slashChanged:.02,shardChanged:.30,shardMean:.05,shardGrid:.60,
     squishChanged:.02,bloomChanged:.25,channelChanged:.008,
     restoreChanged:.60,restoreMean:.10,restoreGrid:.80,restoreStructure:.20,
+    gateChanged:.18,gateGrid:.28,tellChanged:.009,tellGrid:.08,chargeChanged:.03,dodgeChanged:.02,parryChanged:.02,
     // scale law caps are design law, not calibration: standard actors <=20x32 drawn,
     // structures <=24 wide, combined footprint <20%, threats scented >=5 tiles out
     heroMaxW:20,heroMaxH:32,gnawerMaxW:20,gnawerMaxH:32,shrineMaxW:24,footprintMax:.2,scentMinTiles:5
@@ -304,9 +328,8 @@ async function main(){
   gate('same-seed real pixels deterministic',deterministic,determinism.filter(v=>!v.ok).slice(0,4));
   gate('all requested fixtures are finite and truthful',evidence.all.every(v=>v.frame.probe&&v.frame.probe.finite!==false),
     beats.map(beat=>({beat:beat.id,probe:candidate[beat.id].probe&&candidate[beat.id].probe.finite})));
-  const routedBeats=['opening','small','chase','later','deep'];
-  gate('route remains present in representative fixtures',routedBeats.every(id=>candidate[id].probe&&candidate[id].probe.routePoints>=4),
-    Object.fromEntries(routedBeats.map(id=>[id,candidate[id].probe&&candidate[id].probe.routePoints])));
+  gate('computed navigation path has no renderer or probe surface',noVisiblePath,{drawRoute:/\bdrawRoute\s*\(/.test(GAME_SOURCE),setLineDash:/\.setLineDash\s*\(/.test(GAME_SOURCE),routePoints:/routePoints\s*:/.test(GAME_SOURCE)});
+  gate('mutating private future waypoints is an exact real-pixel no-op',plannerHashes.clean===plannerHashes.contaminated,plannerHashes);
   gate('frames are opaque and non-flat',cm.every(value=>value.opaqueFraction===1&&value.quantizedColors>=bands.colors&&value.colorEntropy>=bands.entropy&&value.lumaStdDev>=bands.lumaStdDev&&value.largestColorShare<=bands.largestColorShare),
     cm.map(value=>({colors:value.quantizedColors,entropy:value.colorEntropy,lumaStdDev:value.lumaStdDev,largest:value.largestColorShare})));
   gate('multiscale edge detail meets reference floor',cm.every(value=>value.edge[1].energy>=Math.max(bands.edgeEnergy,refEdge*.85)&&value.edge[4].energy>value.edge[1].energy),
@@ -349,12 +372,16 @@ async function main(){
   gate('channel beam visibly charges',channelBurst.changedFraction.max>=bands.channelChanged,{changed:channelBurst.changedFraction});
   gate('restore is an apex payoff',restoreDelta.changedFraction>=bands.restoreChanged&&restoreDelta.meanDelta>=bands.restoreMean&&restoreDelta.changedGridFraction>=bands.restoreGrid&&restoreBurst.firstLast.structureDistance>=bands.restoreStructure,
     {restoreDelta,firstLast:restoreBurst.firstLast.structureDistance});
+  gate('sun gate visibly changes puzzle state',gateDelta.changedFraction>=bands.gateChanged&&gateDelta.changedGridFraction>=bands.gateGrid,gateDelta);
+  gate('gnawer charge has a broad anticipatory lane tell',tellDelta.changedFraction>=bands.tellChanged&&tellDelta.changedGridFraction>=bands.tellGrid,tellDelta);
+  gate('charge, pico dodge, and big parry each change the authored frame',chargeBurst.changedFraction.max>=bands.chargeChanged&&dodgeDelta.changedFraction>=bands.dodgeChanged&&parryDelta.changedFraction>=bands.parryChanged,
+    {charge:chargeBurst.changedFraction,dodge:dodgeDelta,parry:parryDelta});
   gate('candidate numeric richness is reference-comparable',median(cm.map(value=>value.edge[1].energy))>=refEdge*.9&&median(cm.map(value=>value.richCellFraction))>=refRich*.9,
     {candidateEdge:median(cm.map(value=>value.edge[1].energy)),referenceEdge:refEdge,candidateRich:median(cm.map(value=>value.richCellFraction)),referenceRich:refRich});
 
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256));
   let review;
-  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});
+  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
   else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then copy and complete ${REVIEW_TEMPLATE_PATH}`]};
   gate('fresh semantic comparison receipt',review.ok,review.errors);
 
@@ -366,7 +393,7 @@ async function main(){
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       heroWalk,picoWalk,hunterAnim,roamAnim,heroContrast,picoContrast,gnawerContrast,
       heroExtent,picoExtent,gnawerExtent,declaredBoxes,bigPico,roamHunt,earlyLater,laterDeep,
-      warningContrast,stormBurst,shrinkDelta,slashDelta,shardDelta,squishBurst,bloomDelta,channelBurst,restoreDelta,restoreBurst},
+      warningContrast,stormBurst,shrinkDelta,slashDelta,shardDelta,squishBurst,bloomDelta,channelBurst,restoreDelta,restoreBurst,gateDelta,tellDelta,chargeBurst,dodgeDelta,parryDelta,noVisiblePath,plannerHashes},
     gates,automatedOk:gates.slice(0,-1).every(value=>value.ok),semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}
   };
   writeJson(METRICS_PATH,report);

@@ -401,7 +401,10 @@ function checkMetricBands(metrics,bands){
   const failures=[];
   for(const[key,band]of Object.entries(bands||{})){
     const value=getMetric(metrics,key);
-    if(typeof value!=='number'||!Number.isFinite(value))failures.push(`${key}: missing numeric value`);
+    if(!band||typeof band!=='object')failures.push(`${key}: band is missing`);
+    else if(band.min!==undefined&&(typeof band.min!=='number'||!Number.isFinite(band.min)))failures.push(`${key}: band min is not finite`);
+    else if(band.max!==undefined&&(typeof band.max!=='number'||!Number.isFinite(band.max)))failures.push(`${key}: band max is not finite`);
+    else if(typeof value!=='number'||!Number.isFinite(value))failures.push(`${key}: missing numeric value`);
     else if(band.min!==undefined&&value<band.min)failures.push(`${key}: ${value} < ${band.min}`);
     else if(band.max!==undefined&&value>band.max)failures.push(`${key}: ${value} > ${band.max}`);
   }
@@ -411,17 +414,66 @@ function checkMetricBands(metrics,bands){
 function deriveBand(values,options){
   options=options||{};
   if(!values.length||values.some(value=>typeof value!=='number'||!Number.isFinite(value)))throw new Error('deriveBand needs finite numbers');
-  const low=quantile(values,options.lowQuantile===undefined ? .1 : options.lowQuantile);
-  const high=quantile(values,options.highQuantile===undefined ? .9 : options.highQuantile);
-  const padding=options.padding===undefined?Math.max((high-low)*.25,Math.abs((low+high)/2)*.05):options.padding;
+  const lowQuantile=options.lowQuantile===undefined ? .1 : options.lowQuantile,
+    highQuantile=options.highQuantile===undefined ? .9 : options.highQuantile;
+  if(!Number.isFinite(lowQuantile)||!Number.isFinite(highQuantile)||lowQuantile<0||highQuantile>1||lowQuantile>highQuantile)
+    throw new Error('deriveBand needs finite ordered quantiles in 0..1');
+  const low=quantile(values,lowQuantile),high=quantile(values,highQuantile),
+    padding=options.padding===undefined?Math.max((high-low)*.25,Math.abs((low+high)/2)*.05):options.padding;
+  if(!Number.isFinite(padding)||padding<0)throw new Error('deriveBand needs finite non-negative padding');
   return{min:round(low-padding),max:round(high+padding),samples:values.length};
+}
+
+// Bind semantic review to the code that defines both the pixels and the capture,
+// rather than pretending PNG bytes are portable across native canvas builds.
+// Exact montage hashes remain mandatory on the review platform. A different
+// platform may accept raster-only drift only when this complete identity matches;
+// its executable pixel/scale/motion gates still run against the local render.
+function reviewIdentitySha256(game,options){
+  options=options||{};
+  if(typeof game!=='string'||!/^[a-z0-9-]+$/.test(game))throw new Error('reviewIdentitySha256 needs a valid game slug');
+  const root=options.root||path.resolve(__dirname,'..'),visualEval=options.visualEvalPath||path.join(root,'evals',game+'-visual-eval.js');
+  const required=[
+    path.join(root,game+'.html'),path.join(root,'horizon.html'),path.join(root,'blockmine.html'),visualEval,
+    path.join(root,'engine.js'),path.join(root,'autoplay.js'),path.join(root,'word-puzzle.js'),
+    path.join(root,'evals','harness.js'),path.join(root,'evals','visual-harness.js'),path.join(root,'render','runtime.js'),
+    path.join(root,'render','render.js'),
+    path.join(root,'render','package.json'),path.join(root,'render','package-lock.json'),
+    path.join(root,'render','fonts','Silkscreen-Regular.ttf')
+  ];
+  for(const file of required)if(!fs.existsSync(file)||!fs.statSync(file).isFile())throw new Error(`review identity input missing: ${path.relative(root,file)}`);
+  const under=dir=>{
+    if(!fs.existsSync(dir))return[];
+    const out=[],visit=current=>{for(const entry of fs.readdirSync(current,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){const target=path.join(current,entry.name);if(entry.isDirectory())visit(target);else if(entry.isFile())out.push(target)}};
+    visit(dir);return out;
+  };
+  const files=[...new Set([...required,...under(path.join(root,'render','fonts')),...under(path.join(root,'evals','visual-baselines'))])]
+    .sort((a,b)=>path.relative(root,a).localeCompare(path.relative(root,b)));
+  const hash=crypto.createHash('sha256');
+  for(const file of files){
+    const relative=path.relative(root,file).replace(/\\/g,'/');
+    hash.update(relative+'\0');hash.update(fs.readFileSync(file));hash.update('\0');
+  }
+  return hash.digest('hex');
 }
 
 function verifyReviewReceipt(receiptOrPath,options){
   options=options||{};
-  const receipt=typeof receiptOrPath==='string'?JSON.parse(fs.readFileSync(receiptOrPath,'utf8')):receiptOrPath;
-  const errors=[];
+  const receiptPath=typeof receiptOrPath==='string'?receiptOrPath:null,
+    receipt=receiptPath?JSON.parse(fs.readFileSync(receiptPath,'utf8')):receiptOrPath;
+  const errors=[],warnings=[];
+  const expectedGame=options.game||(receiptPath?path.basename(receiptPath,path.extname(receiptPath)):null),
+    expectedGameValid=!expectedGame||/^[a-z0-9-]+$/.test(expectedGame),identityGame=expectedGameValid?(expectedGame||(receipt&&receipt.game)):null;
+  if(!expectedGameValid)errors.push('expected review game slug is invalid');
+  if(!receipt||!Number.isInteger(receipt.schema)||receipt.schema<1)errors.push('review schema is missing or invalid');
+  if(!receipt||typeof receipt.game!=='string'||!/^[a-z0-9-]+$/.test(receipt.game))errors.push('review game slug is missing or invalid');
+  if(expectedGame&&receipt&&receipt.game!==expectedGame)errors.push(`review game ${receipt.game||'missing'} does not match ${expectedGame}`);
   if(!receipt||receipt.verdict!=='pass')errors.push('review verdict is not pass');
+  if(!receipt||typeof receipt.reviewedAt!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(receipt.reviewedAt)||!Number.isFinite(Date.parse(receipt.reviewedAt+'T00:00:00Z')))errors.push('review date is missing or invalid');
+  if(!receipt||typeof receipt.reviewer!=='string'||!receipt.reviewer.trim())errors.push('reviewer is missing');
+  const isSha=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+  if(!receipt||!isSha(receipt.montageSha256))errors.push('review montage hash is missing or invalid');
+  if(!receipt||!isSha(receipt.reviewIdentitySha256))errors.push('review code/capture identity is missing or invalid');
   const refs=new Set(receipt&&receipt.references||[]);
   if(!refs.has('horizon')||!refs.has('blockmine'))errors.push('review must compare horizon and blockmine');
   for(const category of REVIEW_CATEGORIES){
@@ -431,8 +483,25 @@ function verifyReviewReceipt(receiptOrPath,options){
     if(!grade||typeof grade.note!=='string'||!grade.note.trim())errors.push(`${category}: review note missing`);
   }
   const expectedHash=options.montageSha256||(options.montagePath?sha256(options.montagePath):null);
-  if(expectedHash&&receipt&&receipt.montageSha256!==expectedHash)errors.push('review montage hash is stale');
-  return{ok:errors.length===0,errors,receipt};
+  if(expectedHash&&!isSha(expectedHash))errors.push('expected montage hash is invalid');
+  const platform=options.platform||process.platform,allowCrossPlatform=receipt&&receipt.allowCrossPlatformRasterization===true;
+  const currentIdentity=identityGame?reviewIdentitySha256(identityGame,{root:options.root,visualEvalPath:options.visualEvalPath}):null;
+  const identityMatches=!!(receipt&&receipt.reviewIdentitySha256&&currentIdentity&&receipt.reviewIdentitySha256===currentIdentity);
+  if(allowCrossPlatform){
+    if(!['darwin','linux','win32'].includes(receipt.reviewPlatform))errors.push('cross-platform review platform missing or invalid');
+  }
+  if(receipt&&receipt.reviewIdentitySha256&&currentIdentity&&!identityMatches)errors.push('review code/capture identity is stale');
+  if(options.preservedPath){
+    if(!fs.existsSync(options.preservedPath)||!fs.statSync(options.preservedPath).isFile())errors.push('preserved reviewed montage is missing');
+    else if(receipt&&isSha(receipt.montageSha256)&&sha256(options.preservedPath)!==receipt.montageSha256)errors.push('preserved reviewed montage hash is stale');
+  }
+  let platformDriftAccepted=false;
+  if(expectedHash&&receipt&&receipt.montageSha256!==expectedHash){
+    const crossPlatform=errors.length===0&&allowCrossPlatform&&receipt.reviewPlatform!==platform&&identityMatches;
+    if(crossPlatform){platformDriftAccepted=true;warnings.push(`accepted ${receipt.reviewPlatform}->${platform} native raster drift under exact review identity`)}
+    else errors.push('review montage hash is stale');
+  }
+  return{ok:errors.length===0,errors,warnings,platformDriftAccepted,currentIdentity,receipt};
 }
 
 function writeJson(outPath,value){
@@ -445,5 +514,6 @@ module.exports={
   REVIEW_CATEGORIES,sha256,asFrame,toNativeFrame,normalizeCrop,quantile,
   analyzeFrame,frameDifference,measureDrawnActorExtent,assertActorScale,
   structureDistance,analyzeBurst,extractSkyline,skylineDistance,
-  discoverBeatFrame,captureBeat,writeContactSheet,checkMetricBands,deriveBand,verifyReviewReceipt,writeJson
+  discoverBeatFrame,captureBeat,writeContactSheet,checkMetricBands,deriveBand,
+  reviewIdentitySha256,verifyReviewReceipt,writeJson
 };

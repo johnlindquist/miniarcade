@@ -51,5 +51,8 @@
       "meetsBlockMine": true,
       "note": "Pulp archaeology, timber and metal rails, masonry, sluice hardware, fedora explorer, carved idols, gold forecast grammar, cyan water, and angular impact debris share one deliberate pixel language across all chambers. The result is as cohesive and authored as both reference games."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "d04c6235fc7a483d90ba9b6cc85dbcb8c16a8ab838d2a83ea594eabe1026ddcd"
 }

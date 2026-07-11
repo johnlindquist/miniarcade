@@ -57,5 +57,8 @@
       "meetsBlockMine": true,
       "note": "Spectral cyan and lilac consistently denote haunting while brass and cream denote safety and relight; burgundy, blue, teal and violet wings remain part of one nocturnal hotel. Character accents, furniture materials, plan marks, HUD frames and payoff light share the same crisp pixel language."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "60b5f1f616dc1be1ffdbe961b5953efd8ce83809740c50187debab4dcc2a8dea"
 }

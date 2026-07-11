@@ -20,6 +20,7 @@ const FRAME_DIR=path.join(ARTIFACT_DIR,'frames');
 const CONTACT_PATH=path.join(ARTIFACT_DIR,'contact-sheet.png');
 const METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json');
 const REVIEW_PATH=path.join(__dirname,'visual-reviews','star-salvage.json');
+const PRESERVED_CONTACT_PATH=path.join(__dirname,'visual-receipts','star-salvage-contact-sheet.png');
 const SEED=0x5a1a6e,RENDER_EVERY=2;
 const WORLD_CROP={x:0,y:28,width:160,height:306};
 const DOCK_CROP={x:0,y:235,width:160,height:99};
@@ -182,7 +183,7 @@ function main(){
 
   const automatedOk=gates.every(value=>value.ok);
   let review={ok:false,errors:['review receipt missing']};
-  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});
+  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
   gate('fresh semantic comparison receipt',review.ok,review.errors);
   const report={
     schema:1,game:'star-salvage',seed:'0x'+SEED.toString(16),

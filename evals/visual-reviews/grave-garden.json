@@ -56,5 +56,8 @@
       "meetsBlockMine": true,
       "note": "Dark greenhouse teal, cultivated earth, grave gray, leaf green, moon plum, cream pixels, and gold payoff cues remain coherent across the HUD, actors, architecture, props, telegraphs, and celebrations. The scale rework strengthens the same authored grave-garden language instead of introducing a separate miniature style."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "368cbcdbc8c68112bdf4d652c2cb7c959507beffaab74613a7b66e8d85c50b51"
 }

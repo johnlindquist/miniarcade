@@ -53,5 +53,8 @@
       "meetsBlockMine": true,
       "note": "Cyan moonlamp defense, violet creature pressure, gold harvest payoff, seasonal folk-farm materials, crop species, structures, compact navy HUD, particles, and lighting form one consistent authored world across all four seasons and meet the deliberate cohesion of both references."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "306526da5f3a53a3dac883ed76e514eec84c50661ab5c58f1390b076c219ec92"
 }

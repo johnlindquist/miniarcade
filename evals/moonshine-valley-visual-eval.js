@@ -277,7 +277,6 @@ async function main(){
     ],outPath:CONTACT_PATH
   });
   fs.mkdirSync(path.dirname(TRACKED_CONTACT_PATH),{recursive:true});
-  fs.writeFileSync(TRACKED_CONTACT_PATH,sheet.png);
 
   const candidateMetrics=Object.fromEntries(beats.map(beat=>[
     beat.id,analyzeFrame(candidate[beat.id],{native:false,crop:WORLD_CROP})
@@ -423,7 +422,7 @@ async function main(){
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256,gameSha256,beats,evidence.specs));
   let review;
   if(fs.existsSync(REVIEW_PATH)){
-    review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});
+    review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});
     const receipt=review.receipt||{};
     if(receipt.game!=='moonshine-valley'||receipt.gameSha256!==gameSha256||
       receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(receipt.checkpoints)!==JSON.stringify(checkpointIdentity)){

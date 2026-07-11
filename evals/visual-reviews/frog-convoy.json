@@ -50,5 +50,8 @@
       "meetsBlockMine": true,
       "note": "Rounded frog anatomy, bark rings and braces, top-down vehicle construction, marsh greens and water cyans, gold reward language, coral danger language, outlined pixel materials, seasonal landmarks, route telemetry, and payoff geometry share one authored storybook-marsh grammar. The flood rebuild and apex effects extend that language instead of reading as pasted-on overlays."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "6092c3527779c503c2509e3a29409fd82df2a05059c89f8ba8c84da8c5b931e1"
 }

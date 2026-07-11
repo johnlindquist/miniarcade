@@ -97,7 +97,6 @@ async function main(){
   const refTargets=[60,420,900,1500,2400,3600,4800,6000,7200,9000,11000,13500,16000],horizon=captureTimeline('horizon',0xa1020401,refTargets),blockmine=captureTimeline('blockmine',0xb10c0050,refTargets),horizonFrames={},blockmineFrames={};
   evidence.beats.forEach((beat,i)=>{horizonFrames[beat.id]=horizon.get(refTargets[i]);blockmineFrames[beat.id]=blockmine.get(refTargets[i]);fs.writeFileSync(path.join(FRAME_DIR,String(i+1).padStart(2,'0')+'-'+beat.id+'.png'),encodeRgbaPng(evidence.frames[beat.id]))});
   const sheet=writeContactSheet({beats:evidence.beats.map(b=>({id:b.id,label:b.label})),rows:[{label:'HOTEL HAUNT',frames:evidence.frames},{label:'MACHINE HUNT',frames:horizonFrames},{label:'BLOCK MINE',frames:blockmineFrames}],outPath:CONTACT_PATH});
-  fs.mkdirSync(path.dirname(TRACKED_CONTACT_PATH),{recursive:true});fs.writeFileSync(TRACKED_CONTACT_PATH,sheet.png);
 
   const candidateMetrics=Object.fromEntries(evidence.beats.map(b=>[b.id,analyzeFrame(evidence.frames[b.id],{native:false,crop:WORLD_CROP})])),cm=Object.values(candidateMetrics),
     horizonMetrics=evidence.beats.map(b=>analyzeFrame(horizonFrames[b.id],{native:false,crop:WORLD_CROP})),blockmineMetrics=evidence.beats.map(b=>analyzeFrame(blockmineFrames[b.id],{native:false,crop:WORLD_CROP}));
@@ -166,7 +165,7 @@ async function main(){
   gate('wing apex has physical relight staging plus sim-inert payoff paint',apexPhysical.changedFraction>=bands.apexPhysical&&apexDelta.changedFraction>=bands.apexFx&&apexBurst.changedFraction.max>=bands.apexBurst,{apexPhysical,apexDelta,apexBurst});
 
   const gameHash=sha256(GAME_PATH);writeJson(TEMPLATE_PATH,reviewTemplate(sheet.sha256,gameHash,evidence.beats));let review;
-  if(fs.existsSync(REVIEW_PATH)){review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});if(review.receipt.game!=='hotel-haunt'||review.receipt.gameSha256!==gameHash||review.receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(review.receipt.checkpoints)!==JSON.stringify(evidence.beats.map(b=>b.id+'@'+b.offset))){review.ok=false;review.errors.push('review identity, game hash, seed, or checkpoints are stale')}}
+  if(fs.existsSync(REVIEW_PATH)){review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});if(review.receipt.game!=='hotel-haunt'||review.receipt.gameSha256!==gameHash||review.receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(review.receipt.checkpoints)!==JSON.stringify(evidence.beats.map(b=>b.id+'@'+b.offset))){review.ok=false;review.errors.push('review identity, game hash, seed, or checkpoints are stale')}}
   else review={ok:false,errors:['missing semantic review '+REVIEW_PATH,'inspect '+CONTACT_PATH+' and complete '+TEMPLATE_PATH]};
   gate('fresh native-size semantic comparison receipt',review.ok,review.errors);
   const report={schema:1,game:'hotel-haunt',gameSha256:gameHash,seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,

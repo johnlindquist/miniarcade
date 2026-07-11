@@ -54,5 +54,8 @@
       "meetsBlockMine": true,
       "note": "Mining materials, timber infrastructure, compact actor construction, gold survey grammar, mint armed state, red danger language, chamber palettes, pixel HUD, and rockfall payoff share one authored subterranean visual system."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "e5de6004fe404f5bb6fb4e1738896dc4dbc65217ec0549a95a9d95fa1cdec905"
 }

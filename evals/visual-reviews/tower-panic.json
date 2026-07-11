@@ -6,15 +6,15 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "c3a065e178570f54a90fa2772bcacebe3ae0471a89271fc2981c3abdd3c6879e",
-  "gameSha256": "af0bd0542f123ef506a246839d5f4ec3ea4847150f79290fc779e051f43d1c7d",
+  "montageSha256": "ee03ffe5152a988284fcf16fcbd48141bf54758ee46ba26cb64350dfae78c93b",
+  "gameSha256": "c3a0a19bbd761353a7c06dbd822282667301e08f6378bb5b0f4e8fcb874a2c91",
   "seed": "0x745052",
   "checkpoints": [
     "opening@12",
-    "plan@12",
+    "objective@12",
     "climb@8",
     "cascade@12",
-    "reroute@12",
+    "purge@12",
     "rescue@8",
     "danger@12",
     "later@12",
@@ -22,16 +22,6 @@
   ],
   "reviewedAt": "2026-07-10",
   "reviewer": "Codex native-size reference review",
-  "renderReceipt": {
-    "seed": "0x745052",
-    "seconds": 60,
-    "fps": 30,
-    "codec": "h264",
-    "dimensions": "320x720",
-    "bytes": 8245131,
-    "sha256": "fb26f5868d2cb3e83bf78671a47f291e87ea2bcb8baaf799bea6ef91381789b4",
-    "command": "node render/render.js tower-panic 60 .artifacts/render/tower-panic-seed-7622738.mp4 --seed 7622738 --fps 30"
-  },
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -51,17 +41,20 @@
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned real-pixel bursts verify climbing limbs, a worker joining the convoy, barrel rotation and travel, while the live route redraw, 240-frame warning column, cascading hazards, panic reactions, cage descent, broad confetti, hitstop and slow motion give signature beats anticipation and follow-through at the reference floor."
+      "note": "Aligned real-pixel bursts verify climbing limbs, a worker joining the convoy, and barrel rotation and travel. The 240-frame purge warning, cascading hazards, panic reactions, physical cage boarding and ascent, broad confetti, hitstop and slow motion give signature beats anticipation and follow-through at the reference floor."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The mint forecast line, pulsing next junction, coral abandoned line, amber purge route, full-width barrel runway, helmet colors, convoy HUD, and rooftop cage remain distinguishable at native size. Actor footprints stay near six to seven percent in sampled play, leaving substantially more world and approach room than the scale-law maximum."
+      "note": "The RESCUE PRIORITY objective, actor facing and poses, amber world-level purge column, full-width barrel runway, helmet colors, convoy HUD, and rooftop cage remain distinguishable at native size without computed waypoints, reticles, or route lines. Actor footprints stay near six to seven percent in sampled play, leaving ample world and approach room."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Steel values, safety yellow, mint planning, coral danger, helmet accents, signage, industrial HUD panels, hazard stripes, particles, and landmark lighting share one authored rescue-tower grammar across every district. The presentation is as internally coherent as MACHINE HUNT and BLOCK MINE while retaining its own emergency-rigger identity."
+      "note": "Steel values, safety yellow, rescue green, coral danger, helmet accents, signage, industrial HUD panels, hazard stripes, particles, and landmark lighting share one authored rescue-tower grammar across every district. The presentation is as internally coherent as MACHINE HUNT and BLOCK MINE while retaining its own emergency-rigger identity."
     }
-  }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "c2acf17e44ec1c546ac70d1e542773a700549bdd5cfb77114481a26b45ef44df"
 }

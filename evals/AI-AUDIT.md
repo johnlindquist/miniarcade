@@ -265,101 +265,308 @@ are retired.
 ## From-scratch replacement: DUNGEON EXPRESS (2026-07-10)
 
 **DUNGEON EXPRESS** is a clean-room Zelda dungeon × speedrun relay, not a
-restoration of the retired implementation. A tiny sword-and-boots courier scouts
-six generated rooms for tools and keys, defeats a warden, then runs two memory
-relays against the route it just learned. Gold plans, cyan execution trails, coral
-superseded lines, room memory, and compressed split times make route revision the
-visible drama engine.
+restoration of the retired implementation. A sword-and-boots courier now reads
+compact authored dependencies under enemy pressure: arm either of two sigils to
+open the runner-boots vault, repeat the two-order puzzle for the relay key, cut a
+physical shortcut, defeat the always-telegraphed warden, and ring the altar across
+three progressively faster laps. Route search remains private implementation;
+the world, poses, tells, doors, fog, and consequences carry the viewer story.
 
-- **Measured route memory** (`__NO_ROUTE_MEMORY` restores a working cautious
-  policy that revisits verification rooms and never takes the remembered crack)
-  plans deterministically without consuming engine RNG. It won all twenty paired
-  ten-minute calibration seeds: 1,849 vs 1,578 completed laps and 611 vs 521
-  floors. The permanent ten-seed two-minute panel also wins 10/10, 182 vs 149
-  laps and 59 vs 49 floors; each smart run physically crosses the shortcut while
-  every baseline records zero shortcut crossings. Complete three-split groups
-  assert the exploratory first lap remains at least 1.6× slower than the later
-  remembered line, so the win is visible rather than only numerical.
-- **Shared, human-flavored control.** Human and bot controllers emit the same
-  seven-field `{dx,dy,attack,dash,action,target,tactic}` intent through
-  `AI.controllerMux` and one `applyIntent` boundary. Seeded `AI.skillProfile`
-  reaction delays and short, visible route lapses sit behind `__NO_LAPSE`;
-  three rotating courier personas alter target pressure without touching the
-  engine RNG stream.
-- **Acts and exact show budgets.** Each biome owns a different ward event, warns
-  for exactly 240 viewer and simulation frames, seals a real door, and forces a
-  connected alternate line. The paired `__NO_ACTS` fixture first diverges
-  physically 26 frames into warning, before land. Tier 1 combat/discovery, tier 2
-  route milestones, and tier 3 floor routes stay strictly ordered; every apex
-  consumes exactly 6 hold / 24 slow / 48 admire frames, `__NO_ADMIRE` gates only
-  the bot pause, and `__NO_PAYOFF_FX` is a perfect same-seed simulation no-op.
-- **Watchability calibration.** Twenty fixed ten-minute smart runs established
-  29..31 floors, 88..95 laps, 114..127 room discoveries, 265..293 enemy kills,
-  75..101 received hits, 4..15 honest lapses, 13..39 actual remembered-cut
-  crossings, 1,544..1,586 events, and 442..473 progress marks. Three permanent
-  ten-minute soaks remain finite with 1..2s still, 3s quiet, 4s maximum progress
-  stalls, 91..95 laps, and 30..31 floors; both hits and occasional knockouts keep
-  competence from becoming robotic perfection.
-- **Authored-world visual proof.** Sunken Scriptorium, Ember Forge, Moon Ossuary,
-  and Verdant Reliquary rebuild materials, room landmarks, lighting, ambient
-  motion, and biome-act silhouettes. Real-pixel isolation measures the hero at
-  17×22, routine enemies at 14..18×15..22, the singular warden at 29×34, and
-  structures at 16..22×16..23; sampled combined actor footprint is 3.2..6.5%,
-  and the drawn warden retains 90.6% approach runway. The discovered visual eval
-  preserves a native DUNGEON EXPRESS / MACHINE HUNT / BLOCK MINE contact sheet,
-  four-floor composition checks, actor-motion bursts, a hashed 30-second render,
-  and a montage-bound six-category reference review.
+- **Real puzzle state, both ways.** Fixtures solve both actual vaults left-first
+  and right-first through the shipping activation function, record exactly two
+  transitions and one completion, and prove planning consumes no engine RNG.
+  Twenty-four seeded layouts remain connected with two branch rooms, seven
+  shortcut positions, a nine-cell longest straight, and 17 distinct structural
+  signatures. The boots, shortcut, key gate, warden, and altar form a visible
+  dependency chain rather than collectibles at corridor ends.
+- **Measured private route memory.** `__NO_ROUTE_MEMORY` restores a working
+  cautious policy that rechecks rooms and never takes the remembered cut. On ten
+  paired two-minute seeds, memory wins 10/10: 129 vs 111 laps, 40 vs 34 floors,
+  and 121,931 vs 103,143 aggregate score. Every smart seed completes both sigil
+  orders and physically crosses remembered cuts; its first exploratory split is
+  2.70×..3.89× slower than the learned line. Repeatability and next-RNG equality
+  keep the win causal without drawing a path.
+- **Enemies force readable responses.** Slimes, bats, guards, and the warden own
+  PATROL → TELL → CHARGE/INTERCEPT → RECOVER/STUN states. A controlled same-seed
+  `__NO_ENEMY_AI` fixture first diverges one frame into the tell and produces a
+  displaced hero response by frame 3; a blocked-lane fixture proves one visible
+  brace, zero fake dodges, and zero movement. Across six active paired runs, the
+  full enemy policy forces 37 received hits versus 81 under the still-progressing
+  simple baseline, with real dodges, braces, counters, and near misses counted
+  separately.
+- **No waiting disguised as activity.** Three independent ten-minute soaks finish
+  66..71 laps and 22..23 floors with 198..211 enemy tells, 195..209 player
+  responses, 1,448..1,482 deduplicated events, 475..505 progress marks, only
+  1s still, 2..3s quiet, 5..6s progress stalls, and 171..240 frames of tactical
+  dead air. The shared actor-motion contract stays at or below 30 bare frames,
+  45..55 emote frames, and about 4% emote share while retaining .099 cells/frame
+  physical pace; local walking never resets the entertainment clock.
+- **Shared control, acts, and exact show budgets.** Human and bot emit the same
+  seven-field `{dx,dy,attack,dash,action,target,tactic}` intent through one
+  `applyIntent` path. Each biome ward warns exactly 240 viewer/simulation frames,
+  keeps the dungeon connected, and diverges physically during warning behind
+  `__NO_ACTS`. Tiers remain strictly ordered with exact 6 hold / 24 slow / 48
+  admire frames per apex; `__NO_ADMIRE` gates only the bot and `__NO_PAYOFF_FX`
+  is a full-state same-seed no-op.
+- **Authored-world and sequence proof.** Sunken Scriptorium, Ember Forge, Moon
+  Ossuary, and Verdant Reliquary rebuild materials, landmarks, lighting, ambient
+  motion, and act silhouettes. The native sequence proves room setup → first
+  sigil → guard tell → displaced response → vault solve → changed aftermath,
+  followed by all four floors and the apex. A contamination fixture mutates
+  target, tactic, route, old-route, and trail buffers with an exact pixel no-op;
+  the HUD reports local state, the mini-map reveals only discovered topology, and
+  the warden is genuinely visible from a one-room-known spawn. All automated
+  native gates pass beside MACHINE HUNT and BLOCK MINE; reviewed montage
+  `7d2657ee…` and the inspected deterministic 30-second clip `dfb35c55…` are
+  bound to the current renderer and source identity.
 
-Permanent switches: `__NO_ROUTE_MEMORY`, `__NO_ACTS`, `__NO_ADMIRE`,
-`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+Permanent switches: `__NO_ROUTE_MEMORY`, `__NO_ENEMY_AI`, `__NO_ACTS`,
+`__NO_ADMIRE`, `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
-## From-scratch replacement: WINGRUSH (2026-07-10)
+## From-scratch replacement and sky-raid redesign: WINGRUSH (2026-07-10)
 
 **WINGRUSH** is the from-scratch momentum successor to the removed CRESTCRASH /
-TOPPLE RANGE concept. The frozen behavioral registration is game SHA-256
-`16aacc661098304c5cb2c5c24b022a3d1bde425a4af9f48dbcb22ff42c2acc14`;
-all receipts below are executable in `wingrush-eval.js`. This is behavioral and
-simulation proof only — visual release approval remains the separate real-pixel,
-native-size reference gate required above.
+TOPPLE RANGE concept. Its current thesis is **ground is the battery; sky is the
+arena**: Courier Finch reads a coin-marked hill route, dives to bank momentum,
+converts the crest launch into lift energy and ram power, then steers vertically
+through a visible approach to a floating fort. The behavioral receipts below are
+executable in `wingrush-eval.js`; the native-size reference comparison and natural
+autoplay sequence are executable in `wingrush-visual-eval.js`.
 
-- **Tiny-Wings momentum is physical, not copy.** The deterministic bowl fixture
-  compares the same bird on the same hill. Holding the dive banked speed
-  4.53 vs 3.87 and charge 1.21 vs 0.25; opening at the exit crest produced a
-  579px flight, 124px apex rise, and 152 airborne frames, over 300px and 100
-  frames beyond the coast policy. Terrain hits all 121 sampled segment boundaries
-  exactly, with a sub-.001px numerical seam; five biomes expose nine named hill
-  families and five distinct family palettes, with measured relief 94.3..133.0px.
-- **Lookahead earns destruction.** `__NO_LOOKAHEAD` restores the reactive
-  feel-only release. Across ten paired two-minute seeds, lookahead won the
-  destructive score on 8/10 and delivered 154 vs 92 broken blocks, 24 vs 16
-  toppled towers, and 41 vs 25 cores (aggregate score 558 vs 352, where a block
-  is 1, a tower 10, and a core 4). Both policies remain inside the same measured
-  launch, flight, impact, failure, progress, and pacing bands. The planner is
-  same-state pure, exactly repeatable, and consumes no engine RNG.
-- **Power-ups alter momentum and architecture.** Isolated runtime fixtures prove
-  the gust core raises forward speed to 5.26 with a 240f boost, the spring launches
-  at 5.67 with a 300f boost, the star cage yields the 480f momentum/combo power-up,
-  and the blast heart breaks eight nearby blocks. Breaking the three foundations
-  of the 12-block crown keep propagates through the support graph until all twelve
-  blocks fall, settle, and register exactly one toppled tower.
-- **Acts and show timing are exact.** GUST and RAIN each warn for exactly 240
-  viewer and simulation frames; paired `__NO_ACTS` runs first diverge physically
-  on warning frame 1, before the act lands. The ten-minute runs emitted reproducible
-  warning/land pairs (allowing only the final still-live warning at the sample
-  boundary). Tier frequencies were strictly ordered: shown tiers 106/65/5 and
-  110/61/8. Apex budgets were exact at 6 hold / 24 slow / 48 admire frames each
-  (30/120/240 and 48/192/384 totals), with `__NO_ADMIRE` gating the bot pause.
-- **Long autoplay stays alive without cheating.** Two independent ten-minute
-  soaks had 0s still time, 8..9s maximum quiet and progress gaps, 491..616 visible
-  events, 256..280 progress marks, 51..61 great flights, 8..11 toppled towers,
-  and 14..16 cores. Both stayed finite, made no invisible reset, and had no
-  unaccounted one-step position discontinuity. Human dive/trim/brace uses the same
-  six-field intent schema and `advanceBody` physics path as the bot. Fixed-seed
-  headless, chunked, and rendered runs are signature-identical, and
-  `__NO_PAYOFF_FX` is a proven simulation no-op.
+- **Momentum now funds sustained, controllable flight.** The deterministic bowl
+  fixture still proves that diving the same valley materially beats coasting, but
+  the payoff is no longer a one-shot ballistic arc. The earned-energy fixture
+  measured 0.569 lift energy after the dive versus 0.368 after coasting. Over the
+  same 120 airborne frames, powered climb moved -284.7px vertically, neutral glide
+  moved +34.3px, and descent moved +304.2px; attempting to climb on empty energy
+  ended +99.6px lower. Human and bot both emit the exact six-field
+  `brace/coreId/dive/tactic/targetId/vertical` intent and pass through the same
+  `advanceBody` physics. Terrain remains exact at all 121 sampled boundaries, with
+  five biomes, at least eight hill families, and materially different relief.
+- **Targets live in the sky and the route is legible before contact.** Five authored
+  fort rigs sit 86px or more above their terrain and put every core at least 95px
+  above ground. Wind rotors, balloons, kite sails, propellers/clouds, and the
+  crystal crown give the structures distinct silhouettes; six-ring air approaches
+  and deterministic ground-coin trails expose the intended line. A 960px bottom
+  route ribbon previews terrain, coins, the selected fort, and the landing zone,
+  while an edge marker preserves fort direction and distance offscreen and a
+  world-space bracket calls the landing gate. Gust, spring, blast, and star
+  fixtures now move a braced bird through `advanceBody` and `collideStructures`,
+  and assert exactly one physical impact, target hit, and core trigger. Breaking
+  the crown fort's foundations still cascades through every block until the full
+  structure settles.
+- **Natural autoplay hits what it visibly selects.** Across ten natural 60-second
+  seeds `0x7900..0x7909`, every run made 7..10 direct fort hits, converted
+  77.8%..90.9% of selected targets, and landed its first hit in 225..408 frames.
+  The bot continually replans climb/glide/dive authority, locks exact aim inside
+  the final 300px, and braces only for the physical strike; measured persona
+  variation still leaves honest misses. The real-pixel suite independently finds
+  the uninterrupted natural sequence for seed `0x7907`: target lock at frame 1,
+  direct hit at frame 340, then a real forecast, commit, guided touchdown, and
+  grounded follow-through. A missing touchdown is a hard failure, not a substituted
+  recovery frame.
+- **Lookahead earns destruction.** `__NO_LOOKAHEAD` restores the strengthened
+  reactive glide on identical seeds. Across ten paired two-minute seeds, the
+  planner won 8/10 and delivered 166 vs 125 direct hits, the same 166 vs 125
+  toppled forts, and 319 vs 212 triggered cores. Launch eligibility is now
+  identical on both sides, so the switch ablates policy rather than physics. The planner remains
+  same-state pure, exactly repeatable, and consumes no engine RNG; the paired test
+  also requires the reactive policy to remain active rather than becoming a weak
+  straw-man ablation.
+- **Target guidance is separately proven against the old feel-only behavior.**
+  `__NO_TARGET_GUIDANCE` keeps the translated reactive dive/trim policy, narrow
+  brace window, movement, air time, and world progress active. Across its ten
+  paired two-minute seeds, guided targeting won 10/10 with 158 vs 25 direct hits
+  and an 85.9% vs 13.8% conversion rate. This isolates the visible target lock and
+  final approach from the independent lookahead proof instead of crediting one
+  switch for the entire bot.
+- **The landing marker is an operational contract.** A direct hit or passed fort
+  moves the bot into recovery, where the displayed gate and the bot share the same
+  tangent-aware landing controller. A 90px ground re-arm plus launch-clearance
+  preview prevents touchdown/relaunch chatter. In ten paired natural minutes,
+  guidance completed 81 of 86 attempts, cut rough landings from 71/73 to 21/83,
+  preserved target hits at 82 vs 72, and produced zero natural micro-flights.
+  `__NO_LANDING_GUIDANCE` keeps the unguided recovery active so the improvement is
+  a fair same-seed A/B rather than an inert comparison.
+- **The real pixels carry the redesign.** Courier Finch now has separate outlined
+  torso and ivory head masses, a readable eye and beak, aviator cap, neck knot,
+  short tail feathers, landing feet, and distinct climb/soar/descend/brace/impact
+  silhouettes. The coral scarf is a six-node deterministic cloth chain driven by
+  body velocity, wind, gravity, and flutter rather than an attached mermaid-tail
+  shape. Rendered hide-layer masks hold the body to 20x20px, the whole actor and
+  cloth to a compact 32px box, all five one-at-a-time fort rigs to 40x65px, and the
+  combined actor/fort mask below 10% of the world crop. The actual fort, not merely
+  its edge icon, occupies at least 55% of sampled airborne attack frames. The visual
+  eval renders the actual 160x360 canvas and compares the current game beside
+  MACHINE HUNT (`horizon`) and BLOCK MINE; retained old Topple Range snapshots are
+  predecessor context, not a paired old-WINGRUSH baseline. It also gates the natural
+  lock/approach/hit/recovery/forecast/commit/touchdown sequence, character animation,
+  biome structure, hill silhouettes, route information, and native-size richness.
+  Its semantic receipt separately grades character craft, environment, level
+  variety, animation/impact, readability, and art-direction cohesion.
+- **Long autoplay stays alive and destructive without cheating.** Independent
+  ten-minute seeds `0x7810` and `0x7811` recorded 72/92 and 81/91 direct target
+  hits, 86 and 87 landings, 96% and 98% guided attempts completed, about 21% rough
+  landings, and only 1 and 0 micro-flights. Both retain measured coin,
+  flight-control, event, progress, and miss bands; remain finite; make no invisible
+  reset; and permit no unaccounted one-step position jump. Fixed-seed headless,
+  chunked, and rendered runs are signature-identical across energy, targets,
+  pickups, landing state, and the deterministic scarf. GUST and RAIN still warn
+  for exactly 240 viewer and simulation frames and alter the flight during warning;
+  shown payoff tiers remain strictly ordered, with exact 6 hold / 24 slow / 48
+  admire frames per apex.
 
-Permanent proof switches: `__NO_LOOKAHEAD`, `__NO_ACTS`, `__NO_ADMIRE`,
-`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+Permanent proof switches: `__NO_LOOKAHEAD` (paired planner ablation),
+`__NO_TARGET_GUIDANCE` (translated old feel-only targeting),
+`__NO_LANDING_GUIDANCE` (unguided recovery A/B), `__NO_ACTS` (warn-phase physical
+A/B), `__NO_ADMIRE` (bot-only celebration pause), `__NO_LAPSE` (zero-lapse
+competence anchor), and `__NO_PAYOFF_FX` (full-state same-seed no-op).
+
+## Level-entertainment contract + Zelda-room repairs (2026-07-10)
+
+Ghost Shift and Pico Cap exposed a hole in the prior quality gates: both could pass
+determinism, ten-minute motion/progress soaks, competent-planner A/Bs, and rich-
+pixel visual checks while still showing the viewer a computed path through an
+obvious corridor. Correct navigation is not entertainment. `AGENTS.md` now makes
+this a hard genre contract, mirrored in `CLAUDE.md`, and
+`evals/entertainment.js` provides the reusable release assertion. It gives ordinary
+steps, turns, junction crossings, and replans **zero credit**. A game must separately
+prove authored topology, puzzle-state transitions, enemy actions, player responses,
+multiple decision categories, a meaningful dead-air ceiling, and absence of a
+rendered computed path. Its own negative fixture feeds the gate 900 movement events
+and 60 replans; the corridor demo still fails on 17 independent grounds. The
+shared assertion now rejects non-finite/permissive bands and requires each
+decision category to declare a distinct telemetry source. The shared motion
+assertion also rejects empty probes, mixed casts that hide rotating enemy IDs,
+brief omission tricks, and sampling intervals too coarse to enforce the 30-frame
+standing limit.
+
+**GHOST SHIFT — ordered security chambers instead of a route-overlay maze.** Each
+shift is now three authored rooms with a visible dependency chain: read the room,
+press two numbered sigils in order to break the first seal, link twin power relays
+to drop the second grid, raid the guarded inner vault, then extract. Different
+blueprints move wall islands, gates, sight lines, and objectives across shifts.
+Sentries independently patrol, chase, cut off the live objective, and enter a
+visible stun state; the courier scans on room entry, counters a close sentry with a
+limited phase pulse, then evades while it recharges. The computed route renderer
+and ROUTE HUD are gone; source/render gates prevent their return.
+
+- Two deterministic ten-minute seeds complete 44/42 shifts with 267/258 puzzle
+  transitions and 705/633 physical pulse-or-evade responses. The presentation
+  watcher separately records 126/110 near misses without relabeling them as
+  player actions. Every inspected
+  dependency cycle remains valid, the level keeps three rooms and a nine-tile
+  longest open run, and the meaningful-beat clock tops out at 114/128 frames.
+  Walking and turning do not reset that clock.
+- `__NO_THREAT_PLAN` retains an active threat-blind courier. The tactical policy
+  wins all six same-seed pairs on both score and survival, 4,258 vs 3,012
+  aggregate, while cutting catches to 16..31 versus 91..97 for the blind runs.
+- The shared actor-motion contract measures only physical courier/sentry travel,
+  never the draw-only stun sway. Pulse/catch stuns are bounded to 55/60 frames;
+  worst bare stillness is 30 frames, worst emote is 60, maximum emote share is
+  14.5%, courier pace is 78.2..79.4px/s, and sentries retain 34.4..40.7px/s over
+  a permanent ten-seed derivation.
+- The native-pixel suite now shows rune setup → pressure → solved seal and relay
+  setup → pressure → solved grid, plus the sentry pulse response, structural later
+  shifts, lockdown, and extraction beside Machine Hunt and Block Mine. An explicit
+  contamination gate proves puzzle fixtures contain no pulse cue/art; only the
+  pulse fixture owns that effect. A second exact-pixel gate mutates private future
+  waypoints and proves they have no render consumer. Drawn extents are 16×20 for
+  the courier and 18×19 for a drone; the full watched cast occupies 7.2% of the
+  playfield. Final montage SHA:
+  `20a5743c67b9a23b6631f2b08dcd2dbc3cbaf56544f4bdd2bc249ee078571796`.
+
+**PICO CAP — crack-or-briar puzzle rooms with charging wardens.** The procedural
+corridor maze is now three compact authored chambers. Each room presents two
+legible solutions to one sun key: shrink through the blue crack or stay big, cut
+the red briar, and confront the guard. One key opens gate I, two open gate II,
+three wake the shrine. Four biome layouts rearrange cover and charge lanes while
+preserving the dependency proof. Gnawers guard and press, align a broad attack
+lane, wind up, charge, crash, and recover; pico form sidesteps the tell while big
+form can stand and parry. A 24-frame READ ROOM beat exposes the choice through
+world props and posture, never a path line.
+
+- The exhaustive state fixture proves all four layouts are distinct and solvable
+  through both size states, with three rooms, six crack/briar solutions, and the
+  1 → 2 gate dependency. Ten-minute seeds restored 34/31 glades, collected 104/93
+  keys, saw 90/91 charges, answered with 37/46 dodges and 69/46 parries, held the
+  longest straight traversal to 6/7 tiles, and never traveled more than eight
+  tile steps without a tactical decision.
+- The shared entertainment receipt aggregates 132 puzzle transitions, 65 full
+  completions, 181 enemy actions, and 198 player responses. Its independent
+  decision categories are all live (puzzle 970, threat 903, response 110, combat
+  236, payoff 459). The active longest-route `__NO_SIZE_PLAN` baseline still
+  solves rooms; the tactical policy won 6/6 pairs, 6,195 vs 3,311 aggregate with
+  no baseline-only hesitation. Ordinary sidesteps no longer receive fake FEINT
+  decision credit.
+- Physical-only motion tracks the hero plus five stable live gnawer roles. Across
+  the two permanent ten-minute seeds, worst bare stillness is 30 frames, worst
+  emote is 60, hero emote share is 12.2/14.1%, watched movement occupies
+  80.7/79.8% of samples, and physical pace is .771/.737px per frame.
+- The real-pixel sequence is two-route setup → charge tell → pico dodge → big
+  parry → sun-gate payoff → later biomes/storm/restore. Source checks reject a
+  path renderer, dashed breadcrumb, or path probe. Dodge and parry fixtures each
+  own exactly one causal effect, and fixture actors are frozen against unrelated
+  combat so environment frames cannot borrow a hit flash. Isolated hunt animation,
+  silhouettes, and the sword payoff all clear their original measured bands. An
+  exact-pixel contamination fixture also proves future planner waypoints remain
+  private.
+  Final montage SHA:
+  `38f949224e226e6d2ed9bd3de4019fd4154561deaa6879ea666d48e2140bfd86`.
+
+**TOWER PANIC — private forecast, visible rescue drama.** The hazard-aware planner
+still chooses safe gantries internally, but its dashed route, abandoned-route
+echo, next-junction reticle, `VISIBLE PLAN` panel, and public route/hash probes are
+gone. The viewer reads the authored tower itself: worker locations and helmet
+roles establish the rescue priority, barrels/fire/pistons publish danger, the
+purge column warns 240 frames before landing, and the HUD names the current
+rescue or threat without exposing future waypoints. The rigger now physically
+boards and rides the extraction cage instead of waiting through the payoff.
+
+- Two ten-minute seeds prove six decks, at least nine branch nodes, and a longest
+  straight of six. Their combined natural receipt records 118 objective-state
+  changes, 29 completed evacuations, 366 enemy actions, and 231 physical brace
+  responses; distinct decision sources report 118 puzzle, 366 threat, 231
+  response, and 29 payoff beats. Walking and replanning receive zero credit, and
+  the tactical dead-air ceiling is 252 frames.
+- The existing forecast-versus-shortest-path causal A/B remains active and the
+  complete Tower behavior suite passes. Shared motion sampling at five-frame
+  intervals keeps a persistent `hero` ID: worst bare stillness is 20 frames,
+  worst authored emote is 65/85 frames, motion occupies 94.1/94.4% of samples,
+  and physical pace is .713/.719px per frame.
+- The native visual suite source-bans every planner presentation surface and
+  mutates the private future route tail in a frozen fixture; clean and
+  contaminated renders are byte-identical. The reviewed sequence now shows
+  rescue priority, ladder travel, cascading hazards, purge response, worker join,
+  later-tower composition, and physical extraction with no route overlay. Final
+  montage SHA:
+  `ee03ffe5152a988284fcf16fcbd48141bf54758ee46ba26cb64350dfae78c93b`.
+
+**Cross-platform visual receipt proof.** Native canvas PNG bytes differ between
+macOS and Linux even when source, fixtures, and every executable pixel metric are
+identical. `visual-harness.js` therefore still requires the exact reviewed montage
+on the reviewer platform, but permits another OS only when the game, MACHINE HUNT
+and BLOCK MINE reference sources, visual eval, capture harness, fonts, committed
+visual baselines, offline renderer, runtime, and render dependency lock are
+byte-exact. The local pixel/scale/detail/motion/reference gates always run.
+`visual-receipt-eval.js` proves a changed reviewer-platform montage fails, an
+exact-identity Linux raster is accepted, and stale identity, malformed hashes,
+missing permission, missing suite/review registration, and non-finite bands fail.
+All 15 identity inputs are individually mutation-tested. All 17 visual suites now
+have one semantic JSON and one preserved reviewed PNG; ordinary evals write only
+ignored artifacts and verify, rather than overwrite, those approved bytes. The
+central registry also requires an exact suite/review/preserved-PNG game set, so a
+deleted receipt fails. The explicit `preserve-visual-review.js` command is the
+only acceptance path; it locates each suite's generated artifact by the approved
+hash, including nonstandard and parent artifact layouts. The
+renderer gate now runs two same-seed ffmpeg encodes, requires byte identity, and
+uses ffprobe to assert H.264, 320×720, six frames, and 30fps instead of treating
+`--help` as an encode test. A clean Linux x64 Node 24 container passes the global
+receipt audit plus Ghost Shift, Pico Cap, Dungeon Express, WINGRUSH, Star Salvage,
+Frog Convoy, and Swarm Keeper visual suites. Swarm Keeper exercises the intended
+portable case: Linux pixels differ, while the source identity and preserved
+Darwin review remain exact. The final macOS gate passes all 56 suites (39
+behavioral and 17 visual).
 
 ## Genre-fusion addition: MOTO BOWL (2026-07-10)
 
@@ -485,9 +692,13 @@ warnings instead of deleting the dilemma.
   fixed-three-piece return policy) rolls candidate detours and the route home
   through the exact ship integrator. It judges value, mass, projected danger,
   cable stress, and arrival time, and physically reels toward a swinging tail
-  when the chain needs slack. Across eight permanent paired ten-minute seeds,
-  it wins banked value 7/8 times, 4,204 vs 3,291 aggregate (+27.7%), while
-  raising the visible maximum train from three to five or six pieces.
+  when the chain needs slack. The reel now yields to the emergency-home branch
+  above 1.9 cable stress; MARA can make an earlier controlled tail cut while
+  JAX/SOL hold the bank order. Across ten permanent paired ten-minute seeds, it
+  wins banked value 10/10: Linux Node 24 measures 5,496 vs 4,196 aggregate
+  (+31.0%), while native macOS measures 5,478 vs 4,196 (+30.6%). The visible
+  maximum train rises from three to five or six pieces, and the 20% aggregate
+  floor remains unchanged.
 - **Human-flavored control.** Three salvager personas change precision, risk,
   and greed; `AI.skillProfile` supplies reaction delay and short hesitation
   lapses behind `__NO_LAPSE`. Human and bot emit the same game-owned intent
@@ -506,14 +717,14 @@ warnings instead of deleting the dilemma.
   is strict, and tier-three cues consume exactly 6 hold / 24 slow / 48 admire
   frames. `__NO_ADMIRE` gates only the bot pause and `__NO_PAYOFF_FX` is a
   perfect same-seed simulation no-op.
-- **Watchability calibration.** Thirty fixed ten-minute seeds
-  (`0x5c000 + i*233`) banked 379..714 value and 72..112 pieces in 21..36
-  homecomings; maximum train was 4..6, snaps 12..31, lost cargo 16..37,
-  deliberate drops 0..7, apexes 3..4, events 245..337, and progress marks
-  141..198. All were finite with zero impacts/rescues; the longest visible
-  event lull was 721 frames and the worst story-progress lull was 2,190.
-  The shared ten-minute soak records zero still seconds, an 11-second quiet
-  run, a 23-second progress stall, 336 events, and 190 progress marks.
+- **Watchability calibration.** The current independent Linux Node 24 panel
+  (`0x5c000`, `0x5c65f`, `0x5ce90`, `0x5da65`) banks 469..701 value and
+  87..102 pieces in 28..33 homecomings; maximum train is 5..6, snaps 14..28,
+  and lost cargo 16..32. Every original two-sided watchability band remains
+  unchanged, including the 0..10 deliberate-drop ceiling. The ten paired smart
+  runs independently stay inside their registered policy bands. The shared
+  ten-minute soak records one still second, an 11-second quiet run, a
+  21-second progress stall, 298 events, and 175 progress marks.
 - **Authored world and visual proof.** Planet-limb, orbital-ring, and ship-
   graveyard sectors change composition as the Ark grows. The wedge tug has
   articulated booms, cockpit/pilot, recoil, thrust, damage, and strain poses;
@@ -526,66 +737,15 @@ warnings instead of deleting the dilemma.
 Permanent switches: `__NO_GREED_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
-## Spinoff addition: PICO CAP (2026-07-10)
+## Historical PICO CAP baseline (superseded 2026-07-10)
 
-**PICO CAP** is a mechanic-level spinoff of a shrinking-hero adventure: a
-pocket knight collects five sun shards per glade, restores the shrine, and
-advances through four authored biomes (seed glade, creek hollow, hearth
-house, moon shrine). Mushroom rings toggle him between BIG — sword slashes
-kill gnawer beetles, chops clear brambles — and PICO, the only size that fits
-through wall cracks into sealed shard pockets, but the size that gnawers hunt
-and rain knocks down. Size is a real planning dimension, not a costume.
-
-- **Two-scale state-graph planning** (`__NO_SIZE_PLAN` restores a
-  threat-blind, longest-route baseline with periodic hesitation) runs
-  Dijkstra over (cell × size) with pad-toggle edges priced at morph time
-  plus ring cooldown, gnawer-threat costs on pico steps, storm penalties,
-  and goal hysteresis. An earlier draft ping-ponged between sizes at one
-  ring for 75 seconds; keeping routes across toggles plus hysteresis and
-  honest toggle pricing removed it (progress stalls fell from 74s to ≤46s
-  worst-case over twelve seeds). Across eight permanent paired ten-minute
-  seeds the planner wins 8/8, aggregate 5,206 vs 755 on
-  glades×30 + shards×3 − squishes×5; the baseline still finishes 3–12
-  glades, so the panel measures a working policy, not a corpse.
-- **Human-flavored control.** Three personas (BRAVE hunts gnawers, SNEAKY
-  overweights threat, GREEDY overshoots for loot) rotate per glade;
-  `AI.skillProfile` adds reaction delay and visible "..." daydream lapses
-  behind `__NO_LAPSE`, seeded from the run seed so lapses land differently
-  every run (3–9 per ten minutes, asserted >0 and ablated to 0). Human and
-  bot share one `{dx,dy,act,target}` intent through `AI.controllerMux`.
-- **Acts.** A rainstorm telegraphs for 240 frames — rolling front, blown
-  leaves, beckoning rings, countdown — then rains for 480. Before it lands a
-  pico hero routes to a ring and grows; gnawers shelter homeward; a small
-  hero caught in the open is visibly soaked and stunned. If every remaining
-  goal is big-unreachable the bot commits to one hysteresis-locked rain
-  dive instead of freezing (an earlier draft stood still for a full storm).
-  Paired `__NO_ACTS` fixtures first diverge during the warning.
-- **Payoff ladder.** Tier 1 slash/shrink/grow/squish/soak, tier 2 shard and
-  shrine bloom, tier 3 GLADE RESTORED after a 3-second channel beam. Tier
-  frequencies are strictly ordered and tier-3 cues consume exactly 6 hold
-  and ≤24 slow frames; `__NO_ADMIRE` gates only the bot pause and
-  `__NO_PAYOFF_FX` is a perfect same-seed no-op. Squish is a visible bounce
-  plus stun — no teleport rescues anywhere.
-- **Watchability calibration.** Twelve fixed ten-minute seeds
-  (`0x9c100 + i*97`) restored 15..19 glades with 80..96 shards, 50..75
-  slashes, 13..31 squishes, 24..34 shrinks, 16..27 grows, 3..12 soaks, and
-  2,200..2,391 events; the worst event lull was 217 frames and the worst
-  progress lull 2,181. Soak asserts still ≤3s, quiet ≤5s, stall ≤45s plus
-  per-seed floors on glades, shards, shrinks, slashes, brambles, and a
-  both-sided squish band.
-- **Authored world and visual proof.** Hedge, slate, floorboard, and carved
-  moonstone biomes rebuild composition (fixtures re-carve the maze so the
-  structure gates compare real layouts, not palettes). The discovered
-  real-pixel eval measures the actor-scale law from drawn pixels — portrait
-  diffs cap the hero at ≤22×32, pico at ≤18×20, gnawers at ≤20×32,
-  shrine ≤24 wide, combined footprint <20%, scent range ≥5 tiles — beside
-  walk/scuttle animation bursts, hunt-vs-roam agitation ordering, biome
-  structure distances, storm breadth, payoff impact deltas, a MACHINE
-  HUNT / BLOCK MINE contact sheet, and a hash-bound six-category review
-  receipt.
-
-Permanent switches: `__NO_SIZE_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
-`__NO_LAPSE`, `__NO_PAYOFF_FX`.
+The original five-shard corridor/Dijkstra registration is retired. Its green
+competence and soak numbers did not prove entertainment, and its route-following
+presentation is the failure case that motivated the shared level-entertainment
+contract. The current three-room crack-or-briar design, enemy agency, causal A/B,
+dead-air ceiling, and native visual sequence are registered under
+“Level-entertainment contract + Zelda-room repairs” above; old bands and montage
+claims do not describe the shipping game.
 
 ## Genre-fusion addition: ROBO RALLY (2026-07-10)
 
@@ -639,7 +799,6 @@ occasional disastrous fifth instructions.
 Permanent switches: `__NO_FORECAST`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
-<<<<<<< HEAD
 ## Disaster-triage addition: KAIJU CONTROL (2026-07-10)
 
 **KAIJU CONTROL** tells a rampage from the city's side. A tiny emergency rig
@@ -688,8 +847,6 @@ windows darken, rubble and smoke accumulate, and repaired neighborhoods relight.
 Permanent switches: `__NO_TRIAGE_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
-||||||| ccba6eb
-=======
 ## Genre-fusion addition: MOONSHINE VALLEY (2026-07-10)
 
 **MOONSHINE VALLEY** crosses a tiny authored farm with nighttime survival
@@ -737,7 +894,6 @@ defends the same visible rows through dusk and dawn.
 Permanent switches: `__NO_NIGHT_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
->>>>>>> game/moonshine-valley
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

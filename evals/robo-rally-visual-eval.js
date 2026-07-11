@@ -94,7 +94,6 @@ async function main(){fs.mkdirSync(FRAME_DIR,{recursive:true});for(const f of fs
   const referenceTargets=[60,600,1200,2400,3600,5400,9000,12000],horizon=captureTimeline('horizon',0xa1020401,referenceTargets),blockmine=captureTimeline('blockmine',0xb10c0050,referenceTargets),horizonBy={},blockmineBy={};
   beats.forEach((b,i)=>{horizonBy[b.id]=horizon.get(referenceTargets[i]);blockmineBy[b.id]=blockmine.get(referenceTargets[i]);fs.writeFileSync(path.join(FRAME_DIR,`${String(i+1).padStart(2,'0')}-${b.id}.png`),encodeRgbaPng(candidate[b.id]));});
   const sheet=writeContactSheet({beats:beats.map(b=>({id:b.id,label:b.label})),rows:[{label:'ROBO RALLY',frames:candidate},{label:'MACHINE HUNT',frames:horizonBy},{label:'BLOCK MINE',frames:blockmineBy}],outPath:CONTACT_PATH});
-  fs.mkdirSync(path.dirname(TRACKED_CONTACT_PATH),{recursive:true});fs.writeFileSync(TRACKED_CONTACT_PATH,sheet.png);
 
   const metrics=Object.fromEntries(beats.map(b=>[b.id,analyzeFrame(candidate[b.id],{native:false,crop:WORLD_CROP})])),cm=Object.values(metrics);
   const hm=beats.map(b=>analyzeFrame(horizonBy[b.id],{native:false,crop:WORLD_CROP})),bm=beats.map(b=>analyzeFrame(blockmineBy[b.id],{native:false,crop:WORLD_CROP}));
@@ -132,7 +131,7 @@ async function main(){fs.mkdirSync(FRAME_DIR,{recursive:true});for(const f of fs
   gate('payoff FX add a broad sim-inert layer',apexFx.changedFraction>=bands.apexFx&&apexFx.changedBoundsFraction>=.12&&apexBurst.changedFraction.max>=bands.apexChanged&&apexBurst.changedGridFraction.max>=bands.apexGrid,{apexFx,apexBurst});
 
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256,beats));let review;
-  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH} and complete ${REVIEW_TEMPLATE_PATH}`]};
+  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH} and complete ${REVIEW_TEMPLATE_PATH}`]};
   gate('fresh semantic comparison receipt',review.ok,review.errors);
   const clip=fs.existsSync(CLIP_PATH)?{path:CLIP_PATH,bytes:fs.statSync(CLIP_PATH).size,sha256:sha256(CLIP_PATH),seed:'0x'+SEED.toString(16),seconds:30,fps:30,dimensions:'320x720',
     command:'node render/render.js robo-rally 30 .artifacts/visual/robo-rally/robo-rally-30s.mp4 --seed 41216 --probe --fps 30'}:null;

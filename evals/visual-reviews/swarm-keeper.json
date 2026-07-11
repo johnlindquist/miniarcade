@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "game": "swarm-keeper",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "08f7f14439d9d3648649ba3de53d98747ea3ee34ebdf9501c520083f196be004",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference review",
+  "seed": "0x6500",
+  "checkpoints": [
+    "opening@300",
+    "late@fixture"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The coral-coated keeper leads a dense but readable party whose gold, blue, red, and green jobs survive at native size. Facing, gait, clustered formation, rescue state, and role-specific silhouettes give the group comparable focal construction to the two references."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The meadow road is framed by layered foliage, stones, flowers, water, banks, and constructed bridge planks. Foreground, route, and hazard planes separate clearly without reducing the scene to flat rectangles."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The late Star Garden replaces the opening meadow with violet floodwater, masonry edges, lamps, denser garden debris, and a completed bridge. The measured place change is architectural and material, not merely a palette swap."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Locomotion moves the focal cluster, bridge work leaves persistent construction, rescue danger isolates a downed member, the flood warning dominates before landing, and ALL ACROSS produces an actor-centered gold apex."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 the keeper, four role colors, road, floodwater, bridge state, warning color, and rescue subject remain distinct. The compact HUD reinforces the current expedition task without substituting debug geometry for world state."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Character coats, worker roles, landscape materials, expedition HUD, flood palette, garden progression, and payoff particles share one cohesive small-swarm adventure language."
+    }
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "reviewIdentitySha256": "bbdb84177ddc17d4a30d27a600a225bba0150ecdb824f9e507b9a7b359fdc86c"
+}

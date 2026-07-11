@@ -24,6 +24,7 @@ const CONTACT_PATH=path.join(ARTIFACT_DIR,'contact-sheet.png');
 const METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json');
 const REVIEW_TEMPLATE_PATH=path.join(ARTIFACT_DIR,'review-template.json');
 const REVIEW_PATH=path.join(__dirname,'visual-reviews','neon-getaway.json');
+const PRESERVED_CONTACT_PATH=path.join(__dirname,'visual-receipts','neon-getaway-contact-sheet.png');
 const SEED=0x4e454f4e,PRE_ROLL=120,RENDER_EVERY=2;
 const WORLD_CROP={x:0,y:38,width:160,height:322};
 
@@ -323,7 +324,7 @@ async function main(){
 
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256));
   let review;
-  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256});
+  if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
   else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then copy and complete ${REVIEW_TEMPLATE_PATH}`]};
   const semanticGate={name:'fresh semantic comparison receipt',ok:review.ok,detail:review.errors};
   const gates=[...automatedGates,semanticGate],automatedOk=automatedGates.every(value=>value.ok);

@@ -358,7 +358,12 @@ function greedPlan(){
   const hardHome=t.length>=cap||stress>1.9&&t.length>=3||home.danger>24&&t.length>=4,
     worthwhile=best&&best.utility>(t.length?5.5-persona.greed*2:-12),
     bank=t.length>0&&(hardHome||!best&&t.length>=cap-1||!worthwhile&&t.length>=4),
-    drop=bank&&stress>2.45&&t.length>3;
+    // Prefer the now-reachable bank run over shedding cargo; cut the tail only
+    // after the cable is genuinely beyond the recoverable reel window. MARA's
+    // hauler profile can make an earlier controlled cut; JAX/SOL keep the load
+    // aboard longer so their lower-risk bank order is visible before a shed.
+    dropAt=persona.name==='MARA'?2.55:2.8,
+    drop=bank&&stress>dropAt&&t.length>3;
   greedCache={at:runFrame,bank,targetId:bank||!best?0:best.f.id,drop,
     forecast:bank?(drop?'DROP ONE · HOME':'BANK THIS HAUL'):t.length>=3?'RISK ONE MORE':'HOOK THE VALUE',
     utility:best?best.utility:0,homeEta:home.homeEta};
@@ -380,7 +385,10 @@ function rawBotIntent(){
   // The feature is not only "take more": a good salvager knows when to fly
   // back into the cable, let the tail catch up, and make the ridiculous load
   // controllable again. The maneuver is physical and obvious on screen.
-  if(typeof globalThis.__NO_GREED_PLAN==='undefined'&&t.length>=3&&stress>1.52){
+  // Reel only while the cable is recoverable. Above the planner's 1.9
+  // emergency-home threshold, fall through so greedPlan can order the bank
+  // run; the old unconditional return made that safety branch unreachable.
+  if(typeof globalThis.__NO_GREED_PLAN==='undefined'&&t.length>=3&&stress>1.52&&stress<=1.9){
     const tail=t.at(-1),reel=aimIntent(tail.x,tail.y,'REEL IN THE TRAIN',{arrive:3,brake:false});
     reel.thrust=Math.abs(angleWrap(Math.atan2(tail.y-ship.y,tail.x-ship.x)-ship.a))<.85;
     reel.fire=false;reel.tether=false;reel.dropTail=stress>3.5&&t.length>4;return reel;
