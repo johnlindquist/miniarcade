@@ -21,11 +21,16 @@ const{ctx,W,H,random,RI,hash,clamp,rect,spawn,stepParts,drawParts,ring,stepRings
   addScore,gameOver,createShow,fxBurst,fxDust}=E;
 const{controllerMux,skillProfile,createRng}=AI;
 
-// NEON GETAWAY — GTA x Spy Hunter for the 4:9 strip. The viewer reads a route,
+// NEON GETAWAY — GTA x Spy Hunter for the 4:9 strip. The viewer reads the
+// driver's commitment — steering, drift angle, brake lights, the swap duck —
 // watches the police answer it, then gets the release of a ramp, alley, paint
-// booth, or honest vehicle swap. World motion is continuous: nothing teleports
-// the driver out of trouble, and the copied-state route planner uses the exact
-// same vehicle integrator as runtime play without touching the engine RNG.
+// booth, or honest vehicle swap. Nothing pre-draws where anyone will go
+// (motion contract, owner directive 2026-07-11): no route lines, target
+// highlights, ghost phantoms, or predicted intercepts. World telegraphs stay
+// physical — a dragnet is officers visibly assembling barriers, not a ghost
+// overlay. World motion is continuous: nothing teleports the driver out of
+// trouble, and the copied-state route planner uses the exact same vehicle
+// integrator as runtime play without touching the engine RNG.
 const TAU=Math.PI*2,BLOCK=210,DISTRICT_BLOCKS=14,FINAL_FRAME=54000,CAR_Y=266;
 const ROAD_L=37,ROAD_R=123,ALLEY_L=26,ALLEY_R=134,LANES=[51,80,109];
 const INK='#050711',CREAM='#fff1d2',CYAN='#55e7ff',PINK='#ff4fa7',GOLD='#ffd166',
@@ -128,7 +133,7 @@ function blockInfo(b){
 }
 
 function makePlayer(x,y,kind){return{x,y,vx:0,speed:1.15,z:0,vz:0,angle:0,kind:kind||'coupe',damage:0,
-  spinT:0,impactCd:0,boostT:0,swapT:0,swapFrom:null,swapTo:null,paintT:0,airFrames:0,
+  spinT:0,impactCd:0,boostT:0,swapT:0,settleT:0,swapFrom:null,swapTo:null,paintT:0,airFrames:0,
   inAlley:false,alleyT:0,alleyBlock:-1,intent:null,lastX:x,lastY:y,lastZ:0,routeX:80};}
 function makeTraffic(b,j){
   const axis=hash(b*11+j,worldSeed*5)>0.78?'cross':'north',lane=LANES[mod(Math.floor(hash(b,j+worldSeed)*9),3)],
@@ -353,7 +358,15 @@ function desiredPoliceCount(){return clamp(wanted+(wanted>=4?1:0)+(act.phase==='
 function stepPolice(){
   if(police.length<desiredPoliceCount()&&runFrame%100===0)spawnCop();
   for(const c of police){
-    if(c.hitCd>0)c.hitCd--;if(c.trafficCd>0)c.trafficCd--;if(c.disabled>0){c.disabled--;c.speed=Math.max(0,c.speed-.025);c.y+=c.speed;continue;}
+    if(c.hitCd>0)c.hitCd--;if(c.trafficCd>0)c.trafficCd--;
+    if(c.disabled>0){c.disabled--;
+      if(typeof globalThis.__NO_LIMP!=='undefined'){c.speed=Math.max(0,c.speed-.025);c.y+=c.speed;continue;}
+      // Motion contract: wrecked units never park mid-chase. They limp to the
+      // nearest shoulder at a floored roll and visibly fall out of the pursuit.
+      c.speed=Math.max(.62,c.speed-.045);
+      const shoulder=c.x<80?ROAD_L+4:ROAD_R-4;
+      c.vx+=clamp((shoulder-c.x)*.004,-.05,.05);c.vx*=.9;c.x=clamp(c.x+c.vx,15,145);
+      c.y+=c.speed;continue;}
     let target=player;if(c.decoy){const d=decoys.find(q=>q.id===c.decoy&&q.t>0);if(d)target=d;else c.decoy=0;}
     const spec=COP[c.type],lead=clamp((target.y-c.y)/120,0,1),tx=target.x+(target.vx||0)*28*lead;
     c.vx+=clamp((tx-c.x)*.009,-spec.turn,spec.turn);c.vx*=.83;c.x+=c.vx;
@@ -406,10 +419,11 @@ function stepActs(){
 function stepSwap(){
   player.swapT--;player.speed*=.94;player.y+=player.speed*.16;
   if(player.swapT===42){player.kind=player.swapTo;player.damage=Math.max(0,player.damage-34);}
-  if(player.swapT===0){player.swapFrom=null;player.swapTo=null;player.speed=Math.max(player.speed,.9);}
+  if(player.swapT===0){player.swapFrom=null;player.swapTo=null;player.speed=Math.max(player.speed,.9);player.settleT=14;}
 }
 function stepPlayer(){
   player.lastX=player.x;player.lastY=player.y;player.lastZ=player.z;if(player.paintT>0)player.paintT--;
+  if(player.settleT>0)player.settleT--; // presentation-only launch beat; physics never reads it
   if(player.swapT>0){stepSwap();return;}
   if(player.spinT>0){player.spinT--;player.angle+=.28;player.y+=player.speed*.35;player.speed=Math.max(.45,player.speed*.985);return;}
   const intent=controller();player.intent=intent;stats.appliedIntents++;
@@ -442,6 +456,8 @@ function resetRun(full){
     reactionFrames:[4,9],lapseChance:.00055,lapseFrames:[16,34]});
   Object.assign(act,{phase:'calm',type:'dragnet',warnAt:3300,landAt:3540,endAt:4440,index:0,
     targetBlock:0,safeX:ALLEY_L,notes:[]});ensureTraffic();spawnCop();if(full)SHOW.reset(showFrame);
+  // Frame the run's goal in the first seconds; presentation text only.
+  say('OUTRUN THE HEAT',GOLD,player.y+150,170);say('REACH CITY LIMITS',CYAN,player.y+118,170);
 }
 function stepWorld(){
   runFrame++;stepActs();ensureTraffic();stepPlayer();featureStep();stepTraffic();stepPolice();stepHeli();stepAlley();updateHeat();districtProgress();stepDecoys();
@@ -468,32 +484,37 @@ function drawRoadBase(p){
   rect(ALLEY_L-8,28,17,H-28,mix(p.road,INK,.18));rect(ALLEY_R-8,28,17,H-28,mix(p.road,INK,.18));
   rect(18,28,2,H-28,p.curb);rect(34,28,2,H-28,p.curb);rect(124,28,2,H-28,p.curb);rect(140,28,2,H-28,p.curb);
   // Asphalt has authored patchwork and wet reflection, not one debug fill.
+  // Every ground-plane decal follows sy()'s convention: +player.y inside the
+  // mod so the road flows DOWN-screen with the world as the car drives north.
+  // (Counter-scrolled paint reads as the car reversing; fixed 2026-07-11.)
   for(let lane=0;lane<3;lane++){
     const x=ROAD_L+lane*(ROAD_R-ROAD_L)/3;ctx.globalAlpha=.08+lane*.025;
     rect(x,28,(ROAD_R-ROAD_L)/3,H-28,lane===1?p.light:p.accent);ctx.globalAlpha=1;
   }
   for(let i=0;i<18;i++){
-    const y=34+mod(i*47-Math.floor(player.y*.72),H-34),x=ROAD_L+4+hash(i,worldSeed)*(ROAD_R-ROAD_L-12),
+    const y=34+mod(i*47+Math.floor(player.y),H-34),x=ROAD_L+4+hash(i,worldSeed)*(ROAD_R-ROAD_L-12),
       w=4+(hash(i+9,worldSeed)*13|0);ctx.globalAlpha=.12;rect(x,y,w,2,i%2?p.curb:p.light);ctx.globalAlpha=1;
   }
-  for(const x of[65,95])for(let y=34-mod(Math.floor(player.y),24);y<H;y+=24)rect(x,y,2,9,mix(p.curb,CREAM,.2));
-  for(let y=34-mod(Math.floor(player.y*.65),30);y<H;y+=30){ctx.globalAlpha=.14;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
+  for(const x of[65,95])for(let y=10+mod(Math.floor(player.y),24);y<H;y+=24)rect(x,y,2,9,mix(p.curb,CREAM,.2));
+  for(let y=4+mod(Math.floor(player.y),30);y<H;y+=30){ctx.globalAlpha=.14;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
 }
 function drawDistrictRoadDetails(p){
-  const scroll=mod(Math.floor(player.y),BLOCK),cross=CAR_Y-scroll;
+  const scroll=mod(Math.floor(player.y),BLOCK),cross=CAR_Y+scroll-BLOCK;
   if(p.kind==='neon'){
-    for(let i=0;i<5;i++){const y=54+mod(i*81-Math.floor(player.y*.9),H-40);ctx.globalAlpha=.18;
+    for(let i=0;i<5;i++){const y=54+mod(i*81+Math.floor(player.y),H-40);ctx.globalAlpha=.18;
       rect(44+i%3*27,y,15,2,i%2?PINK:CYAN);rect(48+i%3*27,y+2,7,5,mix(i%2?PINK:CYAN,p.road,.65));ctx.globalAlpha=1;}
   }else if(p.kind==='market'){
     line([[73,28],[73,H]],'#8f6b55',2);line([[87,28],[87,H]],'#8f6b55',2);
-    for(let y=38-mod(Math.floor(player.y),18);y<H;y+=18){rect(71,y,4,2,'#4b372f');rect(85,y,4,2,'#4b372f');}
+    for(let y=20+mod(Math.floor(player.y),18);y<H;y+=18){rect(71,y,4,2,'#4b372f');rect(85,y,4,2,'#4b372f');}
     for(let y=cross-BLOCK;y<H;y+=BLOCK){for(let x=43;x<121;x+=13){line([[x,y-13],[x+6,y-9]],'#4c3136');rect(x+5,y-11,2,2,GOLD);}}
   }else if(p.kind==='canal'){
     rect(0,28,18,H-28,'#0a4257');rect(142,28,18,H-28,'#0a4257');
-    for(let y=34-mod(Math.floor(player.y*1.3),15);y<H;y+=15){ctx.globalAlpha=.45;rect(2,y,13,2,CYAN);rect(145,y+6,12,2,MINT);}ctx.globalAlpha=1;
+    // Canal water keeps a 1.3x rate — a visible current sliding under the
+    // boardwalks — but flows the same way as the rest of the ground plane.
+    for(let y=19+mod(Math.floor(player.y*1.3),15);y<H;y+=15){ctx.globalAlpha=.45;rect(2,y,13,2,CYAN);rect(145,y+6,12,2,MINT);}ctx.globalAlpha=1;
     for(const x of[20,126])for(let y=28;y<H;y+=7){rect(x,y,14,3,y%14?'#73513a':'#9a6d45');}
   }else if(p.kind==='port'){
-    for(const x of[56,104]){line([[x,28],[x,H]],'#7e6b56',2);for(let y=32-mod(Math.floor(player.y),13);y<H;y+=13)rect(x-3,y,6,2,'#443b34');}
+    for(const x of[56,104]){line([[x,28],[x,H]],'#7e6b56',2);for(let y=19+mod(Math.floor(player.y),13);y<H;y+=13)rect(x-3,y,6,2,'#443b34');}
     for(let y=cross-BLOCK;y<H;y+=BLOCK){rect(20,y-17,120,3,'#7f6750');rect(24,y-23,3,10,'#a4855f');rect(133,y-23,3,10,'#a4855f');line([[26,y-22],[80,y-34],[134,y-22]],GOLD,2);}
   }else{
     for(let y=cross-BLOCK;y<H;y+=BLOCK){ctx.globalAlpha=.26;ctx.fillStyle=p.accent;ctx.beginPath();ctx.arc(80,y,26,0,TAU);ctx.fill();ctx.globalAlpha=1;
@@ -569,6 +590,30 @@ function drawRoadblock(rb){if(!rb)return;const y=sy(rb.y);if(y<-30||y>H+30)retur
   for(const x of[rb.gapX-16,rb.gapX+16]){poly([[x,y+8],[x+4,y+8],[x+2,y]],GOLD);rect(x+1,y+3,2,2,CORAL);}
   if(rb.id.startsWith('act')){drawPoliceVehicle({type:'van',x:ROAD_L+8,y:rb.y+8,face:0,disabled:0},false);drawPoliceVehicle({type:'van',x:ROAD_R-8,y:rb.y+8,face:0,disabled:0},false);}
 }
+// World telegraph, not an annotation: during the warning the dragnet is
+// PHYSICALLY assembled on screen — vans drive up first, then officers carry
+// barriers outward-in, at full opacity. Pure function of latched sim state
+// (act.targetBlock/safeX/landAt + runFrame); no ghost pre-draw, no RNG.
+function drawRoadblockAssembly(){
+  const rbY=act.targetBlock*BLOCK+178,y=sy(rbY);if(y<-30||y>H+30)return;
+  const u=clamp(1-(act.landAt-runFrame)/240,0,1),gapX=act.type==='transit'?-999:act.safeX,
+    slide=Math.min(1,u*3);
+  drawPoliceVehicle({type:'van',x:ROAD_L+8-(1-slide)*64,y:rbY+8,face:0,disabled:0});
+  drawPoliceVehicle({type:'van',x:ROAD_R-8+(1-slide)*64,y:rbY+8,face:0,disabled:0});
+  const xs=[];for(let x=ROAD_L+3;x<ROAD_R-4;x+=13)if(Math.abs(x-gapX)>=15)xs.push(x);
+  xs.sort((a,b)=>Math.min(a-ROAD_L,ROAD_R-a)-Math.min(b-ROAD_L,ROAD_R-b));
+  const placed=Math.floor(u*xs.length);
+  for(let i=0;i<xs.length;i++){const x=xs[i];
+    if(i<placed){rect(x,y-3,11,6,'#d7dce6');rect(x,y-3,11,2,CORAL);rect(x+2,y+3,2,4,'#656b77');rect(x+8,y+3,2,4,'#656b77');}
+    else if(i===placed&&u>0&&slide>=1){
+      // the next barrier is on an officer's back, walking in from the shoulder
+      const side=x<80?-1:1,ox=x-side*(u*xs.length-placed-1)*10;
+      rect(ox,y-1,11,3,'#aeb6c4');rect(ox+4,y-6,3,3,'#d6a07f');rect(ox+3,y-3,5,4,'#2a3850');
+      rect(ox+3+((showFrame>>2)&1),y+2,1,3,INK);rect(ox+6-((showFrame>>2)&1),y+2,1,3,INK);
+    }
+  }
+  if(u>.5)for(const x of[gapX-16,gapX+16])if(x>ROAD_L-10&&x<ROAD_R+10){poly([[x,y+8],[x+4,y+8],[x+2,y]],GOLD);rect(x+1,y+3,2,2,CORAL);}
+}
 function drawParkedVehicle(x,y,kind){const v={x,y:player.y+(CAR_Y-y),kind,angle:0,z:0,damage:0,spinT:0,paintT:0};drawGetawayVehicle(v,false,true,y);}
 function vehicleShape(kind,s){
   if(kind==='bike')return[[-2,9],[-3,5],[-2,-8],[0,-12],[2,-8],[3,5],[2,9]];
@@ -621,20 +666,25 @@ function drawPoliceVehicle(c){
     if(type==='cruiser'){rect(-w+1,-h/2-2,w*2-2,3,'#667080');rect(-w+3,-h/2-3,w*2-6,1,CREAM);}
   }
   ctx.globalAlpha=1;ctx.restore();
+  // Authored stun emote over a wrecked, limping unit: orbiting dizzy sparks
+  // the viewer can read at native size. Gated so evals can re-detect bare
+  // pauses; a render-only, same-seed sim no-op.
+  if(c.disabled>0&&typeof globalThis.__NO_EMOTE==='undefined'){
+    for(let i=0;i<3;i++){const a=showFrame*.22+(c.id||0)+i*TAU/3;
+      rect(x+Math.round(Math.cos(a)*6)-1,y-16+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}
+  }
 }
-function drawDecoy(d){if(d.ghost)ctx.globalAlpha=.28;
+function drawDecoy(d){
+  // Ghost decoys are police BELIEF, not world objects: never draw them. The
+  // viewer discovers the fake-out by watching the pursuit overshoot it.
+  if(d.ghost)return;
   drawGetawayVehicle({x:d.x,y:d.y,kind:d.kind,angle:.35,z:0,damage:20,spinT:0,paintT:0},false);
-  const y=sy(d.y);if(d.door){line([[d.x+(d.x<80?5:-5),y],[d.x+(d.x<80?11:-11),y+5]],CREAM,2);}
-  if(d.ghost){ctx.strokeStyle=PINK;ctx.beginPath();ctx.arc(d.x,y,13,0,TAU);ctx.stroke();ctx.globalAlpha=1;}}
+  const y=sy(d.y);if(d.door){line([[d.x+(d.x<80?5:-5),y],[d.x+(d.x<80?11:-11),y+5]],CREAM,2);}}
 function drawHelicopter(){if(!heli.active)return;const x=heli.x,y=sy(heli.y)-25;
   ctx.globalAlpha=.11*heli.spot;poly([[x,y+9],[x-38,H],[x+38,H]],GOLD);ctx.globalAlpha=1;
   ctx.save();ctx.translate(x,y);rect(-10,-5,20,12,'#283344');rect(-7,-8,13,5,'#3f5168');rect(-5,-7,8,4,'#6aa4bb');rect(8,-2,14,3,'#2a3444');rect(19,-5,4,8,'#3f4b5d');
   rect(-7,7,3,3,INK);rect(4,7,3,3,INK);rect(-2,-4,4,4,'#d6a07f');rect(0,-3,1,1,INK);
   ctx.globalAlpha=.72;line([[-25+Math.sin(showFrame*.8)*6,-10],[25-Math.sin(showFrame*.8)*6,-10]],CREAM,2);line([[0,-15],[0,-8]],'#8390a2',2);ctx.globalAlpha=1;ctx.restore();
-}
-function drawRoute(){if(!plan||typeof globalThis.__NO_ROUTE_PLAN!=='undefined')return;const tx=plan.targetX,c=persona.color;
-  ctx.globalAlpha=.62;for(let i=0;i<8;i++){const y=CAR_Y-24-i*22,x=player.x+(tx-player.x)*clamp(i/5,0,1);rect(x-1,y,3,7,c);}ctx.globalAlpha=1;
-  if(Math.abs(tx-player.x)>14){const y=CAR_Y-98;poly(tx<player.x?[[player.x,y],[player.x-7,y-4],[player.x-7,y+4]]:[[player.x,y],[player.x+7,y-4],[player.x+7,y+4]],c);}
 }
 function drawSwapChoreography(){if(player.swapT<=0)return;const t=84-player.swapT,y=CAR_Y;
   const old=decoys.filter(d=>!d.ghost).at(-1),oldX=old?old.x:player.x+(player.x<80?-11:11),newX=player.x,
@@ -644,11 +694,11 @@ function drawSwapChoreography(){if(player.swapT<=0)return;const t=84-player.swap
 }
 function drawForeground(p){
   const scroll=mod(Math.floor(player.y),96);for(const side of[-1,1])for(let i=0;i<4;i++){
-    const x=side<0?35:125,y=48+mod(i*96-scroll,H-40);rect(x-1,y-10,2,13,'#171a25');
+    const x=side<0?35:125,y=48+mod(i*96+scroll,H-40);rect(x-1,y-10,2,13,'#171a25');
     ctx.globalAlpha=.16;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(x,y-11,8,0,TAU);ctx.fill();ctx.globalAlpha=1;rect(x-2,y-13,4,4,p.light);
   }
   if(p.kind==='neon'||p.kind==='port'){
-    const y=70+mod(BLOCK-Math.floor(player.y),BLOCK);if(y>45&&y<H-35){rect(28,y,104,5,mix(p.roof2,INK,.1));rect(31,y+1,98,2,p.accent);
+    const y=70+mod(Math.floor(player.y),BLOCK);if(y>45&&y<H-35){rect(28,y,104,5,mix(p.roof2,INK,.1));rect(31,y+1,98,2,p.accent);
       ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText(p.kind==='port'?'PORT 7 · FREIGHT':'NORTH LOOP · LIVE',54,y-2);}
   }
 }
@@ -656,7 +706,6 @@ function drawActs(p){
   if(act.phase==='warn'){
     ctx.globalAlpha=.16+.07*Math.sin(showFrame*.17);rect(0,28,W,H-28,act.type==='dragnet'?CORAL:GOLD);ctx.globalAlpha=1;
     ctx.fillStyle=act.type==='dragnet'?CORAL:GOLD;ctx.font='bold 7px monospace';const s=act.type==='dragnet'?'DRAGNET FORMING':'TRANSIT LOCK';ctx.fillText(s,80-s.length*2.1,49);
-    for(let i=0;i<3;i++){const x=act.safeX+(i-1)*7,y=62+i*5;poly([[x,y],[x-3,y-5],[x+3,y-5]],p.light);}
   }
   if(act.phase==='live'&&act.type==='transit'){
     ctx.globalAlpha=.18;for(let y=42-mod(showFrame*2,24);y<H;y+=24)rect(0,y,W,2,GOLD);ctx.globalAlpha=1;
@@ -670,7 +719,12 @@ function drawHud(p){
   ctx.fillStyle=p.light;const ds=Math.floor(player.y/10)+'M';ctx.fillText(ds,W-4-ds.length*3.6,21);
   rect(4,25,72,3,'#252b3c');rect(4,25,72*(1-player.damage/110),3,player.damage>70?CORAL:MINT);
   rect(82,25,74,3,'#252b3c');rect(82,25,74*clamp(heat/5,0,1),3,wanted>=4?CORAL:PINK);
+  // Goal telemetry: the run's destination and its win counter live on screen,
+  // not only in the ending card — a viewer can join mid-run and still root.
+  rect(0,29,W,2,'#1a2036');rect(0,29,Math.round(W*clamp(runFrame/FINAL_FRAME,0,1)),2,mix(GOLD,INK,.2));rect(W-2,29,2,2,GOLD);
   ctx.fillStyle=p.accent;ctx.font='bold 5px monospace';ctx.fillText(DISTRICTS[currentDistrict()].name,4,36);
+  ctx.fillStyle='#7d86a8';ctx.fillText('ESCAPES',94,36);
+  for(let i=0;i<5;i++)rect(122+i*7,32,5,4,i<Math.min(stats.escapes,5)?GOLD:'#30364a');
   if(state==='ending'){ctx.globalAlpha=.88;rect(10,129,140,82,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(10.5,129.5,139,81);
     ctx.fillStyle=GOLD;ctx.font='bold 10px monospace';ctx.fillText('CITY LIMITS',34,156);ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(outcome,80-outcome.length*2.1,177);
     ctx.fillStyle=MINT;ctx.fillText(stats.escapes+' ESCAPES · '+stats.swaps+' SWAPS',35,195);}
@@ -680,15 +734,21 @@ function render(){
   const p=DISTRICTS[currentDistrict()];drawSkyline(p);drawRoadBase(p);drawDistrictRoadDetails(p);
   const b0=currentBlock()-2,b1=currentBlock()+3;for(let b=b1;b>=b0;b--)drawCityBlock(b,DISTRICTS[districtForBlock(b)]);
   for(let b=b0;b<=b1;b++){const q=blockInfo(b);for(const f of[q.ramp,q.garage,q.paint])if(f&&!usedFeatures.has(featureKey(b,f.kind)))drawFeature(f,b);drawRoadblock(roadblockForBlock(b));}
-  if(act.phase==='warn'){ctx.globalAlpha=.52;drawRoadblock({kind:'roadblock',y:act.targetBlock*BLOCK+178,
-    gapX:act.type==='transit'?-999:act.safeX,id:'act-'+act.index});ctx.globalAlpha=1;}
+  if(act.phase==='warn')drawRoadblockAssembly();
   const ar=actRamp();if(ar)drawFeature(ar,ar.block);if(swapBay)drawFeature({kind:'garage',x:swapBay.x,y:swapBay.y,vehicle:swapBay.vehicle,empty:player.swapT>0},currentBlock());
   for(const f of fixtureFeatures)drawFeature(f,currentBlock());
-  drawRoute();preDraw();for(const d of decoys)drawDecoy(d);for(const t of traffic)drawTraffic(t);for(const c of police)drawPoliceVehicle(c);
+  preDraw();for(const d of decoys)drawDecoy(d);for(const t of traffic)drawTraffic(t);for(const c of police)drawPoliceVehicle(c);
   drawHelicopter();
   if(player.swapT>0)drawGetawayVehicle({x:player.x,y:player.y,kind:player.swapTo,angle:0,z:0,damage:0,spinT:0,paintT:0},false);
   else drawGetawayVehicle(player,true);
-  drawSwapChoreography();drawRings(fxCam());drawParts(fxCam());
+  drawSwapChoreography();
+  // Door-slam launch beat: the settling driver guns it out of the bay. Render
+  // and probe only (settleT is never read by physics); __NO_EMOTE gates it.
+  if(state==='run'&&player.swapT<=0&&player.settleT>0&&typeof globalThis.__NO_EMOTE==='undefined'){
+    const t=player.settleT;ctx.globalAlpha=.5*t/14;ctx.fillStyle='#9ba2b5';
+    for(let i=0;i<2;i++){ctx.beginPath();ctx.arc(player.x-3+i*6,CAR_Y+13+(14-t)*.8,2,0,TAU);ctx.fill();}
+    ctx.globalAlpha=1;ctx.fillStyle=GOLD;ctx.font='bold 6px monospace';ctx.fillText('GO!',clamp(player.x+9,4,W-16),CAR_Y-14);
+  }drawRings(fxCam());drawParts(fxCam());
   for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
     ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;postDraw();
   drawForeground(p);drawActs(p);if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.055;rect(0,31,W,H-31,GOLD);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,33.5,W-5,H-37);
@@ -756,6 +816,16 @@ globalThis.__neonGetawayIntentSchemas=()=>{const h=humanIntent(),b=rawBotIntent(
 globalThis.__neonGetawayAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};
   delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired:a,gated:b};};
 globalThis.__neonGetawayNextRandom=()=>E.random();
+// Motion contract (evals/motion.js): the watched actors are the driver and
+// every live pursuit unit. emote is true exactly while an authored on-screen
+// state covers a legitimate pause: the swap duck/choreography plus the GO!
+// launch beat for the driver, dizzy stun sparks for a wrecked cop. __NO_EMOTE
+// strips both the flag and the drawn emote art (render/probe-only no-op).
+globalThis.__motionProbe=()=>{const on=typeof globalThis.__NO_EMOTE==='undefined';
+  return{finite:allFinite(),actors:[
+    {id:'driver',x:player.x,y:player.y,emote:on&&(player.swapT>0||player.settleT>0||player.spinT>0)},
+    ...police.map(c=>({id:'cop-'+c.id,x:c.x,y:c.y,emote:on&&c.disabled>0}))
+  ]};};
 globalThis.__soakProbe=()=>({sig:[Math.round(player.x*10),Math.round(player.y*10),Math.round(player.speed*10),player.kind,
   police.reduce((n,c)=>n+Math.round(c.x+c.y),0),traffic.reduce((n,t)=>n+Math.round(t.x+t.y),0)].join('|'),events:eventSerial,progress:progressSerial,finite:allFinite()});
 

@@ -122,6 +122,50 @@ function allPairs(values,fn){
   return out;
 }
 
+// Ground-plane scroll coherence (2026-07-11): the road paint must flow
+// DOWN-screen with the world as the car drives north. Render the same beat at
+// two sim times, find the vertical pixel shift that best explains the road
+// strip, and require it to match the car's measured world advance with a clear
+// margin over every zero/upward shift. The counter-scrolled decal bug (lane
+// dashes and district decals drifting toward the horizon — the "driving
+// backwards" illusion fixed 2026-07-11) leaves no coherent downward shift and
+// fails the margin test.
+const SCROLL_CROP={x:40,y:44,width:80,height:200};
+function lumaGrid(input,crop){
+  const source=toNativeFrame(input),out=new Float64Array(crop.width*crop.height);
+  for(let y=0;y<crop.height;y++)for(let x=0;x<crop.width;x++){
+    const src=((crop.y+y)*source.width+crop.x+x)*4;
+    out[y*crop.width+x]=source.rgba[src]*.299+source.rgba[src+1]*.587+source.rgba[src+2]*.114;
+  }
+  return out;
+}
+function verticalShiftScores(before,after,crop,maxShift){
+  const scores=[];
+  for(let dy=-maxShift;dy<=maxShift;dy++){
+    let sum=0,n=0;
+    for(let y=Math.max(0,dy);y<crop.height+Math.min(0,dy);y++)
+      for(let x=0;x<crop.width;x++){sum+=Math.abs(after[y*crop.width+x]-before[(y-dy)*crop.width+x]);n++;}
+    scores.push({dy,sad:sum/n});
+  }
+  return scores;
+}
+function scrollCoherence(beat,fromOffset,toOffset,prep){
+  const runtime=bootRenderedGame('neon-getaway',{seed:SEED});
+  const setBeat=runtime.sandbox.__neonGetawaySetVisualBeat;
+  if(setBeat(beat)!==true)throw new Error('unknown Neon Getaway visual beat: '+beat);
+  runtime.evaluate("visualIntent={steer:0,throttle:1,brake:false,handbrake:false,action:false,targetX:player.x,tactic:'THREAD THE TRAFFIC'}");
+  if(prep)runtime.evaluate(prep);
+  runtime.advanceTo(fromOffset,{renderEvery:RENDER_EVERY,renderLast:true});
+  const y0=runtime.evaluate('player.y'),before=lumaGrid(runtime.snapshot({native:true}),SCROLL_CROP);
+  runtime.advanceTo(toOffset,{renderEvery:RENDER_EVERY,renderLast:true});
+  const y1=runtime.evaluate('player.y'),after=lumaGrid(runtime.snapshot({native:true}),SCROLL_CROP);
+  const expected=Math.round(y1-y0),scores=verticalShiftScores(before,after,SCROLL_CROP,16);
+  const best=scores.reduce((m,s)=>s.sad<m.sad?s:m);
+  const counterScrollSad=Math.min(...scores.filter(s=>s.dy<=0).map(s=>s.sad));
+  return{beat,expected,bestDy:best.dy,bestSad:best.sad,counterScrollSad,
+    ok:expected>=4&&Math.abs(best.dy-expected)<=2&&best.sad<counterScrollSad*.8};
+}
+
 function buildCandidateEvidence(){
   const specs={
     opening:{fixture:'opening',offsets:[1,6,12,24]},
@@ -138,6 +182,23 @@ function buildCandidateEvidence(){
     apex:{fixture:'escape-apex',offsets:[1,6,12,24,48]},
     apexNoFx:{fixture:'escape-apex',offsets:[1,6,12,24,48],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}}
   };
+  // No-guideline pairs (owner directive 2026-07-11): the route planner's
+  // output may NEVER reach the canvas. Forcing opposite committed plans
+  // (alley-left vs alley-right) before rendering must change ZERO pixels at
+  // every planning beat — fixtures drive the car through visualIntent, so the
+  // injected plan is simulation-inert and any pixel delta is a drawn overlay.
+  const forcePlan=targetX=>runtime=>runtime.evaluate(
+    `plan={targetX:${targetX},score:500,min:20,projectedY:player.y+220,route:'alley'};player.routeX=${targetX};`);
+  for(const[id,fixture,offset]of[['street','street-chase',13],['alley','alley',12],['warning','dragnet',12],
+    ['danger','danger',13],['apex','escape-apex',6]]){
+    specs['planLeft_'+id]={fixture,offsets:[offset],afterSet:forcePlan(26)};
+    specs['planRight_'+id]={fixture,offsets:[offset],afterSet:forcePlan(134)};
+  }
+  // Ghost decoys are police BELIEF (where the pursuit *thinks* the driver is);
+  // injecting one must also change zero pixels — only physical door-open swap
+  // cars may render.
+  specs.ghostDecoy={fixture:'street-chase',offsets:[13],afterSet:runtime=>runtime.evaluate(
+    "decoys.push({id:9001,x:109,y:player.y+40,kind:'muscle',t:900,door:0,ghost:true});")};
   const runs={};
   for(const[id,spec]of Object.entries(specs))
     runs[id]=captureFixture(spec.fixture,spec.offsets,{id,beforeSet:spec.beforeSet,afterSet:spec.afterSet});
@@ -170,9 +231,10 @@ function reviewTemplate(montageSha256){
       environmentCraft:pending('Inspect each district with the HUD mentally removed: road material, alleys, roofs, market awnings, canal water and bridges, port rails and crane, civic roundabout, foreground lights, traffic, and depth planes.'),
       levelVariety:pending('Confirm the five districts change spatial landmarks, road grammar, material silhouette, hazards, and composition rather than only palette and facade texture.'),
       animationImpact:pending('Confirm aligned vehicle and police crops animate, the ramp has takeoff/apex/landing, the swap stages old car to driver to new car, the dragnet warning lands physically, and the five-star fade has visible pursuit redirection plus FX.'),
-      readability:pending('Confirm wanted escalation, visible police count, route intent, alley/ramp/swap targets, warning safe line, player silhouette, and apex remain legible beside video at native size.'),
+      readability:pending('Confirm intent reads from the driver alone — steering commitment, drift angle, brake lights, swap-duck choreography, GO! launch beat, stun sparks on wrecked units — and that wanted escalation, visible police count, player silhouette, and apex stay legible beside video at native size with ZERO drawn guidelines. Confirm the road and every ground decal flow down-screen with travel (no counter-scroll) and the goal telemetry (escape pips, city-limits strip) reads at native size.'),
       artDirectionCohesion:pending('Confirm neon-noir palette, pixel construction, HUD, district materials, vehicle lighting, pursuit grammar, and payoff language feel like one authored city.')
-    }
+    },
+    guidelineOverlays:{confirmedAbsent:false,note:'Confirm every sampled beat pre-draws NOTHING about actor intent or trajectory: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers. The assembling dragnet (vans arriving, officers carrying barriers) and the warning tint are world telegraphs and stay.'}
   };
 }
 
@@ -246,15 +308,39 @@ async function main(){
   const apexStructure=structureDistance(runs.danger.get(13),runs.apexNoFx.get(12),{crop:WORLD_CROP});
   const apexBurst=analyzeBurst([1,6,12,24,48].map(offset=>runs.apex.get(offset)),{native:false,crop:WORLD_CROP});
 
-  // Locked-candidate calibration, seed 0x4e454f4e. Across the eleven approved
-  // fixture cells the measured minima were 133 colors / 3.515 entropy / .124
-  // luma deviation / .0242 one-pixel edge energy / .956 rich cells, with a
-  // .322 largest-color maximum. Floors retain roughly 12-18% regression margin.
+  // Two districts cover both scroll paths: drawRoadBase/neon decals (opening)
+  // and the cross-anchored civic decals (later). The helicopter is parked for
+  // the later check so its static spotlight cannot bias the shift search.
+  const scrollChecks=[
+    scrollCoherence('opening',8,14),
+    scrollCoherence('later-district',8,14,"heat=2.4;wanted=3;heli.active=false;heli.spot=0;")
+  ];
+
+  // Zero-guideline receipts (full native frames, HUD included).
+  const planPairs=[['street',13],['alley',12],['warning',12],['danger',13],['apex',6]].map(([id,offset])=>({
+    beat:id,offset,difference:frameDifference(runs['planLeft_'+id].get(offset),runs['planRight_'+id].get(offset),{native:false})}));
+  const ghostDelta=frameDifference(runs.ghostDecoy.get(13),runs.street.get(13),{native:false});
+  const gameSource=fs.readFileSync(GAME_PATH,'utf8');
+  const bannedOverlaySources=['drawRoute','routeDot','setLineDash','predictIntercept','act.safeX+(i-1)',
+    'if(d.ghost)ctx.globalAlpha'].filter(token=>gameSource.includes(token));
+
+  // Locked-candidate calibration, seed 0x4e454f4e; re-measured 2026-07-11
+  // after the no-guideline redesign (route overlay, safe-lane chevrons, and
+  // ghost-decoy phantoms removed; dragnet now physically assembled during the
+  // warning; stun sparks + GO! launch beat added). Across the eleven approved
+  // fixture cells the minima moved only in the fourth digit: 133 colors /
+  // 3.526 entropy / .123 luma deviation / .0239 one-pixel edge energy / .956
+  // rich cells, .322 largest-color maximum — the same floors keep their
+  // roughly 12-18% regression margin.
   const bands={
     colors:115,entropy:3.10,lumaStdDev:.105,largestColorShare:.38,
     edgeEnergy:.0205,richEach:.82,richMedian:.88,
     playerMedian:.12,playerFirstLast:.24,playerGrid:.75,
-    policeMedian:.20,policeFirstLast:.52,policeGrid:.75,
+    // Police-burst floors re-derived 2026-07-11 after the ground-plane scroll
+    // direction fix: decals now flow with the world, so the cop-aligned crop
+    // carries less background churn (measured median .220, first/last .473,
+    // grid .844). Floors keep ~15% margin under the new measurement.
+    policeMedian:.19,policeFirstLast:.40,policeGrid:.72,
     swapMedian:.08,swapMax:.09,swapFirstLast:.22,swapGrid:.55,
     districtMedian:.35,districtEach:.28,
     warningChanged:.85,warningMean:.075,warningGrid:.90,warningBounds:.90,
@@ -311,6 +397,13 @@ async function main(){
     apexStructure.structureDistance>=bands.apexPhysicalStructure&&apexProbe.escapeSerial===1&&apexProbe.wanted===1&&
     apexProbe.visiblePoliceCount>=3&&apexProbe.visibleDecoyCount>=1&&apexProbe.show&&apexProbe.show.active&&
     apexProbe.show.active.tier===3,{apexPhysical,apexStructure,probe:apexProbe});
+  gate('no guideline overlays: opposite forced route plans render identically at every planning beat',
+    planPairs.every(value=>value.difference.changedFraction===0&&value.difference.meanDelta===0),planPairs);
+  gate('no guideline overlays: police-belief ghost decoys draw zero pixels',
+    ghostDelta.changedFraction===0&&ghostDelta.meanDelta===0,ghostDelta);
+  gate('no guideline overlays: banned overlay primitives are absent from the game source',
+    bannedOverlaySources.length===0,{banned:bannedOverlaySources});
+  gate('ground plane scrolls with travel, never against it',scrollChecks.every(value=>value.ok),scrollChecks);
   gate('five-star payoff FX land on the physical escape actors',apexFx.changedFraction>=bands.apexFxChanged&&
     apexFx.meanDelta>=bands.apexFxMean&&apexFx.changedBoundsFraction>=bands.apexFxBounds&&
     apexFxNear.changedFraction>=bands.apexNearChanged&&apexFxNear.meanDelta>=bands.apexNearMean&&
@@ -326,6 +419,11 @@ async function main(){
   let review;
   if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
   else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then copy and complete ${REVIEW_TEMPLATE_PATH}`]};
+  // Motion-contract 2c: the receipt must explicitly confirm zero guideline
+  // overlays at every sampled beat, in addition to the six category grades.
+  if(review.ok&&!(review.receipt&&review.receipt.guidelineOverlays&&review.receipt.guidelineOverlays.confirmedAbsent===true)){
+    review.ok=false;review.errors=[...(review.errors||[]),'receipt must confirm guidelineOverlays.confirmedAbsent=true with a review note'];
+  }
   const semanticGate={name:'fresh semantic comparison receipt',ok:review.ok,detail:review.errors};
   const gates=[...automatedGates,semanticGate],automatedOk=automatedGates.every(value=>value.ok);
   const gameSha256=sha256(GAME_PATH);
@@ -336,7 +434,9 @@ async function main(){
     thresholds:{referenceMedians:ref,bands},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       playerBurst,policeBurst,swapBurst,districtPairs,rampBurst,warningContrast,warningLand,
-      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst},
+      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst,scrollChecks},
+    guidelines:{planPairs,ghostDelta,bannedTokens:['drawRoute','routeDot','setLineDash','predictIntercept',
+      'act.safeX+(i-1)','if(d.ghost)ctx.globalAlpha'],bannedHits:bannedOverlaySources},
     gates,automatedOk,semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}
   };
   writeJson(METRICS_PATH,report);

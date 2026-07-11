@@ -6,33 +6,19 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "ac337487675d0cbdad553bc52ae0ab462df60f4dbe851e6c3611074b6883117a",
-  "seed": "0x4e454f4e",
-  "checkpoints": [
-    "opening@12",
-    "street@13",
-    "alley@12",
-    "ramp@12",
-    "swapReady@12",
-    "swap@12",
-    "later@12",
-    "warning@12",
-    "land@12",
-    "danger@13",
-    "apex@6"
-  ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
+  "montageSha256": "d54b1b658598be29edaa6376ce104b4facb331f30bfd2851014c6bd8743c53b4",
+  "reviewedAt": "2026-07-11",
+  "reviewer": "Claude native-size reference review (scroll-direction fix + goal telemetry, montage re-inspected at 160x360)",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the getaway coupe, bike, taxi, muscle car, and van have distinct constructed silhouettes, wheels, cabins, lights, visible drivers, facing, damage, and action poses. Cruiser, interceptor, police bike, van, helicopter crew, traffic, and the running swap driver remain recognizable and match both references for authored actor identity."
+      "note": "At 160x360 the getaway coupe, bike, taxi, muscle car, and van have distinct constructed silhouettes, wheels, cabins, lights, visible drivers, facing, damage, and action poses. Cruiser, interceptor, police bike, van, helicopter crew, traffic, pedestrians, the running swap driver, barrier-carrying dragnet officers, and dizzy stun sparks over wrecked units remain recognizable and match both references for authored actor identity."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The wet neon avenue, market tram and awnings, canal water and boardwalks, port rails and freight gantry, civic roundabout, roof materials, intersections, curb refuges, skyline, traffic, and foreground lights form a layered living city without relying on the HUD. Its density and material specificity meet the two reference worlds."
+      "note": "The wet neon avenue, market tram and awnings, canal water and boardwalks, port rails and freight gantry, civic roundabout, roof materials, intersections, curb refuges, skyline, traffic, and foreground lights form a layered living city without relying on the HUD. Ground decals now flow with the world as the car drives north. Density and material specificity meet the two reference worlds."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
@@ -42,20 +28,38 @@
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned crops prove wheel rotation and body motion, police pursuit and siren animation, a takeoff-apex-landing ramp arc, and the old-car to running-driver to new-car swap. The forming dragnet, landed police wall, damage reactions, spotlight, particles, rings, camera response, and five-star fade provide anticipation, impact, and follow-through."
+      "note": "Aligned crops prove wheel rotation and body motion, police pursuit and siren animation, a takeoff-apex-landing ramp arc, and the old-car to running-driver to new-car swap with its GO! launch beat. The dragnet is physically assembled during the warning — vans arrive, officers carry barriers outward-in — then lands as a full wall. Wrecked units limp to the shoulder under orbiting stun sparks instead of parking. Damage reactions, spotlight, particles, rings, camera response, and the five-star fade provide anticipation, impact, and follow-through."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The cyan player silhouette stays focal against every district while wanted stars, heat and damage bars, route dots, tactic text, ramp arrows, swap bay, warning safe line, police formations, and decoy redirection remain legible at native size beside video. Rich city detail does not obscure the pursuit state or intended escape line."
+      "note": "Intent reads from the driver alone: steering commitment, drift angle, brake lights, the swap duck and GO! beat — no drawn route, target, or prediction anywhere. The cyan player silhouette stays focal against every district while wanted stars, heat/damage bars, run-progress strip, escape pips, tactic text, police formations, and the assembling dragnet remain legible at native size beside video. Rich city detail does not obscure the pursuit state."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road markings, warning grammar, and gold payoff effects stay consistent across the full city. The actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
+      "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road markings, physical warning grammar, and gold payoff effects stay consistent across the full city. The actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
     }
   },
+  "guidelineOverlays": {
+    "confirmedAbsent": true,
+    "note": "Checked all eleven sampled beats at native size: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers anywhere. The former persona-colored route dots, dragnet safe-lane chevrons, ghost-roadblock pre-draw, and translucent ghost decoys are gone; the dragnet warning is now a physical world telegraph (vans arriving, officers carrying barriers) plus a broadcast tint, and swap/paint fake-outs are discovered by watching the pursuit overshoot. Executable pixel gates (opposite forced plans, injected ghost decoy) render identically at every planning beat."
+  },
+  "reviewIdentitySha256": "96ceb23aa09a4eec9c401f5cec21f13d98dbaca58ad3299bceb6b4943d018e14",
+  "seed": "0x4e454f4e",
+  "checkpoints": [
+    "opening@12",
+    "street-chase@13",
+    "alley@12",
+    "ramp@12",
+    "swap-anticipation@12",
+    "swap-payoff@12",
+    "later-district@12",
+    "dragnet@12",
+    "dragnet-land@12",
+    "danger@13",
+    "escape-apex@6"
+  ],
   "reviewPlatform": "darwin",
-  "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "1f2931beb92392c88a10a15cca650f0007f34c87d3b766e9bb83a3c19083a424"
+  "allowCrossPlatformRasterization": true
 }
