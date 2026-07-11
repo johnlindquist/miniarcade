@@ -29,6 +29,18 @@ globalThis.__goalFixture=()=>{
   resetGame();state='play';Object.assign(ball,{x:80,y:FL.y0-11,vx:0,vy:-1});ballStep();
   return{score:[...score],state,launch:cars.map(c=>c.launch)};
 };
+globalThis.__wiggleFixture=()=>{
+  // build a committed right slide, then slam full opposite lock: a sliding
+  // car carries yaw inertia — the tail must NOT whip instantly to the left
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,vx:2.2,vy:0,a:0,boost:60,dead:0,launch:0,
+    drift:0,av:0,avLast:0,wasDrifting:false});
+  for(let i=0;i<12;i++)advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+  const avPeak=c.av;
+  for(let i=0;i<8;i++)advanceCar(c,{steer:-1,throttle:1,boosting:false,drifting:true});
+  return{avPeak,avAfter:c.av};
+};
 globalThis.__predictFixture=()=>{
   resetGame();state='countdown'; // countdown: ballStep never fires goal()
   Object.assign(ball,{x:40,y:60,vx:2.1,vy:-1.9,trail:[]});
@@ -59,18 +71,18 @@ for(let run=1;run<=3;run++){
   if(p.goals[0]<2||p.goals[1]<2)fail(`run ${run}: one team failed to score competently`);
   if(total<10||total>30)fail(`run ${run}: ${total} goals outside watchable band 10..30`);
   if(p.demos<2||p.demos>20)fail(`run ${run}: ${p.demos} demos outside watchable band 2..20`);
-  // floors from the 12-seed sweep (2026-07-11, cornering sim): drifts
-  // 1012..1191, boost-outs 367..462, demos 5..13 — wide margins
+  // floors from the 12-seed sweep (2026-07-11, slide-inertia sim): drifts
+  // 1022..1220, boost-outs 296..376, demos 4..14 — wide margins
   if(ds<500)fail(`run ${run}: only ${ds} drift starts (sweep floor 500)`);
-  if(bo<180)fail(`run ${run}: only ${bo} drift boost-outs (sweep floor 180)`);
+  if(bo<150)fail(`run ${run}: only ${bo} drift boost-outs (sweep floor 150)`);
   // strategic drifting: swing around the ball onto the shot line. 12-seed
-  // sweep 2026-07-11: 104..143 line-ups, 23..41 converted to a touch <55f
+  // sweep 2026-07-11: 94..136 line-ups, 19..31 converted to a touch <55f
   // after the catch — floors at roughly half the observed minima
   if(lu<40)fail(`run ${run}: only ${lu} line-up drifts (sweep floor 40) — bots stopped using drift to get behind the ball`);
   if(lt<8)fail(`run ${run}: only ${lt} line-up drifts converted to a touch (sweep floor 8)`);
   // cornering skill is a release gate: drift is THE fast-turn tool (12-seed
-  // sweep: 52..56% of hard turns drifted, 268..344 wall saves) and fast
-  // head-on wall impacts stay capped (sweep 167..222; pre-cornering 319..380)
+  // sweep: 55..59% of hard turns drifted, 250..350 wall saves) and fast
+  // head-on wall impacts stay capped (sweep 175..212; pre-cornering 319..380)
   if(share<0.40)fail(`run ${run}: only ${(share*100).toFixed(0)}% of hard turns drifted (floor 40%)`);
   if(ws<120)fail(`run ${run}: only ${ws} wall-save drifts (sweep floor 120)`);
   if(wc>300)fail(`run ${run}: ${wc} fast wall crashes (ceiling 300) — bots are pounding the boards again`);
@@ -248,6 +260,28 @@ console.log('6) power drift: physics fixture + same-seed A/B vs __NO_DRIFT');
   if(sum(pd,'wallSaves')!==0)fail('__NO_CORNERING run still recorded wall-save drifts');
   if(a.sandbox.__sig()===d2.sandbox.__sig())fail('cornering never changed the sim on its A/B seed');
   if(!pd.finite)fail('__NO_CORNERING run went non-finite');
+  // slide inertia (owner directive 2026-07-11): a drifting car is a sliding
+  // mass — no instant tail wiggle. Fixture: 12f committed right slide, then
+  // 8f of full opposite lock; the yaw rate must not have fully reversed.
+  const wf=bootGame('rocket',{seed:0x710302,footer:FOOTER});
+  const wiggle=wf.sandbox.__wiggleFixture();
+  wf.sandbox.__NO_SLIDE_INERTIA=1;
+  const whip=wf.sandbox.__wiggleFixture();
+  console.log(`  slide inertia: committed slide yaw ${wiggle.avPeak.toFixed(3)}, after 8f counter-steer `+
+    `${wiggle.avAfter.toFixed(3)} (instant-yaw model: ${whip.avAfter.toFixed(3)})`);
+  if(wiggle.avPeak<0.05)fail(`committed slide only reached yaw ${wiggle.avPeak.toFixed(3)} — handbrake bite missing`);
+  if(wiggle.avAfter<-0.04)fail(`counter-steer whipped the tail to ${wiggle.avAfter.toFixed(3)} in 8 frames — sliding body must carry yaw inertia`);
+  if(whip.avAfter>-0.05)fail('__NO_SLIDE_INERTIA did not restore the instant-yaw model');
+  // run-level: committed slides rarely reverse yaw mid-drift
+  const e2=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  e2.sandbox.__NO_SLIDE_INERTIA=1;
+  e2.frames(21600,false);
+  const pe=e2.sandbox.__probe();
+  console.log(`  mid-slide yaw flips over 6 min: ${sum(pa,'slideFlips')} with inertia vs `+
+    `${sum(pe,'slideFlips')} instant`);
+  if(sum(pa,'slideFlips')*2>sum(pe,'slideFlips'))
+    fail(`slide inertia did not cut mid-drift yaw wiggle (${sum(pa,'slideFlips')} vs ${sum(pe,'slideFlips')})`);
+  if(a.sandbox.__sig()===e2.sandbox.__sig())fail('slide inertia never changed the sim on its A/B seed');
 }
 
 console.log('7) personalities: deterministic assignment + measured divergence');

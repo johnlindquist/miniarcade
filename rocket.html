@@ -27,6 +27,7 @@ const pads=[
 ].map(p=>({...p,t:0}));
 function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:false,boosting:false,launch:0,spinV:0,
   drift:0,drifting:false,driftHeld:false,wasDrifting:false,slip:0, // rear-grip break + tail-out posture
+  av:0,avLast:0, // slide yaw rate: the body carries rotational inertia mid-drift
   driftAge:0,skid:[], // presentation: swing telemetry + rubber laid by the rear wheels
   demoImmune:0,respawn:null,
   profile:null,skill:null,
@@ -36,7 +37,7 @@ function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:f
     anchorX:0,anchorY:0,anchorF:0,escapeUntil:0,escapeRev:true},
   stats:{driftStarts:0,driftFrames:0,driftBoostOuts:0,boostFrames:0,
     lineupDrifts:0,lineupTouches:0,wallSaves:0,wallCrashes:0,
-    hardTurns:0,hardTurnDrifts:0,
+    hardTurns:0,hardTurnDrifts:0,slideFlips:0,
     challengeStarts:0,challengeDistanceSum:0,demoAttempts:0,demos:0,lapses:0}};}
 const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
 let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
@@ -149,9 +150,17 @@ function kickoffPos(){
   kickoffAge=0;
   cars.forEach((c,i)=>{const k=KO[i];
     c.x=k[0];c.y=k[1];c.a=k[2];c.vx=0;c.vy=0;c.dead=0;c.launch=0;c.boost=Math.max(c.boost,34);
+    // race-grid staging: seat everyone 4px behind the mark so the rolling
+    // start rolls them onto it — and the teleport always visibly re-seats a
+    // goalie that was already hovering on its own slot (no frozen carry-over).
+    // frame>0: the boot kickoff stays legacy-exact (switches land after boot)
+    if(frame>0&&typeof globalThis.__NO_CELEBRATION==='undefined'){
+      c.x-=Math.cos(k[2])*4;c.y-=Math.sin(k[2])*4;
+    }
     // hard-clear demo + drift transients so a demolition on a scoring frame
     // can never leak a dead car or stale respawn across the goal replay
     c.demoImmune=0;c.respawn=null;c.drift=0;c.drifting=false;c.driftHeld=false;c.slip=0;c.sup=false;
+    c.av=0;c.avLast=0;
     c.driftAge=0;c.skid.length=0;
     const ai=c.ai;ai.driftUntil=0;ai.driftMinUntil=0;ai.driftCooldown=0;ai.boostOutUntil=0;ai.boostOutCounted=true;
     ai.demoTarget=-1;ai.demoUntil=0;ai.demoConsiderAt=0;
@@ -552,7 +561,26 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
   if(typeof globalThis.__NO_DRIFT!=='undefined')c.drift=0;
   else c.drift=clamp(c.drift+(wantsDrift?0.20:-0.16),0,1);
   c.driftHeld=wantsDrift;c.drifting=c.drift>0.22;
-  c.a+=d.steer*0.068*Math.min(1,sp0*0.9+0.35)*(1+c.drift*0.90);
+  // grip steering turns the body directly (legacy math, bit-exact at drift 0).
+  // Mid-slide the car is a sliding MASS: the front wheels can only lever the
+  // body around, so yaw carries inertia — counter-steer takes real frames and
+  // the tail cannot wiggle side-to-side around a target. Handbrake feel: one
+  // committed slide per direction, adjusted at the front wheels.
+  const steerBase=d.steer*0.068*Math.min(1,sp0*0.9+0.35);
+  if(c.drift<=0||typeof globalThis.__NO_SLIDE_INERTIA!=='undefined'){
+    c.a+=steerBase*(1+c.drift*0.90);
+    c.av=steerBase;
+  }else{
+    if(wantsDrift&&!c.wasDrifting) // handbrake bite: the tail breaks loose
+      c.av+=d.steer*0.055*Math.min(1,sp0*0.5); // with one committed swing
+    const yawTarget=steerBase*(1+c.drift*0.90);
+    c.av+=(yawTarget-c.av)*(0.14-0.07*c.drift); // deeper slide = lazier body
+    c.a+=c.av;
+  }
+  if(c.drift>0.5){ // a genuine mid-slide yaw reversal — rare when committed
+    if(c.av*c.avLast<0)c.stats.slideFlips++;
+    c.avLast=c.av;
+  }else c.avLast=0; // compare only within one slide, not across drifts
   const th=c.boosting?0.15:0.08*d.throttle;
   c.vx+=Math.cos(c.a)*th;c.vy+=Math.sin(c.a)*th;
   if(c.boosting){c.boost-=0.45;c.stats.boostFrames++;
@@ -648,7 +676,10 @@ function carStep(c){
       if(c.dead===0){c.x=c.i%2?130:30;c.y=c.team?50:310;c.a=c.team?Math.PI/2:-Math.PI/2;c.vx=0;c.vy=0;}
       return;}
     if(c.dead===DEMO_TELEGRAPH)c.respawn=chooseRespawn(c); // latch the telegraph
-    if(c.dead===0)respawnCar(c);
+    // never pop back in mid-replay: a respawn that lands during the goal
+    // slow-mo would stand frozen at its slot until kickoff (dead air, and a
+    // motion-contract stall) — hold the timer and return at the next live frame
+    if(c.dead===0){if(state==='play')respawnCar(c);else c.dead=1;}
     return;}
   if(c.demoImmune>0)c.demoImmune--;
   const d=driveController(c);
@@ -1093,9 +1124,9 @@ function step(){
     // rolling start: engines bite on "GO" wind-up and the pack creeps at the
     // ball — race-start anticipation, and the kickoff pause never freezes
     // past its emote budget (no RNG; gated with the other presentation beats)
-    if(typeof globalThis.__NO_CELEBRATION==='undefined'&&stateT<=10)
+    if(typeof globalThis.__NO_CELEBRATION==='undefined'&&stateT<=8)
       for(const c of cars)if(c.dead<=0)
-        advanceCar(c,{steer:0,throttle:0.5,boosting:false,drifting:false});
+        advanceCar(c,{steer:0,throttle:0.25,boosting:false,drifting:false});
     if(stateT<=-15)state='play';}
   else if(state==='goal'){stateT--;
     if(frame%pres.physicsEvery===0)physicsStep();
