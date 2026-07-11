@@ -26,5 +26,7 @@
   {id:'tower-panic',title:'TOWER PANIC',label:'tower panic',tagline:'climb · reroute · bring them home',tone:'tp'},
   {id:'burrow-boss',title:'BURROW BOSS',label:'burrow boss',tagline:'dig · bait · collapse',tone:'bb'},
   {id:'raiders-cart',title:'RAIDERS OF THE LOST CART',label:'raiders of the lost cart',tagline:'push · divert · outrun the roll',tone:'rc'},
-  {id:'robo-rally',title:'ROBO RALLY',label:'robo rally',tagline:'reveal · predict · collide',tone:'rr'}
+  {id:'robo-rally',title:'ROBO RALLY',label:'robo rally',tagline:'reveal · predict · collide',tone:'rr'},
+  {id:'castle-crasher',title:'CASTLE CRASHER',label:'castle crasher',tagline:'plan · fire · topple',tone:'cc'},
+  {id:'hotel-haunt',title:'HOTEL HAUNT',label:'hotel haunt',tagline:'sweep · reveal · relight',tone:'hh'}
 ]));

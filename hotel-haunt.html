@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HOTEL HAUNT</title>
+<style>
+  html,body{margin:0;height:100%;background:#070810}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#080812}
+  canvas:focus-visible{outline:2px solid #f4c86a;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0" aria-label="Hotel Haunt. A tiny ghost hunter plans room sweeps, seals vents, reveals possessed furniture, and relights a haunted hotel floor by floor."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,RI,hash,clamp,rect,preDraw,postDraw,stepParts,drawParts,start,keys,manual,
+  initSession,sessionStep,drawSession,playing,addScore,createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// HOTEL HAUNT — Luigi's Mansion pursuit grammar inside a living hotel cutaway.
+// The viewer can read the whole containment sentence on screen:
+//   seal a vent -> sweep the marked furniture -> reveal -> cut off -> contain.
+// Ghosts make the sentence interesting by breaking it and possessing a new prop.
+const TOP=42,BOTTOM=326,FLOOR_H=46,CURRENT_TOP=228,LEFT_VENT=7,RIGHT_VENT=153;
+const INK='#080812',CREAM='#fff1d3',GOLD='#f4c86a',MINT='#83f3d2',ECTO='#86f7ff',
+  LILAC='#caa7ff',CORAL='#ff6b7e',NIGHT='#101329',SHADOW='#05060c';
+const THEMES=[
+  {name:'GILDED LOBBY',code:'L',wall:'#3b1728',wall2:'#5b2638',trim:'#ca8c57',floor:'#281522',rug:'#7a2439',lit:'#f5bd68',
+    props:['sofa','clock','urn','desk','cart','chair']},
+  {name:'MOONLIGHT SUITES',code:'S',wall:'#16263b',wall2:'#24415a',trim:'#7fa9b8',floor:'#111c2b',rug:'#28546a',lit:'#f0c986',
+    props:['bed','lamp','wardrobe','vanity','trunk','plant']},
+  {name:'THERMAL SPA',code:'B',wall:'#123535',wall2:'#245554',trim:'#73bcb0',floor:'#102728',rug:'#286a62',lit:'#b9f0cc',
+    props:['tub','boiler','hamper','cabinet','fountain','bench']},
+  {name:'STARLIGHT BALLROOM',code:'P',wall:'#241a42',wall2:'#463063',trim:'#b78ad2',floor:'#171229',rug:'#5b2f73',lit:'#e8c3ff',
+    props:['piano','harp','table','portrait','globe','chaise']}
+];
+const PROP_SIZE={sofa:[22,13],clock:[10,22],urn:[10,14],desk:[22,14],cart:[20,16],chair:[12,15],
+  bed:[24,13],lamp:[9,19],wardrobe:[17,23],vanity:[18,18],trunk:[16,11],plant:[12,20],
+  tub:[22,13],boiler:[16,22],hamper:[13,14],cabinet:[17,22],fountain:[15,20],bench:[21,11],piano:[24,18],
+  harp:[14,23],table:[22,15],portrait:[14,19],globe:[13,20],chaise:[23,13]};
+const FURN_X=[18,39,59,101,123,145];
+const PERSONAS=[
+  {name:'METHODICAL',risk:0.35,linger:1.05},{name:'BOLD',risk:0.7,linger:0.86},{name:'SHOWMAN',risk:0.55,linger:0.94}
+];
+
+let floors=[],hunter={},currentFloor=0,viewFloor=0,runSeed=1,skillSeed=1,skill=null,persona=PERSONAS[0];
+let showFrame=0,runFrame=0,eventSerial=0,progressSerial=0,lastEvent=0,lastProgress=0;
+let planIds=[],planVersion=0,planReason='READ THE FLOOR',visualFixture='',artEvents=[],ghostSerial=0;
+let phase='active',phaseT=0,fromFloor=0;
+let act={phase:'calm',warnAt:1800,landAt:2040,endAt:2520,count:0,t:0,floor:0,side:0,braced:false};
+let actNotes=[],pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+const stats={floors:0,rooms:0,captures:0,reveals:0,sweeps:0,emptySweeps:0,escapes:0,repossessions:0,
+  wards:0,blocks:0,planBreaks:0,spooks:0,acts:0,lapses:0,events:0,progress:0,distance:0,
+  heldFrames:0,slowedFrames:0,admireFrames:0,maxEventLull:0,maxProgressLull:0};
+const SHOW=createShow({queueLimit:3,recoveryGap:70,tiers:{
+  1:{frames:12},
+  2:{frames:42,minGap:90},
+  3:{frames:86,minGap:540,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+function markEvent(){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEvent);lastEvent=showFrame}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgress);lastProgress=showFrame;if(score&&playing())addScore(score)}
+function art(kind,x,floor,value){artEvents.push({kind,x,floor,value:value||0,at:showFrame});if(artEvents.length>24)artEvents.shift()}
+function floorTop(index){return CURRENT_TOP+(viewFloor-index)*FLOOR_H}
+function floorBase(index){return floorTop(index)+38}
+function activeFloor(){return floors.find(f=>f.index===currentFloor)}
+function ventFor(f,side){return f.vents[side<0?0:1]}
+function propById(f,id){return f.furniture.find(p=>p.id===id)}
+function liveGhosts(f){return f.ghosts.filter(g=>g.state!=='captured')}
+function exposedGhosts(f){return f.ghosts.filter(g=>g.state==='flee'||g.state==='stunned'||g.state==='arrival')}
+function floorGhostForFurniture(f,p){return f.ghosts.find(g=>g.state==='possessed'&&g.furnitureId===p.id)}
+function finiteNumbers(values){return values.every(Number.isFinite)}
+
+function makeFloor(index){
+  const theme=THEMES[index%THEMES.length],furniture=FURN_X.map((x,i)=>({
+    id:index*100+i,x,room:x<80?0:1,type:theme.props[i],searched:false,ghostId:null,shake:0
+  }));
+  const count=index%4===3?2:2,ghosts=[],used=[];
+  for(let i=0;i<count;i++){
+    let slot;
+    do slot=RI(0,furniture.length-1);while(used.includes(slot));used.push(slot);
+    const p=furniture[slot],boss=index%4===3&&i===1;
+    const g={id:ghostSerial++,kind:boss?'concierge':i%2?'rascal':'wisp',state:'possessed',furnitureId:p.id,
+      x:p.x,spawnX:p.x,targetVent:p.x<80?1:-1,hp:boss?190:132,maxHp:boss?190:132,escapeN:0,ventT:0,
+      destId:null,stunT:0,face:p.x<80?1:-1,bob:i*17,spookCd:0};
+    p.ghostId=g.id;ghosts.push(g);
+  }
+  return{index,theme:index%THEMES.length,name:theme.name,lit:false,relight:0,roomLit:[false,false],roomEver:[false,false],
+    furniture,ghosts,vents:[{id:'W',x:LEFT_VENT,sealed:false,charge:0},{id:'E',x:RIGHT_VENT,sealed:false,charge:0}],
+    clearedAt:0,planBreak:0};
+}
+function ensureFloors(to){for(let i=0;i<=to;i++)if(!floors.some(f=>f.index===i))floors.push(makeFloor(i));floors.sort((a,b)=>a.index-b.index)}
+
+function resetGame(){
+  runSeed=RI(1,0x7fffffff);skillSeed=RI(1,0x7fffffff);floors=[];ghostSerial=0;currentFloor=0;viewFloor=0;
+  runFrame=0;eventSerial=0;progressSerial=0;lastEvent=showFrame;lastProgress=showFrame;planIds=[];planVersion=0;
+  planReason='READ THE FLOOR';visualFixture='';artEvents=[];phase='active';phaseT=0;fromFloor=0;actNotes=[];
+  Object.keys(stats).forEach(k=>stats[k]=0);
+  persona=PERSONAS[runSeed%PERSONAS.length];
+  skill=skillProfile({rng:createRng(skillSeed),skill:.78,precision:.78,risk:persona.risk,
+    reactionFrames:[3,7],lapseChance:.00058,lapseFrames:[16,34]});
+  Object.assign(hunter,{x:80,vx:0,face:1,walk:0,stun:0,action:false,beam:false,beamX:80,
+    targetX:80,tactic:'READ THE FLOOR',focus:null,wardSide:0,sweepT:0,lastX:80,floor:0,pose:'idle'});
+  ensureFloors(7);
+  const lead=1500+Math.floor(hash(runSeed,17)*600);
+  act={phase:'calm',warnAt:lead,landAt:lead+240,endAt:lead+720,count:0,t:0,floor:0,side:runSeed&1,braced:false};
+  SHOW.reset(showFrame);
+  recomputePlan();
+}
+
+// Pure containment planner. The ablated policy is still competent: it sweeps
+// the closest unchecked prop and directly chases a reveal. The full policy
+// groups a sweep by predicted escape vent and seals that vent first.
+function computeSweepPlan(f,hx,smart){
+  const pending=f.furniture.filter(p=>!p.searched);
+  return pending.slice().sort((a,b)=>{
+    if(!smart)return Math.abs(a.x-hx)-Math.abs(b.x-hx)||a.id-b.id;
+    const av=ventFor(f,a.x<80?1:-1),bv=ventFor(f,b.x<80?1:-1);
+    // A possessed prop visibly twitches and blinks. Reading that tell is fair,
+    // viewer-legible intelligence, not hidden-state omniscience.
+    const ac=(a.ghostId!==null?-86:0)+(av.sealed?-32:0)+Math.abs(a.x-hx)*.35;
+    const bc=(b.ghostId!==null?-86:0)+(bv.sealed?-32:0)+Math.abs(b.x-hx)*.35;
+    return ac-bc||a.room-b.room||a.id-b.id;
+  }).map(p=>p.id);
+}
+function recomputePlan(){
+  const f=activeFloor();if(!f)return;
+  const smart=typeof globalThis.__NO_CONTAIN_PLAN==='undefined';
+  planIds=computeSweepPlan(f,hunter.x,smart);planVersion++;
+}
+
+function fullIntent(move,action,targetX,tactic,focus,wardSide){return{
+  move:clamp(move||0,-1,1),action:!!action,targetX:Number.isFinite(targetX)?targetX:hunter.x,
+  tactic:tactic||'HOLD',focus:focus===undefined?null:focus,wardSide:wardSide||0
+}}
+function humanIntent(){
+  const move=(keys.right?1:0)-(keys.left?1:0),action=!!(keys.a||keys.b);
+  return fullIntent(move,action,hunter.x+move*18,action?'VACUUM / SWEEP':'MANUAL',null,0);
+}
+function nearestPending(f){return f.furniture.filter(p=>!p.searched).sort((a,b)=>Math.abs(a.x-hunter.x)-Math.abs(b.x-hunter.x)||a.id-b.id)[0]||null}
+function rawBotIntent(){
+  const f=activeFloor();if(!f||phase!=='active')return fullIntent(Math.sign(80-hunter.x),false,80,'RIDE THE LIFT',null,0);
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'&&!exposedGhosts(f).length)
+    return fullIntent(0,false,hunter.x,'ADMIRE THE RELIGHT',null,0);
+  // The act changes the body before it lands: cross the floor and brace the
+  // destination wing while the spectral service door is still telegraphing.
+  if(act.phase==='warn'&&act.floor===f.index){
+    const x=act.side===0?132:28;
+    return fullIntent(Math.sign(x-hunter.x),Math.abs(x-hunter.x)<5,x,'BRACE MIDNIGHT CHECK-IN',null,act.side===0?1:-1);
+  }
+  const ghosts=exposedGhosts(f);
+  if(ghosts.length){
+    const g=ghosts.slice().sort((a,b)=>Math.abs(a.x-hunter.x)-Math.abs(b.x-hunter.x))[0];
+    if(g.state==='arrival')return fullIntent(Math.sign(g.x-hunter.x),Math.abs(g.x-hunter.x)<34,g.x,'INTERCEPT THE BELLHOP',g.id,0);
+    const smart=typeof globalThis.__NO_CONTAIN_PLAN==='undefined',v=ventFor(f,g.targetVent);
+    let tx=g.x,tactic='CHASE THE REVEAL';
+    if(smart&&g.state==='flee'&&!v.sealed){tx=v.x-g.targetVent*16;tactic='CUT OFF '+(g.targetVent>0?'EAST':'WEST')+' VENT'}
+    return fullIntent(Math.sign(tx-hunter.x),Math.abs(g.x-hunter.x)<38,tx,tactic,g.id,0);
+  }
+  if(!planIds.length||!propById(f,planIds[0])||propById(f,planIds[0]).searched)recomputePlan();
+  const smart=typeof globalThis.__NO_CONTAIN_PLAN==='undefined';
+  const p=smart?(propById(f,planIds[0])||nearestPending(f)):nearestPending(f);
+  if(!p)return fullIntent(0,false,hunter.x,'LISTEN FOR MOVEMENT',null,0);
+  if(smart){
+    const side=p.x<80?1:-1,v=ventFor(f,side);
+    // Bold/showman profiles occasionally trust the vacuum instead of the ward.
+    // It is deterministic per floor, visibly labeled, and keeps the shipping
+    // policy from becoming a sterile zero-escape machine.
+    const rawSweep=p.ghostId!==null&&((persona.name==='SHOWMAN'&&f.index%5===2)||(persona.name==='BOLD'&&f.index%7===3));
+    if(p.ghostId!==null&&!v.sealed&&!rawSweep){const castX=v.x-side*52,near=Math.abs(hunter.x-castX)<5;
+      return fullIntent(Math.sign(castX-hunter.x),near,castX,'CAST '+(side>0?'EAST':'WEST')+' WARD',p.id,side)}
+    if(rawSweep)return fullIntent(Math.sign(p.x-hunter.x),Math.abs(p.x-hunter.x)<6,p.x,'RISK A RAW SWEEP',p.id,0);
+  }
+  return fullIntent(Math.sign(p.x-hunter.x),Math.abs(p.x-hunter.x)<6,p.x,'SWEEP '+(p.room?'EAST':'WEST')+' ROOM',p.id,0);
+}
+function lapseIntent(){
+  const f=activeFloor(),p=f&&nearestPending(f),tx=p?p.x:hunter.x;
+  return fullIntent(Math.abs(tx-hunter.x)>18?-Math.sign(tx-hunter.x):0,false,tx,'HEARD SOMETHING...',p&&p.id,0);
+}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined')return rawBotIntent();
+  const before=skill.isLapsed(runFrame);
+  const out=skill.decide(runFrame,null,()=>rawBotIntent(),()=>lapseIntent())||fullIntent(0,false,hunter.x,'LISTEN',null,0);
+  const after=skill.isLapsed(runFrame);
+  if(!before&&after){stats.lapses++;markEvent();art('lapse',hunter.x,currentFloor,0)}
+  return{...out};
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function roomGhostCount(f,room){return liveGhosts(f).filter(g=>{
+  if(g.state==='possessed'){const p=propById(f,g.furnitureId);return p&&p.room===room}
+  return(g.x<80?0:1)===room;
+}).length}
+function updateRoomLights(f){
+  for(let room=0;room<2;room++){
+    const lit=roomGhostCount(f,room)===0&&f.furniture.filter(p=>p.room===room).every(p=>p.searched);
+    if(lit&&!f.roomLit[room]){f.roomLit[room]=true;if(!f.roomEver[room]){f.roomEver[room]=true;stats.rooms++;markProgress(35)}art('room-relight',room?122:38,f.index,room);SHOW.offer({id:'room',tier:2,at:showFrame,tag:'ROOM CONTAINED'});fxDust(room?122:38,floorBase(f.index)-8,12,GOLD)}
+    else if(!lit)f.roomLit[room]=false;
+  }
+}
+function choosePossession(f,g){
+  const room=g.targetVent>0?1:0;
+  let options=f.furniture.filter(p=>p.room===room&&p.ghostId===null);
+  if(!options.length)options=f.furniture.filter(p=>p.ghostId===null);
+  options.sort((a,b)=>Math.abs(a.x-(g.targetVent>0?RIGHT_VENT:LEFT_VENT))-Math.abs(b.x-(g.targetVent>0?RIGHT_VENT:LEFT_VENT))||a.id-b.id);
+  return options[0]||null;
+}
+function startReveal(f,p,g){
+  p.searched=true;p.ghostId=null;g.state='flee';g.furnitureId=null;g.x=p.x;g.spawnX=p.x;g.targetVent=p.x<80?1:-1;g.face=g.targetVent;
+  g.hp=Math.min(g.maxHp,g.hp+8);stats.reveals++;markEvent();art('reveal',p.x,f.index,g.kind==='concierge'?2:1);
+  SHOW.offer({id:'reveal',tier:1,at:showFrame,tag:g.kind==='concierge'?'THE CONCIERGE!':'POSSESSION REVEALED'});fxBurst(p.x,floorBase(f.index)-14,14,ECTO,1.5,.01);
+  recomputePlan();
+}
+function finishSweep(f,p){
+  stats.sweeps++;markEvent();p.searched=true;const g=floorGhostForFurniture(f,p);
+  if(g)startReveal(f,p,g);else{stats.emptySweeps++;art('empty',p.x,f.index,0);SHOW.offer({id:'sweep',tier:1,at:showFrame,tag:'CLEAR'});recomputePlan()}
+  updateRoomLights(f);
+}
+function sealVent(f,v){
+  if(v.sealed)return;v.sealed=true;v.charge=0;stats.wards++;markEvent();art('seal',v.x,f.index,v.id==='E'?1:-1);
+  SHOW.offer({id:'seal',tier:1,at:showFrame,tag:v.id+' VENT SEALED'});fxDust(v.x,floorBase(f.index)-28,8,MINT);
+}
+function captureGhost(f,g){
+  if(g.state==='captured')return;g.state='captured';g.hp=0;stats.captures++;markEvent();markProgress(g.kind==='concierge'?180:90);
+  art('capture',g.x,f.index,g.kind==='concierge'?2:1);SHOW.offer({id:'capture',tier:2,at:showFrame,tag:g.kind==='concierge'?'CONCIERGE CONTAINED':'GHOST CONTAINED'});
+  fxBurst(g.x,floorBase(f.index)-15,g.kind==='concierge'?26:18,g.kind==='concierge'?LILAC:ECTO,2.1,.015);
+  recomputePlan();updateRoomLights(f);checkFloorClear(f);
+}
+function repairPossessions(f){
+  const claimed=new Set();
+  for(const g of f.ghosts)if(g.state==='possessed'){
+    let p=propById(f,g.furnitureId);
+    if(!p||claimed.has(p.id))p=f.furniture.find(q=>q.ghostId===null&&!claimed.has(q.id))||null;
+    if(!p){g.state='stunned';g.stunT=150;g.x=80;g.furnitureId=null;continue}
+    g.furnitureId=p.id;g.x=p.x;p.ghostId=g.id;p.searched=false;claimed.add(p.id);
+  }
+  for(const p of f.furniture)if(p.ghostId!==null&&!f.ghosts.some(g=>g.id===p.ghostId&&g.state==='possessed'))p.ghostId=null;
+}
+function checkFloorClear(f){
+  if(phase!=='active'||liveGhosts(f).length)return;
+  // A warning owns this floor for its exact 240f sentence. Without this gate,
+  // a last-ghost capture on the warning edge could start the lift, pause the
+  // act clock, hide the telegraph, and land the bellhop late on another floor.
+  if(act.phase==='warn'&&act.floor===f.index)return;
+  if(act.phase==='live'&&act.floor===f.index){
+    act.count++;act.phase='calm';act.t=0;act.braced=false;
+    act.warnAt=runFrame+3300+Math.floor(hash(runSeed+act.count*19,7)*900);
+    act.landAt=act.warnAt+240;act.endAt=act.landAt+480;
+  }
+  for(const p of f.furniture)p.searched=true;
+  f.roomLit=[true,true];for(let room=0;room<2;room++)if(!f.roomEver[room]){f.roomEver[room]=true;stats.rooms++}f.lit=true;f.relight=showFrame;f.clearedAt=runFrame;stats.floors++;
+  markProgress(240);art('floor-relight',80,f.index,f.index+1);
+  const apex=(f.index+1)%4===0;
+  SHOW.offer({id:apex?'wing':'floor',tier:apex?3:2,at:showFrame,tag:apex?'WING RELIT':'FLOOR '+(f.index+1)+' RELIT',expiresAt:showFrame+90});
+  fxBurst(80,floorBase(f.index)-18,apex?38:24,apex?LILAC:GOLD,2.5,.02);
+  phase='relight';phaseT=apex?150:110;planReason=apex?'ADMIRE THE WING':'RETURN TO THE LIFT';
+}
+
+function applyIntent(intent){
+  const f=activeFloor();if(!f)return;hunter.intent={...intent};hunter.tactic=intent.tactic;hunter.targetX=intent.targetX;
+  hunter.action=false;hunter.beam=false;hunter.focus=intent.focus;hunter.wardSide=intent.wardSide;
+  if(hunter.stun>0){hunter.stun--;hunter.vx*=.78;hunter.x=clamp(hunter.x+hunter.vx,6,154);hunter.pose='spooked';return}
+  const accel=.18,max=.82,desired=intent.move*max;hunter.vx+=(desired-hunter.vx)*accel;
+  if(Math.abs(intent.move)<.1)hunter.vx*=.72;
+  hunter.lastX=hunter.x;hunter.x=clamp(hunter.x+hunter.vx,6,154);stats.distance+=Math.abs(hunter.x-hunter.lastX);
+  if(Math.abs(hunter.vx)>.08){hunter.face=hunter.vx>0?1:-1;hunter.walk+=Math.abs(hunter.vx);hunter.pose='walk'}else hunter.pose='idle';
+  if(!intent.action){hunter.sweepT=Math.max(0,hunter.sweepT-2);return}
+  hunter.action=true;
+  if(act.phase==='warn'&&act.floor===f.index&&Math.abs(hunter.x-(act.side===0?132:28))<6){
+    act.braced=true;hunter.pose='brace';return;
+  }
+  if(intent.wardSide){
+    const v=ventFor(f,intent.wardSide),castX=v.x-intent.wardSide*52;if(Math.abs(hunter.x-castX)<6&&!v.sealed){v.charge++;hunter.pose='seal';hunter.beam=true;hunter.beamX=v.x;if(v.charge>=28)sealVent(f,v)}return;
+  }
+  const ghosts=exposedGhosts(f).sort((a,b)=>Math.abs(a.x-hunter.x)-Math.abs(b.x-hunter.x));
+  const g=ghosts[0];
+  if(g&&Math.abs(g.x-hunter.x)<40){
+    hunter.beam=true;hunter.beamX=g.x;hunter.pose='vacuum';const pull=(hunter.x-g.x)*.018;
+    if(g.state!=='arrival'){g.x+=pull;g.hp-=g.state==='stunned'?2.05:1.18;g.face=hunter.x>g.x?1:-1}
+    if(g.hp<=0)captureGhost(f,g);return;
+  }
+  const p=f.furniture.filter(q=>!q.searched&&Math.abs(q.x-hunter.x)<7).sort((a,b)=>Math.abs(a.x-hunter.x)-Math.abs(b.x-hunter.x))[0];
+  if(p){hunter.pose='sweep';hunter.sweepT++;p.shake=showFrame;if(hunter.sweepT>=Math.round(34*persona.linger)){hunter.sweepT=0;finishSweep(f,p)}}
+}
+
+function repossess(f,g){
+  const p=propById(f,g.destId);if(!p){captureGhost(f,g);return}
+  g.state='possessed';g.furnitureId=p.id;g.x=p.x;g.targetVent=p.x<80?1:-1;g.ventT=0;p.ghostId=g.id;p.searched=false;p.shake=showFrame;
+  stats.repossessions++;stats.planBreaks++;f.planBreak++;markEvent();art('possess',p.x,f.index,g.escapeN);
+  SHOW.offer({id:'possess',tier:1,at:showFrame,tag:'PLAN BROKEN'});fxDust(p.x,floorBase(f.index)-14,12,LILAC);
+  recomputePlan();updateRoomLights(f);
+}
+function stepGhosts(f){
+  for(const g of f.ghosts){
+    if(g.spookCd>0)g.spookCd--;
+    if(g.state==='possessed'||g.state==='captured')continue;
+    if(g.state==='venting'){
+      g.ventT++;if(g.ventT>=54)repossess(f,g);continue;
+    }
+    if(g.state==='stunned'){
+      g.stunT--;if(g.stunT<=0){g.state='flee';g.targetVent*=-1;g.face=g.targetVent}continue;
+    }
+    if(g.state==='arrival'){
+      const tx=g.destId!==null?(propById(f,g.destId)||{x:g.x}).x:(act.side===0?145:18);
+      const dir=Math.sign(tx-g.x);g.face=dir||g.face;g.x+=dir*(act.braced?.46:.64);
+      if(Math.abs(g.x-tx)<2){g.state='possessed';g.furnitureId=g.destId;const p=propById(f,g.destId);if(p){p.ghostId=g.id;p.searched=false;p.shake=showFrame}markEvent();art('possess',g.x,f.index,2);recomputePlan()}
+    }else if(g.state==='flee'){
+      const v=ventFor(f,g.targetVent),speed=(g.kind==='concierge'?.78:1.0)*Math.max(.7,1-g.escapeN*.08);
+      g.face=g.targetVent;g.x+=g.targetVent*speed;
+      if(Math.abs(g.x-hunter.x)<5&&g.spookCd<=0&&!hunter.beam){hunter.stun=24;hunter.vx=-g.targetVent*1.4;g.spookCd=90;stats.spooks++;markEvent();art('spook',hunter.x,f.index,0)}
+      if(Math.abs(g.x-v.x)<2){
+        if(v.sealed){v.sealed=false;g.state='stunned';g.stunT=120;g.hp-=35;stats.blocks++;markEvent();art('blocked',v.x,f.index,g.targetVent);
+          SHOW.offer({id:'block',tier:2,at:showFrame,tag:'ESCAPE BLOCKED'});fxBurst(v.x,floorBase(f.index)-25,16,MINT,1.7,.01)}
+        else{g.escapeN++;stats.escapes++;markEvent();const p=choosePossession(f,g);
+          if(!p||g.escapeN>=4){g.state='stunned';g.stunT=150;g.hp=Math.min(g.hp,35);g.x=v.x-g.targetVent*8;art('fatigue',g.x,f.index,0)}
+          else{g.state='venting';g.ventT=0;g.destId=p.id;g.x=v.x;stats.planBreaks++;f.planBreak++;art('vent',v.x,f.index,g.targetVent);SHOW.offer({id:'escape',tier:1,at:showFrame,tag:'THROUGH THE VENT!'});recomputePlan()}
+        }
+      }
+    }
+  }
+}
+
+function spawnBellhop(f){
+  const reserved=new Set(f.ghosts.filter(g=>g.state!=='captured'&&g.destId!==null).map(g=>g.destId));
+  const room=act.side===0?1:0,options=f.furniture.filter(p=>p.room===room&&p.ghostId===null&&!reserved.has(p.id));
+  const p=options[options.length-1]||f.furniture.find(p=>p.ghostId===null&&!reserved.has(p.id));if(!p)return;
+  const g={id:ghostSerial++,kind:'bellhop',state:'arrival',furnitureId:null,x:act.side===0?LEFT_VENT:RIGHT_VENT,
+    spawnX:act.side===0?LEFT_VENT:RIGHT_VENT,targetVent:act.side===0?1:-1,hp:78,maxHp:78,escapeN:0,ventT:0,
+    destId:p.id,stunT:0,face:act.side===0?1:-1,bob:31,spookCd:0};
+  f.ghosts.push(g);art('check-in',g.x,f.index,act.side);markEvent();stats.acts++;
+  SHOW.offer({id:'checkin',tier:2,at:showFrame,tag:act.braced?'AMBUSH READY':'UNINVITED GUEST'});fxBurst(g.x,floorBase(f.index)-18,18,LILAC,1.8,.01);
+}
+function stepAct(){
+  if(typeof globalThis.__NO_ACTS!=='undefined')return;
+  const f=activeFloor();if(!f||phase!=='active')return;
+  if(act.phase==='calm'&&runFrame>=act.warnAt){
+    act.phase='warn';act.t=0;act.floor=f.index;act.side=(f.index+act.count)&1;act.braced=false;planIds=[];
+    const n={kind:'act-warning',id:'midnight-checkin',at:showFrame,tag:runFrame,landsAt:showFrame+240};actNotes.push(n);SHOW.note(n);markEvent();art('warning',act.side===0?LEFT_VENT:RIGHT_VENT,f.index,act.side);
+  }else if(act.phase==='warn'&&++act.t>=240){
+    act.phase='live';act.t=0;const n={kind:'act-land',id:'midnight-checkin',at:showFrame,tag:runFrame};actNotes.push(n);SHOW.note(n);spawnBellhop(f);
+  }else if(act.phase==='live'&&++act.t>=480){
+    act.count++;act.phase='calm';act.t=0;act.warnAt=runFrame+3300+Math.floor(hash(runSeed+act.count*19,7)*900);
+    act.landAt=act.warnAt+240;act.endAt=act.landAt+480;act.braced=false;recomputePlan();
+  }
+}
+
+function stepPhase(){
+  const f=activeFloor();
+  if(phase==='active')return false;
+  const botAdmire=phase==='relight'&&pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'&&!playing()&&!manual();
+  hunter.action=false;hunter.beam=false;
+  if(botAdmire){
+    // The wing apex happens inside the relight phase, where the controller is
+    // intentionally offline. Honor the kernel's bot-only admire directive here
+    // so the hunter actually stops to watch the permanent lights come back on.
+    hunter.tactic='ADMIRE THE WING';hunter.pose='idle';hunter.vx=0;
+  }else{
+    hunter.tactic=phase==='relight'?'ROOMS RELIT':'ASCEND TO '+(currentFloor+2);
+    hunter.vx+=(Math.sign(80-hunter.x)*.72-hunter.vx)*.2;hunter.x=clamp(hunter.x+hunter.vx,6,154);hunter.walk+=Math.abs(hunter.vx);
+  }
+  if(phase==='relight'){
+    if(--phaseT<=0){phase='lift';phaseT=90;fromFloor=currentFloor;hunter.x=80;hunter.vx=0;ensureFloors(currentFloor+8)}
+  }else{
+    const p=1-phaseT/90;viewFloor=fromFloor+p;
+    if(--phaseT<=0){currentFloor=fromFloor+1;viewFloor=currentFloor;hunter.floor=currentFloor;hunter.x=80;hunter.vx=0;phase='active';
+      persona=PERSONAS[(runSeed+currentFloor)%PERSONAS.length];recomputePlan();markEvent()}
+  }
+  return true;
+}
+function stepWorld(){
+  runFrame++;stepAct();
+  if(!stepPhase()){
+    const f=activeFloor();repairPossessions(f);const intent=controller();applyIntent(intent);stepGhosts(f);repairPossessions(f);updateRoomLights(f);checkFloorClear(f);
+  }
+  // One quiet pulse every half second counts visible continuous pursuit without
+  // pretending it is story progress; the soak still requires captures/floors.
+  if(runFrame%30===0&&(Math.abs(hunter.vx)>.08||exposedGhosts(activeFloor()||{ghosts:[]}).length))markEvent();
+}
+function step(){
+  showFrame++;sessionStep({reset:resetGame});pres=SHOW.step(showFrame);
+  if(pres.holdWorld)stats.heldFrames++;else if(showFrame%pres.physicsEvery===0)stepWorld();
+  if(pres.physicsEvery>1)stats.slowedFrames++;if(pres.admire)stats.admireFrames++;
+  stepParts();
+}
+
+// ---------- authored renderer -------------------------------------------------
+function alpha(a,fn){const old=ctx.globalAlpha;ctx.globalAlpha=a;fn();ctx.globalAlpha=old}
+function poly(points,c){ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath();ctx.fill()}
+function actorWanted(id){const s=globalThis.__HH_VISUAL_ONLY_ACTOR;return s===undefined||s==='all'||s===id}
+function themeOf(f){return THEMES[f.theme]}
+function mixHex(a,b,t){t=clamp(t,0,1);const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16),c=s=>Math.round((A>>s&255)+((B>>s&255)-(A>>s&255))*t);return'#'+[c(16),c(8),c(0)].map(v=>v.toString(16).padStart(2,'0')).join('')}
+function drawNight(){
+  rect(0,0,W,H,INK);for(let i=0;i<5;i++)rect(0,TOP+i*(BOTTOM-TOP)/5,W,(BOTTOM-TOP)/5+1,mixHex('#0b1023','#17102a',i/4));
+  for(let i=0;i<28;i++){const x=hash(i*13,runSeed)*W,y=TOP+hash(i*7+5,runSeed)*(BOTTOM-TOP);alpha(.35+.45*Math.sin(showFrame*.035+i),()=>rect(x,y,i%7===0?2:1,1,'#dbe7ff'))}
+  const moonX=126,moonY=64;alpha(.12,()=>rect(moonX-12,moonY-12,24,24,'#c9dbff'));rect(moonX-5,moonY-6,10,12,'#e4ecff');rect(moonX-2,moonY-6,8,12,'#12162b');
+  // The facade is a vertical object even when the rooms are dark: masonry,
+  // cornice, drainpipes, and a procession of permanently relit windows.
+  rect(0,TOP,4,BOTTOM-TOP,'#21182a');rect(156,TOP,4,BOTTOM-TOP,'#120d19');
+  for(let y=TOP;y<BOTTOM;y+=12){rect(1,y,2,7,'#463149');rect(157,y+5,2,6,'#37243b')}
+}
+function drawFloorShell(f){
+  const y=floorTop(f.index);if(y>353||y+FLOOR_H<TOP-5)return;const t=themeOf(f),lit=f.lit?1:0;
+    const glow=f.lit?mixHex(t.wall,t.lit,.55):t.wall;
+  alpha(f.index>currentFloor?.72:1,()=>{
+    rect(3,y,154,FLOOR_H-1,SHADOW);rect(5,y+2,150,FLOOR_H-4,glow);rect(5,y+30,150,9,t.floor);
+    rect(5,y+37,150,3,t.trim);rect(5,y+40,150,4,'#090810');
+    rect(7,y+27,61,5,t.rug);rect(92,y+27,61,5,t.rug);
+    rect(68,y+2,24,36,'#0b0b14');rect(72,y+4,16,31,'#171424');rect(79,y+4,2,31,'#6d506f');
+    if(f.index===currentFloor||f.lit){rect(73,y+6,6,2,f.lit?GOLD:t.trim);rect(81,y+6,6,2,f.lit?GOLD:t.trim)}
+    rect(4,y,152,2,t.trim);rect(4,y+42,152,3,'#06060b');
+    if(f.theme===0){
+      rect(12,y+4,47,2,t.trim);rect(101,y+4,47,2,t.trim);
+      for(const x of[23,52,108,137]){rect(x,y+7,2,19,'#6b3140');rect(x-2,y+6,6,2,'#a9674d')}
+      // chandelier crystals make the lobby silhouette unmistakable.
+      rect(78,y+1,4,5,'#7a5b45');rect(74,y+6,12,2,GOLD);for(const x of[74,78,84])rect(x,y+8,2,4,'#e6b767');
+    }else if(f.theme===1){
+      for(const x of[11,47,99,135]){rect(x,y+5,17,14,'#0b1730');rect(x+2,y+7,13,10,'#183c63');rect(x+8,y+7,1,10,'#6d8fb1');rect(x+2,y+12,13,1,'#6d8fb1')}
+      for(let x=7;x<153;x+=8)rect(x,y+23,3,1,'#42607a');
+    }else if(f.theme===2){
+      for(let x=6;x<154;x+=8){rect(x,y+3,1,25,'#3a6863');rect(x,y+15,7,1,'#3a6863')}
+      ctx.strokeStyle='#8ccfc0';ctx.beginPath();ctx.moveTo(8,y+8);ctx.lineTo(64,y+8);ctx.lineTo(64,y+19);ctx.moveTo(96,y+11);ctx.lineTo(151,y+11);ctx.stroke();
+      for(const x of[31,115])alpha(.18+.08*Math.sin(showFrame*.05+x),()=>rect(x-8,y+2,16,19,'#c3fff1'));
+    }else{
+      rect(8,y+3,54,20,'#0b1028');rect(98,y+3,54,20,'#0b1028');
+      for(const x of[11,24,40,54,102,116,132,146])rect(x,y+5,1,1,'#dfe7ff');
+      poly([[8,y+3],[19,y+3],[15,y+23],[8,y+23]],'#6e365f');poly([[62,y+3],[51,y+3],[55,y+23],[62,y+23]],'#6e365f');
+      poly([[98,y+3],[109,y+3],[105,y+23],[98,y+23]],'#6e365f');poly([[152,y+3],[141,y+3],[145,y+23],[152,y+23]],'#6e365f');
+      rect(74,y+1,12,2,GOLD);for(let i=0;i<5;i++)rect(75+i*2,y+3+i%2,1,6,LILAC);
+    }
+    // Warm rooms are permanent progress and visibly different from a mere HUD tick.
+    for(let room=0;room<2;room++)if(f.roomLit[room]||f.lit){const x=room?92:5;alpha(.24+.06*Math.sin(showFrame*.04+f.index),()=>rect(x,y+2,63,34,t.lit));
+      rect(room?146:11,y+4,5,3,GOLD);rect(room?148:13,y+7,1,3,'#fff5c2')}
+    if(f.index===0){
+      const gy=y+44;rect(3,gy,154,50,'#17121d');rect(5,gy+2,150,47,'#272030');
+      for(let by=gy+4;by<gy+45;by+=7)for(let bx=7+(by/7&1)*5;bx<153;bx+=12){rect(bx,by,9,1,'#433248');rect(bx+9,by,1,6,'#17131d')}
+      rect(52,gy+5,56,7,'#6c2944');rect(57,gy+2,46,5,'#b86b55');rect(64,gy,32,3,GOLD);
+      ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText('THE GRAND LUMEN',80,gy+9);
+      rect(60,gy+14,40,27,'#0d1320');rect(63,gy+16,16,23,'#284b62');rect(81,gy+16,16,23,'#284b62');
+      rect(78,gy+15,4,25,GOLD);rect(66,gy+20,10,1,'#8fb4c7');rect(84,gy+20,10,1,'#8fb4c7');
+      for(let i=0;i<4;i++)rect(54+i*3,gy+40+i*2,52-i*6,2,mixHex('#7a6576','#2e2834',i/3));
+      for(const x of[14,132]){rect(x,gy+31,14,9,'#203a2c');rect(x+2,gy+27,10,7,'#315b3f');rect(x+6,gy+39,2,4,'#7d5a43')}
+      for(const x of[45,113]){rect(x,gy+13,2,16,'#805943');rect(x-3,gy+11,8,4,GOLD);rect(x-1,gy+12,4,2,CREAM)}
+    }
+    if(!f.lit&&f.index!==currentFloor)alpha(.45,()=>rect(5,y+2,150,36,'#080912'));
+  });
+}
+function drawVent(f,v){
+  const y=floorTop(f.index)+8,x=v.x;rect(x-5,y-4,10,8,'#0a0b12');rect(x-4,y-3,8,6,'#4c5360');
+  for(let i=-2;i<=2;i+=2)rect(x+i,y-2,1,4,'#151821');
+  if(v.sealed){alpha(.22+.1*Math.sin(showFrame*.2),()=>rect(x-7,y-6,14,12,MINT));rect(x-5,y-4,10,2,MINT);rect(x-1,y-6,2,10,CREAM)}
+  else if(v.charge){rect(x-5,y-5,10*v.charge/28,1,MINT)}
+}
+function propBase(f){return floorBase(f.index)}
+function drawFurniture(f,p){
+  const id='furniture-'+p.id,interactive=f.index===currentFloor||p.ghostId!==null;
+  // Active sweep targets and visibly possessed furniture are actors. Settled
+  // furniture on inactive floors is part of the built hotel, so actor-isolation
+  // plates keep that environment intact instead of erasing half the tower.
+  if(interactive&&!actorWanted(id))return;const y=propBase(f),t=themeOf(f),shake=p.ghostId!==null?Math.round(Math.sin(showFrame*.7+p.id)*1.3):0,x=p.x+shake;
+  const dark='#17131d',wood=f.theme===2?'#49736b':f.theme===3?'#51365f':'#65402e',hi=f.theme===2?'#8ccfc0':f.theme===3?LILAC:'#c88958';
+  ctx.save();ctx.translate(x,y);
+  alpha(.28,()=>{ctx.fillStyle=SHADOW;ctx.beginPath();ctx.ellipse(0,1,9,2,0,0,7);ctx.fill()});
+  if(p.type==='sofa'||p.type==='chaise'){rect(-11,-10,22,9,wood);rect(-10,-13,19,5,hi);rect(-9,-11,8,5,t.wall2);rect(1,-11,8,5,t.wall2);rect(-10,-1,3,3,dark);rect(7,-1,3,3,dark)}
+  else if(p.type==='clock'){rect(-4,-18,8,17,wood);rect(-5,-20,10,4,hi);rect(-3,-18,6,6,CREAM);rect(-1,-17,1,4,dark);rect(0,-15,2,1,dark);rect(-2,-9,4,6,'#a96f3c');rect(-1,-8,2,2,GOLD)}
+  else if(p.type==='urn'){rect(-3,-13,6,11,hi);rect(-5,-11,10,3,wood);rect(-4,-3,8,2,dark);rect(-2,-15,4,3,GOLD)}
+  else if(p.type==='desk'||p.type==='vanity'){rect(-11,-11,22,8,wood);rect(-10,-13,20,3,hi);rect(-9,-3,3,5,dark);rect(6,-3,3,5,dark);rect(-3,-10,6,5,t.wall2);if(p.type==='vanity'){rect(-7,-20,14,7,dark);rect(-5,-19,10,5,'#8ab0bb');rect(-1,-17,4,2,'#d2edf1')}}
+  else if(p.type==='cart'){rect(-9,-12,18,10,'#7a303e');rect(-8,-15,16,4,GOLD);rect(-7,-9,5,6,hi);rect(2,-9,5,6,hi);rect(-8,-1,4,3,dark);rect(4,-1,4,3,dark);rect(-10,-20,2,17,GOLD);rect(-10,-20,8,2,GOLD)}
+  else if(p.type==='chair'||p.type==='bench'){const w=p.type==='bench'?20:10;rect(-w/2,-10,w,7,wood);rect(-w/2,-14,w,5,hi);rect(-w/2+1,-3,2,5,dark);rect(w/2-3,-3,2,5,dark)}
+  else if(p.type==='bed'){rect(-12,-9,24,8,'#27465a');rect(-12,-13,7,5,CREAM);rect(-5,-12,16,4,t.rug);rect(-12,-1,3,3,dark);rect(9,-1,3,3,dark)}
+  else if(p.type==='lamp'){rect(-1,-17,2,16,hi);poly([[-5,-20],[5,-20],[3,-14],[-3,-14]],GOLD);rect(-4,-2,8,2,dark);rect(-2,-19,4,4,CREAM)}
+  else if(p.type==='wardrobe'||p.type==='cabinet'){rect(-8,-19,16,18,wood);rect(-7,-18,14,16,hi);rect(-6,-17,5,14,wood);rect(1,-17,5,14,wood);rect(-1,-11,2,2,GOLD);rect(-9,-20,18,3,dark)}
+  else if(p.type==='trunk'){rect(-8,-9,16,8,wood);rect(-7,-12,14,4,hi);rect(-8,-7,16,2,GOLD);rect(-1,-8,3,4,CREAM)}
+  else if(p.type==='plant'){rect(-5,-7,10,7,'#8a523d');rect(-4,-9,8,3,'#c27a53');for(const s of[-1,1]){poly([[0,-8],[s*7,-17],[s*4,-9]],'#47905f');poly([[0,-9],[s*3,-20],[s*1,-10]],'#68b875')}}
+  else if(p.type==='tub'){rect(-11,-10,22,9,'#8dc8c2');rect(-10,-12,20,4,CREAM);rect(-9,-9,18,4,'#3e8b89');rect(-9,-1,3,3,dark);rect(6,-1,3,3,dark);alpha(.35+.15*Math.sin(showFrame*.1+p.id),()=>rect(-6,-16,2,5,CREAM))}
+  else if(p.type==='boiler'){rect(-7,-18,14,17,'#466b6b');rect(-8,-17,16,13,'#365253');rect(-5,-14,10,7,'#223b3c');rect(-3,-12,6,4,CORAL);rect(-6,-3,3,4,dark);rect(3,-3,3,4,dark);rect(-2,-20,4,3,'#7fb4ac')}
+  else if(p.type==='hamper'){poly([[-6,-12],[6,-12],[5,-1],[-5,-1]],'#806b52');for(let i=-4;i<=4;i+=4)rect(i,-11,1,9,CREAM);rect(-7,-14,14,3,'#c5b58d')}
+  else if(p.type==='fountain'){rect(-7,-4,14,4,'#4b8d86');rect(-5,-8,10,5,'#83c9bd');rect(-2,-15,4,8,'#5aa39a');rect(-4,-18,8,4,'#a7e4d8');rect(-1,-20,2,4,CREAM);alpha(.35+.12*Math.sin(showFrame*.12+p.id),()=>{rect(-6,-13,2,6,ECTO);rect(4,-13,2,6,ECTO)})}
+  else if(p.type==='piano'){rect(-12,-15,24,13,'#17121f');rect(-11,-18,22,5,'#3c2850');rect(-10,-10,20,4,CREAM);for(let i=-8;i<9;i+=4)rect(i,-10,1,4,dark);rect(-10,-2,3,4,dark);rect(7,-2,3,4,dark)}
+  else if(p.type==='harp'){poly([[0,-20],[7,-2],[-6,-2],[-3,-5]],GOLD);ctx.strokeStyle=CREAM;for(let i=-3;i<=4;i+=2){ctx.beginPath();ctx.moveTo(i,-5);ctx.lineTo(i+2,-16);ctx.stroke()}rect(-7,-2,15,2,wood)}
+  else if(p.type==='table'){rect(-11,-12,22,4,wood);rect(-9,-8,18,5,'#713c65');rect(-8,-3,3,5,dark);rect(5,-3,3,5,dark);rect(-2,-16,4,4,GOLD);rect(-1,-19,2,4,CREAM)}
+  else if(p.type==='portrait'){rect(-7,-20,14,18,GOLD);rect(-5,-18,10,14,'#2b2444');rect(-2,-15,5,5,'#d2a27e');rect(-4,-9,8,4,'#653c62');rect(-1,-14,1,1,dark)}
+  else if(p.type==='globe'){rect(-1,-8,2,8,GOLD);ctx.fillStyle='#4d88a8';ctx.beginPath();ctx.arc(0,-14,6,0,7);ctx.fill();poly([[-5,-16],[-1,-19],[2,-15],[5,-13],[1,-10],[-3,-12]],'#69ad74');rect(-5,-1,10,2,wood)}
+  if(p.ghostId!==null){const blink=(showFrame+p.id*7)%70<12;rect(-2,-8,1,blink?1:2,ECTO);rect(2,-8,1,blink?1:2,ECTO);if((showFrame+p.id)%36<12)alpha(.18,()=>rect(-10,-20,20,19,LILAC))}
+  if(p.searched){rect(-3,-3,6,2,MINT);rect(-1,-5,2,5,CREAM)}
+  ctx.restore();
+}
+function ghostPosition(f,g){
+  const y=floorBase(f.index)-15;
+  if(g.state==='venting'){
+    const p=clamp(g.ventT/54,0,1),dest=propById(f,g.destId),end=dest?dest.x:(g.targetVent>0?145:18);
+    const x=p<.48?g.x+(80-g.x)*(p/.48):80+(end-80)*((p-.48)/.52);
+    return{x,y:floorTop(f.index)+7+Math.sin(p*Math.PI)*-5};
+  }
+  return{x:g.x,y:y+Math.sin((showFrame+g.bob)*.12)*(g.state==='stunned'?1:2)};
+}
+function drawGhost(f,g){
+  if(g.state==='captured'||g.state==='possessed')return;const id='ghost-'+g.id;if(!actorWanted(id))return;
+  const q=ghostPosition(f,g),boss=g.kind==='concierge',bell=g.kind==='bellhop',stun=g.state==='stunned';ctx.save();ctx.translate(Math.round(q.x),Math.round(q.y));
+  const face=g.face||1,stretch=g.state==='flee'?2:0;alpha(.22,()=>{ctx.fillStyle=LILAC;ctx.beginPath();ctx.ellipse(-face*2,7,boss?14:8,3,0,0,7);ctx.fill()});
+  if(boss){
+    poly([[-14,-7],[-9,-14],[9,-14],[14,-7],[11,7],[5,3],[0,9],[-5,3],[-11,7]],'#9d7be0');rect(-10,-13,20,10,'#c7a5ff');
+    rect(-9,-21,18,6,'#522e67');rect(-6,-24,12,4,'#8b4b86');rect(-3,-10,2,2,CREAM);rect(3,-10,2,2,CREAM);
+    rect(-5,-5,10,2,'#4b285b');rect(-7,-4,5,2,'#f0d5ff');rect(2,-4,5,2,'#f0d5ff');rect(-12,-1,4,7,GOLD);rect(8,-1,4,7,GOLD);
+  }else{
+    const body=bell?'#b18be8':g.kind==='rascal'?'#79dce9':ECTO;
+    poly([[-7-face*stretch,-6],[-4,-12],[4,-12],[7+face*stretch,-6],[6,5],[3,2],[0,7],[-3,2],[-6,5]],body);
+    rect(-4,-11,8,5,bell?'#d5b7ff':'#c9ffff');rect(-3,-9,2,2,SHADOW);rect(2,-9,2,2,SHADOW);
+    if(g.kind==='rascal'){rect(-6,-14,12,3,'#3c6680');rect(face*4,-7,4,2,CORAL)}
+    if(bell){rect(-6,-16,12,4,'#6d3d79');rect(-3,-19,6,4,'#9a558e');rect(-1,-5,3,2,GOLD);rect(-8,-2,3,6,'#7b5630')}
+    if(stun){for(const x of[-5,0,5])rect(x,-17-Math.abs(x)/3,2,2,GOLD)}
+  }
+  ctx.restore();
+}
+function drawHunter(f){
+  if(!actorWanted('hunter'))return;const x=hunter.x,y=floorBase(f.index)-8,face=hunter.face,walk=Math.floor(hunter.walk/3)&1;
+  ctx.save();ctx.translate(Math.round(x),Math.round(y));alpha(.32,()=>{ctx.fillStyle=SHADOW;ctx.beginPath();ctx.ellipse(0,7,7,2,0,0,7);ctx.fill()});
+  if(hunter.stun>0){ctx.rotate((showFrame&1)?.12:-.12);rect(-5,0,10,5,'#245f54');rect(-3,-7,7,7,'#d7a17c');rect(-5,-10,10,4,'#315d4d');rect(-7,4,6,3,'#1a2730');rect(1,4,6,3,'#1a2730');rect(-7,-13,2,4,GOLD);rect(5,-14,2,4,GOLD);ctx.restore();return}
+  const lean=hunter.pose==='vacuum'?face:0;
+  // articulated legs, boots, coat, head/nose, cap, backpack, and hose nozzle.
+  rect(-4+lean,1+(walk?1:0),4,6,'#263844');rect(0+lean,1+(walk?0:1),4,6,'#1b2a35');rect(-5+lean,6+(walk?1:0),5,2,'#0b1119');rect(0+lean,6+(walk?0:1),5,2,'#0b1119');
+  rect(-5+lean,-6,10,8,'#287b66');rect(-4+lean,-5,8,6,'#3d9c78');rect(-3+lean,-1,6,2,MINT);rect(-face*7+lean,-5,4,8,'#56345f');rect(-face*8+lean,-3,2,5,LILAC);
+  rect(-3+lean,-12,7,6,'#d9a27e');rect(-face*4+lean,-10,3,3,'#70462f');rect(face*3+lean,-10,3,2,'#e7b08b');rect(face*3+lean,-9,1,1,SHADOW);
+  rect(-5+lean,-15,10,4,'#255543');rect(-2+lean,-17,7,3,'#377b60');rect(face*4+lean,-14,5,2,'#255543');
+  if(hunter.pose==='sweep'){const sw=Math.sin((hunter.sweepT+showFrame*.25)*.55)>0?1:-1;
+    rect(face*4,-5+sw,5,2,GOLD);rect(face*8,-4+sw,2,8,'#a57b4e');rect(face*9,3+sw,4,2,MINT);
+    alpha(.35,()=>rect(face*(11+sw*2),2-sw,5,1,ECTO))}
+  else{ctx.strokeStyle='#b3c7c8';ctx.beginPath();ctx.moveTo(-face*5,-1);ctx.quadraticCurveTo(-face*9,2,-face*5,5);ctx.stroke();rect(face*4,-5,5,3,'#26313d');rect(face*8,-6,3,5,hunter.action?GOLD:'#8aa0a4')}
+  if(hunter.pose==='brace'){rect(-7,-14,2,5,GOLD);rect(5,-14,2,5,GOLD)}
+  ctx.restore();
+}
+function drawVacuumBeam(f){
+  if(!hunter.beam)return;const y=floorBase(f.index)-13,x1=hunter.x+hunter.face*9,x2=hunter.beamX;
+  alpha(.16,()=>poly([[x1,y-2],[x2,y-7],[x2,y+7],[x1,y+2]],ECTO));ctx.strokeStyle=CREAM;ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+  for(let i=0;i<5;i++){const p=((showFrame*.08+i*.2)%1),x=x2+(x1-x2)*p;rect(x,y+Math.sin(p*12+showFrame*.2)*3,1,1,i&1?MINT:ECTO)}
+}
+function drawSweepArc(f){
+  if(hunter.pose!=='sweep')return;const y=floorBase(f.index)-5,phase=(hunter.sweepT+showFrame*.25)*.55,side=hunter.face,
+    reach=9+Math.sin(phase)*3,x=hunter.x+side*7;
+  ctx.strokeStyle=MINT;ctx.beginPath();ctx.arc(x,y,Math.abs(reach),side>0?-.9:Math.PI-.9,side>0?.9:Math.PI+.9);ctx.stroke();
+  for(let i=0;i<4;i++){const a=-.7+i*.45+(side<0?Math.PI:0);rect(x+Math.cos(a)*(8+i%2*3),y+Math.sin(a)*(8+i%2*3),2,1,i&1?ECTO:GOLD)}
+}
+function currentTargetX(){return Number.isFinite(hunter.targetX)?hunter.targetX:hunter.x}
+function drawPlan(f){
+  if(globalThis.__HH_HIDE_ROUTE||f.index!==currentFloor||phase!=='active')return;const y=floorTop(f.index)+25,points=[hunter.x,currentTargetX()];
+  for(const id of planIds.slice(0,3)){const p=propById(f,id);if(p&&!points.includes(p.x))points.push(p.x)}
+  ctx.strokeStyle=act.phase==='warn'?CORAL:MINT;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(points[0],y);for(let i=1;i<points.length;i++)ctx.lineTo(points[i],y-(i%2)*3);ctx.stroke();ctx.setLineDash([]);
+  for(let i=1;i<points.length;i++){ctx.fillStyle=i===1?CREAM:MINT;ctx.beginPath();ctx.arc(points[i],y-(i%2)*3,i===1?3:2,0,7);ctx.fill();if(i<4){ctx.fillStyle=SHADOW;ctx.font='bold 5px monospace';ctx.fillText(''+i,points[i]-1.5,y-(i%2)*3+2)}}
+  if(f.planBreak>0&&showFrame%90<42){ctx.fillStyle=CORAL;ctx.font='bold 6px monospace';ctx.fillText('PLAN BROKEN',80,y-13)}
+}
+function drawAct(f){
+  if(act.phase==='calm'||act.floor!==f.index)return;const y=floorTop(f.index),doorX=act.side===0?5:155,pulse=.45+.35*Math.sin(showFrame*.22);
+  if(act.phase==='warn'){
+    alpha(.08+pulse*.06,()=>rect(5,y+2,150,36,CORAL));rect(doorX+(act.side===0?0:-4),y+4,4,31,'#7d3155');
+    for(let i=0;i<3;i++)rect(doorX+(act.side===0?5:-8),y+7+i*9,3,3,i&1?CREAM:CORAL);
+    const sec=Math.max(0,Math.ceil((240-act.t)/60));rect(45,y+6,70,12,'rgba(8,5,12,.88)');ctx.strokeStyle=CORAL;ctx.strokeRect(45.5,y+6.5,69,11);ctx.fillStyle=CREAM;ctx.font='bold 6px monospace';ctx.fillText('MIDNIGHT CHECK-IN '+sec,80,y+14);
+  }else{alpha(.12,()=>rect(5,y+2,150,36,LILAC));for(let x=8;x<153;x+=18)rect(x,y+3+((showFrame+x)>>3)%4,8,1,LILAC)}
+}
+function drawArtEvents(){
+  for(const e of artEvents){const age=showFrame-e.at;if(age<0||age>110)continue;const y=floorBase(e.floor)-15,fade=clamp(1-age/110,0,1);
+    if(e.kind==='reveal'){alpha(fade*.5,()=>{ctx.strokeStyle=ECTO;ctx.beginPath();ctx.arc(e.x,y,4+age*.45,0,7);ctx.stroke();for(let i=0;i<8;i++){const a=i*Math.PI/4;rect(e.x+Math.cos(a)*(5+age*.25),y+Math.sin(a)*(5+age*.25),2,2,i&1?ECTO:CREAM)}})}
+    else if(e.kind==='possess'||e.kind==='vent'){alpha(fade,()=>{ctx.strokeStyle=LILAC;ctx.beginPath();ctx.moveTo(e.x-14,y-13);ctx.quadraticCurveTo(e.x,y-24,e.x+14,y-13);ctx.stroke();rect(e.x-10+age*.25,y-10,5,1,LILAC);rect(e.x+5-age*.25,y-7,5,1,ECTO)})}
+    else if(e.kind==='capture'){alpha(fade,()=>{for(let i=0;i<12;i++){const a=i*.9+age*.12,r=3+age*.18;rect(e.x+Math.cos(a)*r,y+Math.sin(a)*r,2,2,i%3?ECTO:GOLD)}ctx.strokeStyle=CREAM;ctx.beginPath();ctx.arc(e.x,y,5+age*.35,0,7);ctx.stroke()})}
+    else if(e.kind==='floor-relight'){
+      const top=floorTop(e.floor),reach=Math.min(150,age*4);alpha(clamp(.35-age*.003,0,.35),()=>rect(5,top+2,reach,36,GOLD));
+      if(age<65){rect(28,top+8,104,20,'rgba(8,7,12,.86)');ctx.strokeStyle=GOLD;ctx.strokeRect(28.5,top+8.5,103,19);ctx.fillStyle=CREAM;ctx.font='bold 8px monospace';ctx.fillText((e.value%4===0?'WING':'FLOOR '+e.value)+' RELIT',80,top+21)}
+    }else if(e.kind==='spook'){alpha(fade,()=>{for(const x of[-8,-3,3,8])rect(e.x+x,y-18-Math.abs(x)/3,2,3,GOLD)})}
+    else if(e.kind==='lapse'&&age<45){ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText('?',e.x,y-20-age*.05)}
+    else if(e.kind==='check-in'){alpha(fade*.65,()=>{rect(5,y-20,150,2,LILAC);rect(5+age*2,y-18,18,1,CREAM)})}
+  }
+}
+function drawHud(){
+  rect(0,0,W,TOP,INK);rect(4,4,152,35,'#111424');rect(6,6,148,31,'#1a1c31');rect(8,8,3,27,GOLD);
+  ctx.textAlign='left';ctx.fillStyle=CREAM;ctx.font='bold 10px monospace';ctx.fillText('HOTEL HAUNT',15,16);
+  const f=activeFloor(),t=f?themeOf(f):THEMES[0];ctx.fillStyle=t.trim;ctx.font='5px monospace';ctx.fillText((f?f.name:'LOBBY')+' / '+persona.name,15,23);
+  ctx.fillStyle='#727b9c';ctx.fillText('FLOOR',15,32);ctx.fillStyle=GOLD;ctx.font='bold 7px monospace';ctx.fillText(('0'+(currentFloor+1)).slice(-2),39,33);
+  ctx.fillStyle='#727b9c';ctx.font='5px monospace';ctx.fillText('CAP',57,32);ctx.fillStyle=ECTO;ctx.font='bold 7px monospace';ctx.fillText(''+stats.captures,76,33);
+  ctx.fillStyle='#727b9c';ctx.font='5px monospace';ctx.fillText('RELIT',99,32);for(let i=0;i<5;i++){rect(127+i*5,27,3,6,'#30344d');if(i<Math.min(5,stats.floors))rect(127+i*5,27,3,6,GOLD)}
+  rect(0,BOTTOM,W,H-BOTTOM,INK);rect(4,BOTTOM+3,152,28,'#111424');rect(6,BOTTOM+5,148,24,'#1a1d30');rect(8,BOTTOM+7,2,20,act.phase==='warn'?CORAL:MINT);
+  ctx.fillStyle='#77809d';ctx.font='5px monospace';ctx.fillText('CONTAINMENT PLAN',14,BOTTOM+12);ctx.fillStyle=act.phase==='warn'?CORAL:CREAM;ctx.font='bold 7px monospace';ctx.fillText(hunter.tactic.slice(0,29),14,BOTTOM+21);
+  ctx.fillStyle='#8d95ad';ctx.font='5px monospace';const f2=activeFloor(),left=f2?liveGhosts(f2).length:0;
+  ctx.fillText('GHOSTS '+left+'  WARDS '+stats.wards+'  ESCAPES '+stats.escapes,14,BOTTOM+28);
+  ctx.textAlign='right';ctx.fillStyle=persona.name==='SHOWMAN'?LILAC:MINT;ctx.fillText(phase==='active'?'LIVE SWEEP':phase.toUpperCase(),151,BOTTOM+12);ctx.textAlign='center';
+  if(pres.cue){const c=pres.cue.tier===3?GOLD:pres.cue.id==='possess'?CORAL:ECTO;rect(28,BOTTOM+5,104,18,'rgba(5,5,10,.94)');ctx.strokeStyle=c;ctx.strokeRect(28.5,BOTTOM+5.5,103,17);ctx.fillStyle=c;ctx.font='bold 7px monospace';ctx.fillText(pres.cue.tag||'',80,BOTTOM+17)}
+  drawSession();
+}
+function render(){
+  drawNight();preDraw();ctx.save();
+  for(const f of floors)drawFloorShell(f);
+  for(const f of floors){const y=floorTop(f.index);if(y>353||y+FLOOR_H<TOP-5)continue;for(const v of f.vents)drawVent(f,v);for(const p of f.furniture)drawFurniture(f,p)}
+  const f=activeFloor();if(f){drawAct(f);drawPlan(f);drawVacuumBeam(f);drawSweepArc(f);for(const g of f.ghosts)drawGhost(f,g);drawHunter(f)}
+  drawParts();drawArtEvents();ctx.restore();postDraw();drawHud();
+}
+
+// ---------- deterministic proof and visual-fixture surfaces -------------------
+function ghostSnapshot(g){return[g.id,g.kind,g.state,+g.x.toFixed(3),g.furnitureId,g.targetVent,+g.hp.toFixed(2),g.escapeN,g.ventT,g.destId,g.stunT]}
+function floorSnapshot(f){return[f.index,f.lit,f.roomLit.slice(),f.vents.map(v=>[v.sealed,v.charge]),f.furniture.map(p=>[p.id,p.searched,p.ghostId]),f.ghosts.map(ghostSnapshot),f.planBreak]}
+function signature(){return JSON.stringify({runSeed,skillSeed,runFrame,currentFloor,phase,phaseT,h:[+hunter.x.toFixed(3),+hunter.vx.toFixed(3),hunter.stun,hunter.pose],
+  floors:floors.filter(f=>Math.abs(f.index-currentFloor)<3).map(floorSnapshot),stats:{floors:stats.floors,captures:stats.captures,reveals:stats.reveals,sweeps:stats.sweeps,
+    escapes:stats.escapes,repossessions:stats.repossessions,wards:stats.wards,blocks:stats.blocks,spooks:stats.spooks,lapses:stats.lapses,events:stats.events,progress:stats.progress},
+  eventSerial,progressSerial,planIds:planIds.slice(),act:[act.phase,act.warnAt,act.t,act.count,act.floor,act.side,act.braced]})}
+function physical(){const f=activeFloor();return JSON.stringify({runFrame,currentFloor,phase,h:[+hunter.x.toFixed(3),+hunter.vx.toFixed(3),hunter.stun],
+  ghosts:f?f.ghosts.filter(g=>g.state!=='possessed'&&g.state!=='captured').map(g=>[g.state,+g.x.toFixed(3),+g.hp.toFixed(2)]):[]})}
+function probe(){const f=activeFloor(),show=SHOW.probe();return{showFrame,runFrame,runSeed,currentFloor,viewFloor,phase,persona:persona.name,
+  hunter:{x:hunter.x,vx:hunter.vx,pose:hunter.pose,tactic:hunter.tactic,targetX:hunter.targetX,stun:hunter.stun,intent:hunter.intent&&{...hunter.intent}},
+  floor:f?{index:f.index,lit:f.lit,rooms:f.roomLit.slice(),vents:f.vents.map(v=>({...v})),furniture:f.furniture.map(p=>({...p})),ghosts:f.ghosts.map(g=>({...g})),planBreak:f.planBreak}:null,
+  plan:planIds.slice(),planVersion,stats:{...stats},events:eventSerial,progress:progressSerial,act:{...act},actNotes:actNotes.slice(),show,
+  finite:finiteNumbers([showFrame,runFrame,currentFloor,viewFloor,hunter.x,hunter.vx,stats.distance,...(f?f.ghosts.flatMap(g=>[g.x,g.hp,g.ventT]):[])])}}
+function plannerFixture(){const f=activeFloor(),before=signature(),a=computeSweepPlan(f,hunter.x,true),b=computeSweepPlan(f,hunter.x,true),baseline=computeSweepPlan(f,hunter.x,false),after=signature();return{before,after,a,b,baseline,repeat:JSON.stringify(a)===JSON.stringify(b),pure:before===after}}
+function armActFixture(){
+  const f=activeFloor();phase='active';hunter.x=80;hunter.vx=0;hunter.stun=0;for(const g of f.ghosts)if(g.state!=='captured'){g.state='possessed';const p=propById(f,g.furnitureId)||f.furniture[0];g.furnitureId=p.id;g.x=p.x;p.ghostId=g.id}
+  act={phase:'calm',warnAt:runFrame+1,landAt:runFrame+241,endAt:runFrame+721,count:0,t:0,floor:f.index,side:0,braced:false};actNotes=[];SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};recomputePlan();return true;
+}
+function intentFixture(){const old={right:keys.right,left:keys.left,a:keys.a,b:keys.b};const bot=rawBotIntent();keys.right=true;keys.left=false;keys.a=true;const human=humanIntent();Object.assign(keys,old);return{bot,human,botKeys:Object.keys(bot).sort(),humanKeys:Object.keys(human).sort()}}
+
+function resetFixtureFloor(index){
+  ensureFloors(index+5);currentFloor=index;viewFloor=index;hunter.floor=index;hunter.x=80;hunter.vx=0;hunter.stun=0;hunter.walk=18;hunter.pose='walk';hunter.tactic='READ THE FLOOR';hunter.targetX=120;hunter.face=1;hunter.action=false;hunter.beam=false;
+  phase='active';phaseT=0;artEvents=[];planIds=[];planVersion++;act={phase:'calm',warnAt:999999,landAt:1000239,endAt:1000719,count:0,t:0,floor:index,side:0,braced:false};
+  SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+  for(const floor of floors){const cleared=floor.index<index;floor.lit=cleared;floor.roomLit=[cleared,cleared];floor.roomEver=[cleared,cleared];floor.planBreak=0;
+    if(cleared){for(const p of floor.furniture){p.searched=true;p.ghostId=null;p.shake=0}for(const g of floor.ghosts){g.state='captured';g.hp=0;g.furnitureId=null;g.destId=null}}}
+  const f=activeFloor();for(const p of f.furniture){p.searched=false;p.ghostId=null;p.shake=0}for(let i=0;i<f.ghosts.length;i++){const g=f.ghosts[i],p=f.furniture[i?4:1];Object.assign(g,{state:'possessed',furnitureId:p.id,x:p.x,spawnX:p.x,targetVent:p.x<80?1:-1,hp:g.maxHp,escapeN:0,ventT:0,destId:null,stunT:0,face:p.x<80?1:-1});p.ghostId=g.id}
+  for(const v of f.vents){v.sealed=false;v.charge=0}recomputePlan();return f;
+}
+function setVisualBeat(name){
+  const allowed=['opening','plan','sweep-a','sweep-b','possessed','reveal-before','reveal','danger','vent','relight-before','relight','suites','later','warning-calm','warning','act-land','penthouse','apex-before','apex'];if(!allowed.includes(name))return false;visualFixture=name;
+  let f=resetFixtureFloor(name==='suites'?1:name==='later'?2:(name==='penthouse'||name.startsWith('apex'))?3:0),g=f.ghosts[0],p=f.furniture[1];
+  if(name==='opening'){hunter.x=78;hunter.targetX=RIGHT_VENT;hunter.tactic='SEAL EAST VENT';planIds=[p.id,f.furniture[4].id]}
+  else if(name==='plan'){hunter.x=35;hunter.targetX=RIGHT_VENT;hunter.tactic='SEAL EAST VENT';planIds=[p.id,f.furniture[0].id,f.furniture[4].id];f.vents[1].charge=24}
+  else if(name==='sweep-a'||name==='sweep-b'){hunter.x=p.x;hunter.targetX=p.x;hunter.tactic='SWEEP WEST ROOM';hunter.pose='sweep';hunter.action=true;hunter.sweepT=name==='sweep-a'?2:8;p.shake=showFrame+(name==='sweep-b'?1:0);planIds=[p.id,f.furniture[4].id]}
+  else if(name==='possessed'){hunter.x=30;hunter.targetX=p.x;hunter.tactic='FURNITURE MOVED';p.shake=showFrame;art('possess',p.x,f.index,1);planIds=[p.id]}
+  else if(name==='reveal-before'||name==='reveal'){hunter.x=31;hunter.targetX=p.x;hunter.tactic='SWEEP WEST ROOM';if(name==='reveal'){p.ghostId=null;p.searched=true;g.state='flee';g.furnitureId=null;g.x=p.x+7;g.spawnX=p.x;g.targetVent=1;g.face=1;art('reveal',p.x,f.index,1)}planIds=[p.id,f.furniture[4].id]}
+  else if(name==='danger'){hunter.x=56;hunter.face=1;hunter.pose='vacuum';hunter.beam=true;hunter.beamX=91;hunter.targetX=112;hunter.tactic='CUT OFF EAST VENT';g.kind='rascal';g.state='flee';g.furnitureId=null;g.x=91;g.spawnX=p.x;g.targetVent=1;g.face=1;p.ghostId=null;p.searched=true;f.planBreak=2;planIds=[f.furniture[4].id,f.furniture[5].id];art('spook',hunter.x,f.index,0)}
+  else if(name==='vent'){hunter.x=72;hunter.targetX=RIGHT_VENT-16;hunter.tactic='PLAN BROKEN';g.state='venting';g.furnitureId=null;g.x=RIGHT_VENT;g.spawnX=p.x;g.targetVent=1;g.ventT=26;g.destId=f.furniture[5].id;p.ghostId=null;p.searched=true;f.planBreak=3;art('vent',RIGHT_VENT,f.index,1)}
+  else if(name==='relight-before'||name==='relight'){for(const q of f.furniture){q.searched=true;q.ghostId=null}for(const q of f.ghosts)q.state='captured';phase='relight';phaseT=999;f.roomLit=name==='relight'?[true,true]:[false,false];f.lit=name==='relight';hunter.x=80;hunter.tactic=name==='relight'?'FLOOR RELIT':'LAST GHOST';if(name==='relight')art('floor-relight',80,f.index,1)}
+  else if(name==='suites'){hunter.x=42;hunter.targetX=RIGHT_VENT;hunter.tactic='SWEEP MOONLIGHT SUITE';planIds=[f.furniture[1].id,f.furniture[4].id];f.vents[1].charge=18}
+  else if(name==='later'){hunter.x=105;hunter.targetX=LEFT_VENT;hunter.tactic='SEAL WEST VENT';planIds=[f.furniture[4].id,f.furniture[0].id];f.vents[0].sealed=true}
+  else if(name==='warning-calm'||name==='warning'){hunter.x=80;hunter.targetX=name==='warning'?132:101;hunter.tactic=name==='warning'?'BRACE MIDNIGHT CHECK-IN':'SWEEP EAST ROOM';act.phase=name==='warning'?'warn':'calm';act.floor=f.index;act.side=0;act.t=96;planIds=[f.furniture[4].id]}
+  else if(name==='act-land'){hunter.x=126;hunter.pose='vacuum';hunter.action=true;hunter.beam=true;hunter.beamX=42;hunter.tactic='INTERCEPT THE BELLHOP';act.phase='live';act.floor=f.index;act.side=0;act.t=26;const dest=f.furniture[5];g.kind='bellhop';g.state='arrival';g.furnitureId=null;g.x=42;g.destId=dest.id;g.face=1;p.ghostId=null;art('check-in',LEFT_VENT,f.index,0)}
+  else if(name==='penthouse'){g=f.ghosts.find(q=>q.kind==='concierge')||f.ghosts[1];p=f.furniture[4];for(const q of f.furniture)q.ghostId=null;g.kind='concierge';g.state='flee';g.furnitureId=null;g.x=112;g.spawnX=39;g.targetVent=1;g.face=-1;g.hp=88;p.ghostId=null;hunter.x=72;hunter.pose='vacuum';hunter.beam=true;hunter.beamX=g.x;hunter.targetX=RIGHT_VENT-16;hunter.tactic='CONTAIN THE CONCIERGE';planIds=[p.id];art('reveal',g.x,f.index,2)}
+  else if(name==='apex-before'||name==='apex'){for(const q of f.furniture){q.searched=true;q.ghostId=null}for(const q of f.ghosts)q.state='captured';phase='relight';phaseT=999;hunter.x=80;hunter.tactic='WING SECURE';f.roomLit=name==='apex'?[true,true]:[false,false];f.lit=name==='apex';if(name==='apex'){art('floor-relight',80,f.index,4);pres={cue:{id:'wing',tier:3,tag:'WING RELIT'},t:5,holdWorld:true,physicsEvery:1,admire:true};fxBurst(80,floorBase(f.index)-16,72,LILAC,2.8,.02);fxDust(80,floorBase(f.index)-20,24,GOLD)}}
+  return true;
+}
+function actorBox(id,x,y,width,height,kind,type){return{id,kind,type,box:{x:x-width/2,y:y-height,width,height}}}
+function visualProbe(){
+  const f=activeFloor(),base=floorBase(f.index),actors=[];
+  const visible=box=>box.x+box.width>0&&box.x<W&&box.y+box.height>TOP&&box.y<BOTTOM;
+  const add=(actor,floor,scope)=>{actor.floor=floor;actor.scope=scope;if(visible(actor.box))actors.push(actor)};
+  add(actorBox('hunter',hunter.x+.5,base+1,20,32,'standard','hunter'),f.index,'active');
+  for(const p of f.furniture){const shake=p.ghostId!==null?Math.round(Math.sin(showFrame*.7+p.id)*1.3):0;add(actorBox('furniture-'+p.id,p.x+shake,base+4,24,24,'structure',p.type),f.index,'active')}
+  for(const g of f.ghosts)if(g.state!=='possessed'&&g.state!=='captured'){const q=ghostPosition(f,g),boss=g.kind==='concierge';add(actorBox('ghost-'+g.id,q.x,q.y+10,boss?34:20,boss?34:30,boss?'boss':'standard',g.kind),f.index,'active')}
+  // The tower previews unresolved danger above the hunter: only furniture that
+  // is visibly possessed (eyes + twitch) remains actor-like off the active floor.
+  // Cleared/static furniture is environmental density and is intentionally not
+  // part of the combined actor-footprint contract.
+  for(const floor of floors)if(floor.index!==f.index)for(const p of floor.furniture)if(p.ghostId!==null){const shake=Math.round(Math.sin(showFrame*.7+p.id)*1.3),b=actorBox('furniture-'+p.id,p.x+shake,floorBase(floor.index)+4,24,24,'structure',p.type);add(b,floor.index,'visible-possession')}
+  const approaches=f.furniture.map(p=>{const side=p.x<80?1:-1,contact=side>0?RIGHT_VENT:LEFT_VENT,goal=side>0?160:0,reported=Math.abs(contact-p.x)/Math.abs(goal-p.x);return{id:'prop-'+p.id,axis:'x',visibleSpawn:p.x,contact,goal,reported}});
+  return{fixture:visualFixture,finite:probe().finite,floor:f.index,theme:themeOf(f).name,lit:f.lit,rooms:f.roomLit.slice(),act:act.phase,cue:pres.cue&&pres.cue.id,
+    planPoints:[hunter.x,currentTargetX(),...planIds.slice(0,3).map(id=>(propById(f,id)||{x:hunter.x}).x)],planVersion,planBreak:f.planBreak,
+    possession:f.furniture.filter(p=>p.ghostId!==null).map(p=>p.id),ghostStates:f.ghosts.map(g=>g.state),actors,
+    hunterBox:actors.find(a=>a.id==='hunter').box,ghostBox:(actors.find(a=>a.id.startsWith('ghost-'))||{}).box||null,
+    furnitureBox:actors.find(a=>a.kind==='structure').box,layout:{playfield:{x:0,y:TOP,width:160,height:BOTTOM-TOP},approaches}};
+}
+
+globalThis.__hotelHauntProbe=probe;
+globalThis.__hotelHauntSignature=signature;
+globalThis.__hotelHauntPhysical=physical;
+globalThis.__hotelHauntPlannerFixture=plannerFixture;
+globalThis.__hotelHauntArmActFixture=armActFixture;
+globalThis.__hotelHauntIntentFixture=intentFixture;
+globalThis.__hotelHauntNextRandom=()=>E.random();
+globalThis.__hotelHauntReset=resetGame;
+globalThis.__hotelHauntSetVisualBeat=setVisualBeat;
+globalThis.__hotelHauntVisualProbe=visualProbe;
+globalThis.__soakProbe=()=>({sig:Math.round(hunter.x*10)+currentFloor*2000+Math.round(viewFloor*100),events:eventSerial,progress:progressSerial,finite:probe().finite});
+
+initSession('hotel-haunt',[['ARROWS','MOVE'],['X / SPACE','SWEEP · VACUUM · SEAL'],['ESC','RETURN TO AUTOPILOT']],{viewer:true});
+resetGame();start(step,render);
+</script>
+</html>

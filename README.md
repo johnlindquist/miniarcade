@@ -1,6 +1,6 @@
 # SIDE/QUEST runtime
 
-Twenty-four self-playing 160×360 games designed for the 4:9 side column beside 4:3 video.
+Twenty-six self-playing 160×360 games designed for the 4:9 side column beside 4:3 video.
 
 ## Layers
 

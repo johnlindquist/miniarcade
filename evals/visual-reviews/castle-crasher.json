@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "game": "castle-crasher",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "ad2af3441951293307fd55e3b0ba7f7a16f582960dd718dce9682e2cb20f3edf",
+  "gameSha256": "01ed979cdb03666b5f0ff5b14c6d39d9fbce2f92c36cdc8789d6965032e8e36c",
+  "seed": "0xcc451e",
+  "checkpoints": [
+    "opening@12",
+    "announce@12",
+    "crew@8",
+    "flight@12",
+    "danger@12",
+    "collapse@24",
+    "warning@12",
+    "later@12",
+    "apex@24"
+  ],
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size montage and 60-second render review",
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 the six 13-15px-wide engineers remain distinct through helmets, tools, kingdom colors, facing, pointing, cranking, loading, hammering, and bracing; crowned monarchs duck, stagger, and cheer. Four sub-24px siege machines have materially different silhouettes and moving working parts, matching the references' tiny articulated character floor."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The battlefield reads as a built heraldic cutaway with modular masonry, parapets, banners, cliff layers, foreground teeth, landmarks, atmospheric particles, and value-separated sky and ground. Orchard windmill, gorge waterfall, frost observatory, and foundry stacks each communicate place with the HUD mentally removed."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Progress changes composition rather than only color: the orchard centers a windmill over green ravines, the gorge installs a luminous waterfall and flooded shelves, frost builds an aurora-backed telescope over ice spires, and the foundry replaces them with smoke columns, basalt terraces, and ember haze."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The inspected 60-second render shows work cycles before the call, arm flex and recoil, spinning projectiles leaving the forecast, crew and monarch reactions, rotating masonry with secondary falls, impact rings and dust, gust lines, and a wide breach wave with rays and pennants. Anticipation, execution, collapse, and aftermath are all visible."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The full-width dotted arc, boxed support, hatched expected-collapse cone, expected count, and SHORT/TRUE/FORTUNE outcome survive native size. Both projectile approaches measure 80%, normal actor footprint stays near 7%, Amber and Azure remain separable, and the active tactic and kingdom stay legible without crowding the open field."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Warm timber-and-sandstone Amber and cool slate-and-metal Azure share one modular siege-broadcast language: heraldic flags, masonry units, engineered machines, dotted forecast graphics, compact navy HUD, safety-gold targets, and geometric payoff effects all reinforce the announced-shot premise."
+    }
+  }
+}
