@@ -75,29 +75,41 @@ for(let run=1;run<=3;run++){
   const sum=k=>p.stats.reduce((a,s)=>a+s[k],0);
   const ds=sum('driftStarts'),bo=sum('driftBoostOuts'),att=sum('demoAttempts'),lp=sum('lapses');
   const lu=sum('lineupDrifts'),lt=sum('lineupTouches');
-  const ws=sum('wallSaves'),wc=sum('wallCrashes');
+  const ws=sum('wallSaves'),wc=sum('wallCrashes'),dm=sum('driftManeuvers');
   const share=sum('hardTurnDrifts')/Math.max(1,sum('hardTurns'));
+  const maxSlip=Math.max(...p.stats.map(s=>s.maxHeldSlip));
   console.log(`  run ${run}: ${p.goals[0]}-${p.goals[1]} goals, ${p.matches} matches, ${p.demos} demos, `+
-    `${ds} drifts (${bo} boost-outs, ${lu} line-ups -> ${lt} touches, ${ws} wall saves), `+
-    `${att} hunts, ${wc} wall crashes, ${(share*100).toFixed(0)}% hard turns drifted `+
-    `[${p.profiles.join(',')}]`);
+    `${dm} drift maneuvers/${ds} starts (${bo} boost-outs, ${lu} line-ups -> ${lt} touches, ${ws} wall saves), `+
+    `${att} hunts, ${wc} wall crashes, ${(share*100).toFixed(0)}% hard turns drifted, `+
+    `max held slip ${maxSlip.toFixed(2)} [${p.profiles.join(',')}]`);
+  // impossible-motion invariants (owner audit 2026-07-11): hard zeroes, not
+  // bands — any tick means a physics cheat came back
+  if(sum('catchSnapFrames')!==0)fail(`run ${run}: ${sum('catchSnapFrames')} catch-snap frames — velocity rotated faster than tire force allows`);
+  if(sum('reverseDriftFrames')!==0)fail(`run ${run}: ${sum('reverseDriftFrames')} frames of backward travel inside a held drift`);
+  if(sum('microReentries')!==0)fail(`run ${run}: ${sum('microReentries')} drift starts fired inside a live slide`);
+  if(sum('uncaughtBoostFrames')!==0)fail(`run ${run}: ${sum('uncaughtBoostFrames')} boost-out frames while momentum was uncaught (|slip|>=0.45)`);
+  if(sum('positiveTireWorkFrames')!==0)fail(`run ${run}: front tire added kinetic energy on ${sum('positiveTireWorkFrames')} frames`);
+  if(maxSlip>1.75)fail(`run ${run}: held slip reached ${maxSlip.toFixed(2)} rad — slides wrap toward backward travel again`);
   if(!p.finite)fail(`run ${run}: non-finite ball or car state`);
   if(p.matches<1||p.matches>3)fail(`run ${run}: ${p.matches} completed matches (expected 1..3)`);
   if(p.goals[0]<2||p.goals[1]<2)fail(`run ${run}: one team failed to score competently`);
   if(total<10||total>30)fail(`run ${run}: ${total} goals outside watchable band 10..30`);
   if(p.demos<2||p.demos>20)fail(`run ${run}: ${p.demos} demos outside watchable band 2..20`);
-  // floors from the 12-seed sweep (2026-07-11, slide-inertia sim): drifts
-  // 1022..1220, boost-outs 296..376, demos 4..14 — wide margins
+  // floors from the 12-seed sweep (2026-07-11, honest-forces sim + free-roll
+  // latch): maneuvers 945..1093, physics starts 817..946, boost-outs 123..181
+  // (the momentum-alignment gate cut them from the old 296..376 — re-derived,
+  // not weakened), demos 6..13 — wide margins
+  if(dm<450)fail(`run ${run}: only ${dm} drift maneuvers (sweep floor 450)`);
   if(ds<500)fail(`run ${run}: only ${ds} drift starts (sweep floor 500)`);
-  if(bo<150)fail(`run ${run}: only ${bo} drift boost-outs (sweep floor 150)`);
+  if(bo<65)fail(`run ${run}: only ${bo} drift boost-outs (sweep floor 65)`);
   // strategic drifting: swing around the ball onto the shot line. 12-seed
-  // sweep 2026-07-11: 94..136 line-ups, 19..31 converted to a touch <55f
-  // after the catch — floors at roughly half the observed minima
+  // sweep 2026-07-11 (honest forces): 96..113 line-ups, 16..24 converted to a
+  // touch <55f after the catch — floors at roughly half the observed minima
   if(lu<40)fail(`run ${run}: only ${lu} line-up drifts (sweep floor 40) — bots stopped using drift to get behind the ball`);
   if(lt<8)fail(`run ${run}: only ${lt} line-up drifts converted to a touch (sweep floor 8)`);
   // cornering skill is a release gate: drift is THE fast-turn tool (12-seed
-  // sweep: 55..59% of hard turns drifted, 250..350 wall saves) and fast
-  // head-on wall impacts stay capped (sweep 175..212; pre-cornering 319..380)
+  // sweep: 55..58% of hard turns drifted, 234..287 wall saves) and fast
+  // head-on wall impacts stay capped (sweep 162..217; pre-cornering 319..380)
   if(share<0.40)fail(`run ${run}: only ${(share*100).toFixed(0)}% of hard turns drifted (floor 40%)`);
   if(ws<120)fail(`run ${run}: only ${ws} wall-save drifts (sweep floor 120)`);
   if(wc>300)fail(`run ${run}: ${wc} fast wall crashes (ceiling 300) — bots are pounding the boards again`);
@@ -171,37 +183,239 @@ console.log('6) power drift: physics fixture + same-seed A/B vs __NO_DRIFT');
 ;globalThis.__driftFixture=useDrift=>{
   resetGame();state='play';
   const c=cars[0];
-  Object.assign(c,{x:60,y:180,a:0,vx:2,vy:0,boost:100,dead:0,launch:0,drift:0,slip:0});
-  const a0=c.a,x0=c.x,y0=c.y;let peakSlip=0;
+  Object.assign(c,{x:60,y:180,a:0,vx:2,vy:0,boost:100,dead:0,launch:0,drift:0,slip:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  const a0=c.a,x0=c.x,y0=c.y;let peakSlip=0,maxDva=0,minRad=1e9,lastVa=Math.atan2(c.vy,c.vx);
   for(let i=0;i<30;i++){ // 15f committed turn, then 15f catch-and-drive-out
     const turning=i<15;
     advanceCar(c,{steer:turning?1:0,throttle:1,boosting:false,drifting:useDrift&&turning});
     peakSlip=Math.max(peakSlip,Math.abs(c.slip));
+    // the catch is judged on the CENTER-OF-MASS path (velocity heading), not
+    // body yaw: the audited defect was momentum turning tighter than any force
+    const sp=Math.hypot(c.vx,c.vy),va=Math.atan2(c.vy,c.vx);
+    const dva=Math.abs(angDiff(va-lastVa));lastVa=va;
+    if(i>=15){maxDva=Math.max(maxDva,dva);
+      if(sp>1.5&&dva>1e-9)minRad=Math.min(minRad,sp/dva);}
   }
-  return{heading:Math.abs(angDiff(c.a-a0)),peakSlip,
+  return{heading:Math.abs(angDiff(c.a-a0)),peakSlip,maxDva,minRad,
     speed:Math.hypot(c.vx,c.vy),disp:Math.hypot(c.x-x0,c.y-y0),skid:c.skid.length,
     finite:['x','y','vx','vy','a'].every(k=>Number.isFinite(c[k]))};
+};
+globalThis.__ledgerFixture=()=>{ // one committed-slide frame: reconstruct the
+  // non-thrust force and prove the tire never adds kinetic energy
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:0,vx:1.5*Math.cos(-Math.PI/3),vy:1.5*Math.sin(-Math.PI/3),
+    boost:0,dead:0,launch:0,drift:1,av:0.09,avLast:0,wasDrifting:true,recover:0});
+  const vx0=c.vx,vy0=c.vy;
+  advanceCar(c,{steer:1,throttle:0.16,boosting:false,drifting:true});
+  const drag=0.985+0.007*1;
+  const fxv=c.vx/drag-Math.cos(c.a)*(0.08*0.16)-vx0;
+  const fyv=c.vy/drag-Math.sin(c.a)*(0.08*0.16)-vy0;
+  return{work:0.5*((vx0+fxv)**2+(vy0+fyv)**2)-0.5*(vx0*vx0+vy0*vy0),
+    mag:Math.hypot(fxv,fyv)};
+};
+globalThis.__pumpFixture=()=>{ // 15f low-throttle full-lock slide from 1.5:
+  // an honest drift LOSES speed; the old rear kick made it energy-positive
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:0,vx:1.5,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  for(let i=0;i<15;i++)advanceCar(c,{steer:1,throttle:0.16,boosting:false,drifting:true});
+  return{speed:Math.hypot(c.vx,c.vy)};
+};
+globalThis.__dropoutFixture=()=>{ // steering crosses zero INSIDE a held slide:
+  // the handbrake must stay latched — no re-entry impulse, no blend dip
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:0,vx:2.2,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  const s0=c.stats.driftStarts;let minBlendLate=1,peakAv=0,reached=false;
+  const run=(n,steer)=>{for(let i=0;i<n;i++){
+    advanceCar(c,{steer,throttle:1,boosting:false,drifting:true});
+    if(c.drift>=0.999)reached=true;
+    if(reached)minBlendLate=Math.min(minBlendLate,c.drift);
+    peakAv=Math.max(peakAv,Math.abs(c.av));}};
+  run(8,1);run(1,0);run(3,1);
+  return{starts:c.stats.driftStarts-s0,minBlendLate,peakAv};
+};
+globalThis.__holdFixture=()=>{ // 42f sustained full lock: slip envelope, no
+  // wrap through +/-pi, and forward flow never goes negative while held
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:0,vx:2.3,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  let maxSlip=0,wrap=false,minFwd=1e9,prev=0;
+  for(let i=0;i<42;i++){
+    advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+    if(prev<-2.8&&c.slip>2.8||prev>2.8&&c.slip<-2.8)wrap=true;
+    prev=c.slip;maxSlip=Math.max(maxSlip,Math.abs(c.slip));
+    if(c.driftHeld)minFwd=Math.min(minFwd,c.vx*Math.cos(c.a)+c.vy*Math.sin(c.a));
+  }
+  return{maxSlip,wrap,minFwd};
+};
+globalThis.__reverseFixture=()=>{ // moving exactly backward relative to the
+  // nose: the handbrake must reject entry (no drift, no start recorded)
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:Math.PI,vx:2,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  const s0=c.stats.driftStarts;
+  advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+  return{drift:c.drift,starts:c.stats.driftStarts-s0};
+};
+globalThis.__continuityFixture=()=>{ // yaw rate must ease through the blend's
+  // zero crossing, not snap to zero while momentum snaps the other way
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:180,a:0,vx:2.3,vy:0,boost:0,dead:0,launch:0,drift:0,
+    av:0,avLast:0,wasDrifting:false,recover:0});
+  for(let i=0;i<15;i++)advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+  let lastAv=c.av,step=-1;
+  for(let i=0;i<30;i++){
+    const before=c.drift;
+    advanceCar(c,{steer:0,throttle:1,boosting:false,drifting:false});
+    if(before>0&&c.drift<=0){step=Math.abs(c.av-lastAv);break;}
+    lastAv=c.av;
+  }
+  return{step};
+};
+globalThis.__freerollFixture=hold=>{ // rocket-league powerslide semantics
+  // (owner 2026-07-11): the button is NOT a brake — held with centered wheels
+  // and no slip it must free-roll at exactly the normal cruise speed
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:330,a:-Math.PI/2,vx:0,vy:-1.0,boost:0,dead:0,launch:0,
+    drift:0,av:0,avLast:0,wasDrifting:false,recover:0,slip:0});
+  for(let i=0;i<120;i++)advanceCar(c,{steer:0,throttle:1,boosting:false,drifting:hold});
+  return{speed:Math.hypot(c.vx,c.vy),drift:c.drift};
+};
+globalThis.__straightenFixture=()=>{ // slide, then center the wheel with the
+  // button still held: the latch rides the slip out, then grip returns —
+  // cruise speed never drops while straightening
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:30,y:330,a:-Math.PI/2,vx:0,vy:-2.3,boost:0,dead:0,launch:0,
+    drift:0,av:0,avLast:0,wasDrifting:false,recover:0,slip:0});
+  for(let i=0;i<12;i++)advanceCar(c,{steer:1,throttle:1,boosting:false,drifting:true});
+  let minSpeed=1e9,rel=-1;
+  for(let i=0;i<45;i++){
+    advanceCar(c,{steer:0,throttle:1,boosting:false,drifting:true});
+    minSpeed=Math.min(minSpeed,Math.hypot(c.vx,c.vy));
+    if(rel<0&&c.drift<=0)rel=i;
+  }
+  return{minSpeed,released:rel};
+};
+globalThis.__boostGateFixture=slip=>{ // boost-out means physically caught:
+  // an open window must refuse to fire while |slip| says momentum is elsewhere
+  resetGame();state='play';
+  const c=cars[0];
+  Object.assign(c,{x:80,y:100,a:0,vx:2,vy:0,boost:100,dead:0,launch:0,recover:0});
+  c.slip=slip;
+  const ai=c.ai;
+  ai.driftUntil=0;ai.boostOutUntil=frame+10;ai.boostOutCounted=false;
+  ai.driftCooldown=frame+999; // keep the start triggers out of the fixture
+  const intent=applyBotDrift(c,{steer:0,throttle:1,boosting:false,
+    turnError:0,targetDist:40},LEGACY_STYLE);
+  return{boosting:!!intent.boosting};
 };`;
   const g=bootGame('rocket',{seed:0x710300,footer:FOOT});
   const base=g.sandbox.__driftFixture(false),drift=g.sandbox.__driftFixture(true);
   console.log(`  30f full-lock turn: heading ${base.heading.toFixed(2)} -> ${drift.heading.toFixed(2)} rad, `+
     `slip ${drift.peakSlip.toFixed(2)} rad, speed ${base.speed.toFixed(2)} -> ${drift.speed.toFixed(2)}, `+
-    `travel ${drift.disp.toFixed(1)}px`);
+    `travel ${drift.disp.toFixed(1)}px, catch ${drift.maxDva.toFixed(3)} rad/f max, `+
+    `min path radius ${drift.minRad.toFixed(1)}px`);
   if(!base.finite||!drift.finite)fail('drift fixture produced non-finite state');
   if(drift.heading<base.heading+0.35)fail(`drift turned only ${drift.heading.toFixed(2)} rad vs base ${base.heading.toFixed(2)} — rear grip never broke`);
-  if(drift.peakSlip<0.30)fail(`peak slip ${drift.peakSlip.toFixed(2)} rad under 0.30 — no visible tail-out`);
-  // measured 2026-07-11: drift turns +0.80 rad over the grip turn while
-  // keeping 87% speed (2.00 vs 2.30) — the rotate-faster/carry-speed tradeoff
+  if(drift.heading<1.25||drift.heading>1.75)fail(`drift heading ${drift.heading.toFixed(2)} outside 1.25..1.75 envelope`);
+  if(drift.peakSlip<0.45||drift.peakSlip>1.25)fail(`peak slip ${drift.peakSlip.toFixed(2)} rad outside 0.45..1.25 — tail-out envelope broken`);
+  // measured 2026-07-11 (honest forces): drift turns +0.47 rad over the grip
+  // turn while keeping 93% speed (2.14 vs 2.30) and travelling 60.9px
   if(drift.speed<base.speed*0.80||drift.speed<1.85)
     fail(`drift bled speed to ${drift.speed.toFixed(2)} (base ${base.speed.toFixed(2)}) — momentum not carried through the slide`);
   if(drift.speed>base.speed*1.05)fail(`drift GAINED speed ${drift.speed.toFixed(2)} vs ${base.speed.toFixed(2)} — release must not invent velocity`);
-  if(drift.disp<35)fail(`drift displaced only ${drift.disp.toFixed(1)}px — reads as spinning in place`);
+  if(drift.disp<45)fail(`drift displaced only ${drift.disp.toFixed(1)}px — reads as spinning in place`);
   if(drift.skid<10)fail(`drift laid only ${drift.skid} skid samples — the rear-swing arc is invisible`);
   if(base.skid!==0)fail(`grip driving deposited ${base.skid} skid samples — rubber must mean drift`);
+  // the impossible-movement audit (2026-07-11): the catch must be earned by
+  // bounded tire force — momentum may never turn faster than 0.095 rad/f, and
+  // the COM path radius above 1.5 px/f never dips under 22px (the old catch
+  // teleport measured 0.179 rad/f and a 10.3px radius)
+  if(drift.maxDva>0.095)fail(`release turned momentum ${drift.maxDva.toFixed(3)} rad/f — catch is reassigning the velocity vector again`);
+  if(drift.minRad<22)fail(`catch path radius ${drift.minRad.toFixed(1)}px under 22 — tighter than any honest force allows`);
   g.sandbox.__NO_DRIFT=1;
   const offA=g.sandbox.__driftFixture(false),offB=g.sandbox.__driftFixture(true);
   if(JSON.stringify(offA)!==JSON.stringify(offB))fail('__NO_DRIFT did not make the drifting intent a physics no-op');
   delete g.sandbox.__NO_DRIFT;
+  // switch fidelity: __NO_DRIFT_FORCES must reproduce the pre-audit slide
+  // kinematics exactly (it is the regression oracle), and that old model must
+  // FAIL the new honest-catch contracts — proof the fixture catches the cheat
+  g.sandbox.__NO_DRIFT_FORCES=1;
+  const legacy=g.sandbox.__driftFixture(true);
+  delete g.sandbox.__NO_DRIFT_FORCES;
+  console.log(`  __NO_DRIFT_FORCES fidelity: heading ${legacy.heading.toFixed(6)}, slip ${legacy.peakSlip.toFixed(6)}, `+
+    `speed ${legacy.speed.toFixed(6)}, catch ${legacy.maxDva.toFixed(3)} rad/f / ${legacy.minRad.toFixed(1)}px radius`);
+  if(Math.abs(legacy.heading-1.6846500992)>1e-6||Math.abs(legacy.peakSlip-1.0573887496)>1e-6||
+     Math.abs(legacy.speed-2.0367346464)>1e-6||Math.abs(legacy.disp-53.0699859851)>1e-6)
+    fail('__NO_DRIFT_FORCES no longer reproduces the recorded pre-audit kinematics');
+  if(legacy.maxDva<=0.095&&legacy.minRad>=22)
+    fail('the pre-audit model PASSES the honest-catch contracts — the fixture lost its teeth');
+  // force/energy ledger: reconstruct the single-frame non-thrust force in a
+  // committed slide — bounded magnitude, and it must never add kinetic energy
+  const ledger=g.sandbox.__ledgerFixture();
+  const pump=g.sandbox.__pumpFixture();
+  g.sandbox.__NO_DRIFT_FORCES=1;
+  const pumpOld=g.sandbox.__pumpFixture();
+  delete g.sandbox.__NO_DRIFT_FORCES;
+  console.log(`  tire ledger: work ${ledger.work.toFixed(5)}, |force| ${ledger.mag.toFixed(4)}; `+
+    `15f low-throttle slide from 1.50: ${pump.speed.toFixed(3)} (pre-audit model: ${pumpOld.speed.toFixed(3)})`);
+  if(ledger.work>1e-9)fail(`front tire ADDED ${ledger.work.toFixed(5)} kinetic energy in one frame`);
+  if(ledger.mag>0.0450001)fail(`front tire force ${ledger.mag.toFixed(4)} exceeds the 0.045 deep-slide cap`);
+  if(pump.speed>=1.5)fail(`low-throttle slide GAINED speed (${pump.speed.toFixed(3)} from 1.50) — an energy pump is back`);
+  if(pumpOld.speed<=1.5)fail('pre-audit model no longer shows the rear-kick energy pump — ablation branch drifted');
+  // steering-zero dropout: the latched handbrake must survive steer crossing
+  // zero — one start, no blend dip, bounded yaw rate
+  const drop=g.sandbox.__dropoutFixture();
+  console.log(`  steer-zero dropout: ${drop.starts} start(s), blend floor ${drop.minBlendLate.toFixed(2)}, peak yaw ${drop.peakAv.toFixed(3)}`);
+  if(drop.starts!==1)fail(`steer dropout recorded ${drop.starts} drift starts inside ONE held maneuver`);
+  if(drop.minBlendLate<0.999)fail(`drift blend dipped to ${drop.minBlendLate.toFixed(2)} when steering crossed zero`);
+  if(drop.peakAv>0.115)fail(`stacked entry impulses pushed yaw to ${drop.peakAv.toFixed(3)} rad/f (cap 0.115)`);
+  // sustained hold: slip stays bounded, never wraps past pi, never backward
+  const hold=g.sandbox.__holdFixture();
+  console.log(`  42f full-lock hold: max slip ${hold.maxSlip.toFixed(2)} rad, wrap ${hold.wrap}, min forward flow ${hold.minFwd.toFixed(2)}`);
+  if(hold.maxSlip>1.45)fail(`sustained hold reached ${hold.maxSlip.toFixed(2)} rad slip — body rotates through sideways again`);
+  if(hold.wrap)fail('slip wrapped through +/-pi mid-hold — the backward-slide flip is back');
+  if(hold.minFwd<0)fail(`car travelled backward (${hold.minFwd.toFixed(2)}) inside a held drift`);
+  // reverse entry, release continuity, boost-out slip gate
+  const rev=g.sandbox.__reverseFixture();
+  const cont=g.sandbox.__continuityFixture();
+  const gateHot=g.sandbox.__boostGateFixture(1.0),gateCold=g.sandbox.__boostGateFixture(0.3);
+  g.sandbox.__NO_DRIFT_FORCES=1;
+  const revOld=g.sandbox.__reverseFixture();
+  const gateHotOld=g.sandbox.__boostGateFixture(1.0);
+  delete g.sandbox.__NO_DRIFT_FORCES;
+  console.log(`  reverse entry: drift ${rev.drift} / ${rev.starts} starts (pre-audit: ${revOld.drift.toFixed(2)}); `+
+    `release yaw step ${cont.step.toFixed(4)}; boost gate slip 1.0 -> ${gateHot.boosting} (pre-audit ${gateHotOld.boosting}), 0.3 -> ${gateCold.boosting}`);
+  if(rev.drift!==0||rev.starts!==0)fail('backward-moving car entered a drift — reverse gate missing');
+  if(revOld.drift<0.19)fail('pre-audit model stopped accepting reverse entry — ablation branch drifted');
+  if(cont.step<0||cont.step>0.020)fail(`yaw rate stepped ${cont.step.toFixed(4)} rad/f when the blend hit zero (cap 0.020)`);
+  if(gateHot.boosting)fail('boost-out fired while |slip|=1.0 — momentum was not caught');
+  if(!gateCold.boosting)fail('boost-out refused to fire with momentum caught (|slip|=0.3)');
+  if(!gateHotOld.boosting)fail('pre-audit model stopped boosting uncaught — ablation branch drifted');
+  // powerslide is not a brake (owner 2026-07-11): held with centered wheels
+  // it free-rolls bit-identical to normal driving, and straightening out of a
+  // real slide with the button still down never bleeds cruise speed
+  const rollOff=g.sandbox.__freerollFixture(false),rollOn=g.sandbox.__freerollFixture(true);
+  const straighten=g.sandbox.__straightenFixture();
+  console.log(`  free roll: 120f straight at ${rollOn.speed.toFixed(2)} with powerslide held `+
+    `(identical ${rollOff.speed===rollOn.speed}); slide->straighten min speed ${straighten.minSpeed.toFixed(2)}, `+
+    `latch released at +${straighten.released}f`);
+  if(rollOff.speed!==rollOn.speed||rollOn.drift!==0)
+    fail(`powerslide held while driving straight braked the car (${rollOff.speed.toFixed(3)} vs ${rollOn.speed.toFixed(3)}, drift ${rollOn.drift})`);
+  if(straighten.minSpeed<2.2)
+    fail(`straightening with powerslide held bled cruise speed to ${straighten.minSpeed.toFixed(2)}`);
+  if(straighten.released<0)
+    fail('the drift latch never released after the car straightened out');
   // same-seed A/B: drift bot vs ablated bot must diverge during live play,
   // and the ablated run must never record a drift start
   const a=bootGame('rocket',{seed:0x710301,footer:FOOTER});
@@ -216,6 +430,23 @@ console.log('6) power drift: physics fixture + same-seed A/B vs __NO_DRIFT');
   if(sum(pb,'driftStarts')!==0||sum(pb,'driftBoostOuts')!==0)fail('__NO_DRIFT run still recorded drift activity');
   if(a.sandbox.__sig()===b.sandbox.__sig())fail('drift A/B runs never diverged — the feature is simulation-invisible');
   if(!pb.finite)fail('__NO_DRIFT run went non-finite');
+  // honest-forces A/B: same seed against the pre-audit drift model. The new
+  // model keeps every impossible-motion invariant at zero; the old model must
+  // still trip the catch-snap counter (proof the run-level telemetry bites).
+  const f2=bootGame('rocket',{seed:0x710301,footer:FOOTER});
+  f2.sandbox.__NO_DRIFT_FORCES=1;
+  f2.frames(21600,false);
+  const pf=f2.sandbox.__probe();
+  console.log(`  forces A/B: honest model ${sum(pa,'catchSnapFrames')} catch-snaps / `+
+    `${sum(pa,'reverseDriftFrames')} reverse frames; pre-audit model ${sum(pf,'catchSnapFrames')} / `+
+    `${sum(pf,'reverseDriftFrames')}; diverged ${a.sandbox.__sig()!==f2.sandbox.__sig()}`);
+  if(a.sandbox.__sig()===f2.sandbox.__sig())fail('__NO_DRIFT_FORCES never changed the sim on its A/B seed');
+  if(!pf.finite)fail('__NO_DRIFT_FORCES run went non-finite');
+  if(sum(pa,'catchSnapFrames')!==0||sum(pa,'reverseDriftFrames')!==0||
+     sum(pa,'microReentries')!==0||sum(pa,'uncaughtBoostFrames')!==0)
+    fail('honest-forces run tripped an impossible-motion invariant on the A/B seed');
+  if(sum(pf,'catchSnapFrames')+sum(pf,'reverseDriftFrames')+sum(pf,'microReentries')===0)
+    fail('pre-audit model tripped NO invariant counters — the telemetry lost its teeth');
   // line-up ablation: __NO_LINEUP removes ONLY the strategic swing-behind-the-
   // ball drift; reactive turn/kickoff drifts must survive
   const c2=bootGame('rocket',{seed:0x710301,footer:FOOTER});
@@ -423,8 +654,11 @@ console.log('9) motion contract: no dead standing, measured pace');
   const MFOOT=FOOTER+`
 ;globalThis.__motionProbe=()=>({
   // cars are watched in EVERY state: countdown is an authored emote pause
-  // (115f, inside the 120f budget), goal launches them, and the match-over
-  // beat runs victory donuts / the sulk crawl home — never a frozen strip
+  // (115f, inside the 120f budget), and the match-over beat runs victory
+  // donuts / the sulk crawl home — never a frozen strip. During the goal
+  // replay (tier-3 apex, 85f) cars are blast-launched into a slow-mo tumble;
+  // the fast tumble is real motion, and only its decayed-to-rest tail counts
+  // as the authored celebration pause (speed < 0.5, ~15% of replays)
   actors:cars.filter(c=>c.dead<=0).map(c=>({id:'car-'+c.i,x:c.x,y:c.y,
     emote:state==='countdown'})),
   finite:[ball,...cars].every(o=>['x','y','vx','vy'].every(k=>Number.isFinite(o[k])))

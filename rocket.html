@@ -37,8 +37,12 @@ function mkCar(team,i){return{team,i,x:0,y:0,a:0,vx:0,vy:0,boost:34,dead:0,sup:f
     driftKind:'',lineupCredit:0,
     anchorX:0,anchorY:0,anchorF:0,escapeUntil:0,escapeRev:true},
   stats:{driftStarts:0,driftFrames:0,driftBoostOuts:0,boostFrames:0,
+    driftManeuvers:0, // bot state-machine starts: readable maneuvers, not edges
     lineupDrifts:0,lineupTouches:0,wallSaves:0,wallCrashes:0,
     hardTurns:0,hardTurnDrifts:0,slideFlips:0,crunches:0,
+    // impossible-motion invariants (owner audit 2026-07-11) — all hard zeroes
+    maxHeldSlip:0,catchSnapFrames:0,reverseDriftFrames:0,microReentries:0,
+    uncaughtBoostFrames:0,positiveTireWorkFrames:0,
     challengeStarts:0,challengeDistanceSum:0,demoAttempts:0,demos:0,lapses:0}};}
 const cars=[mkCar(0,0),mkCar(0,1),mkCar(1,2),mkCar(1,3)];
 let score=[0,0],clock=180*60,state='countdown',stateT=100,frame=0,overtime=false,winner=0;
@@ -128,13 +132,20 @@ function kickoffPos(){
   const KO=[[80,300,-Math.PI/2],[52,326,-Math.PI/2],[80,60,Math.PI/2],[108,34,Math.PI/2]];
   kickoffAge=0;
   cars.forEach((c,i)=>{const k=KO[i];
+    const px=c.x,py=c.y; // pre-teleport spot: the re-seat must displace it
     c.x=k[0];c.y=k[1];c.a=k[2];c.vx=0;c.vy=0;c.dead=0;c.launch=0;c.boost=Math.max(c.boost,34);
     // race-grid staging: seat everyone 4px behind the mark so the rolling
     // start rolls them onto it — and the teleport always visibly re-seats a
     // goalie that was already hovering on its own slot (no frozen carry-over).
+    // If the car's pre-teleport spot is still within 3px of the staged seat
+    // (a replay-tumble that happened to die on the grid), seat it 4px deeper:
+    // the re-seat must ALWAYS read as a re-seat, never a frozen carry-over.
     // frame>0: the boot kickoff stays legacy-exact (switches land after boot)
     if(frame>0&&typeof globalThis.__NO_CELEBRATION==='undefined'){
       c.x-=Math.cos(k[2])*4;c.y-=Math.sin(k[2])*4;
+      if(Math.hypot(c.x-px,c.y-py)<3){
+        c.x-=Math.cos(k[2])*4;c.y-=Math.sin(k[2])*4;
+      }
     }
     // hard-clear demo + drift transients so a demolition on a scoring frame
     // can never leak a dead car or stale respawn across the goal replay
@@ -454,27 +465,38 @@ function applyBotDrift(c,intent,p){
   else if(c.vy<-0.02)ttw=Math.min(ttw,(FL.y0+2-c.y)/c.vy);
   const tally=()=>{if(speed>1.25&&da>0.9){
     c.stats.hardTurns++;if(intent.drifting)c.stats.hardTurnDrifts++;}};
+  const driftForces=typeof globalThis.__NO_DRIFT_FORCES==='undefined';
   if(frame<ai.driftUntil){ // holding the slide
     const mustHold=frame<ai.driftMinUntil;
     // sliding ALONG a wall is fine — only bail when the slide is about to
     // smack one (position-based nearWall kept for the __NO_CORNERING policy)
     const wallOk=corner?ttw>7:!nearWall;
-    if(speed>0.80&&wallOk&&(mustHold||da>p.driftExit)){
+    const speedOk=speed>(driftForces?0.95:0.80);
+    // honest physics loses yaw authority past ~77 degrees of slip: a skilled
+    // driver abandons the slide before the body wraps toward backward travel
+    const slipOk=!driftForces||Math.abs(c.slip)<1.35;
+    if(speedOk&&wallOk&&slipOk&&(mustHold||da>p.driftExit)){
       intent.drifting=true;intent.boosting=false;
       intent.throttle=Math.max(0.75,intent.throttle);
       tally();
       return intent;
     }
-    ai.driftUntil=0; // caught the slide: open the boost-out window
-    ai.boostOutUntil=frame+10;ai.boostOutCounted=false;
+    ai.driftUntil=0; // caught the slide: open the boost-out window (longer
+    // under honest forces — the car must physically earn alignment first)
+    ai.boostOutUntil=frame+(driftForces?14:10);ai.boostOutCounted=false;
     // a line-up drift earns a conversion window: a ball touch soon after the
     // catch means the swing genuinely set up the shot
     if(ai.driftKind==='lineup')ai.lineupCredit=frame+55;
     ai.driftKind='';
   }
-  if(frame<ai.boostOutUntil&&da<Math.max(0.24,p.driftExit+0.05)&&dist>24&&
+  // boost-out means physically caught: momentum must already point near the
+  // nose (|slip| < 0.45 rad) — never a diagonal launch off uncaught momentum
+  const momentumCaught=!driftForces||Math.abs(c.slip)<0.45;
+  if(frame<ai.boostOutUntil&&momentumCaught&&
+     da<Math.max(0.24,p.driftExit+0.05)&&dist>24&&
      c.boost>p.boostReserve){
     intent.boosting=true; // punch out along the new heading
+    if(Math.abs(c.slip)>=0.45)c.stats.uncaughtBoostFrames++;
     if(!ai.boostOutCounted){ai.boostOutCounted=true;c.stats.driftBoostOuts++;}
   }
   if(frame<ai.driftCooldown){tally();return intent;}
@@ -504,6 +526,7 @@ function applyBotDrift(c,intent,p){
       Math.min(26,10+Math.floor(da*8));
     ai.driftUntil=frame+duration;ai.driftMinUntil=frame+8;
     ai.driftCooldown=ai.driftUntil+(corner?14:24);ai.boostOutUntil=0;
+    c.stats.driftManeuvers++; // one readable maneuver, however many edges
     ai.driftKind=kickoffTurn?'kickoff':lineupTurn?'lineup':
       hardTurn||touchRotation?'turn':'wallsave';
     if(ai.driftKind==='lineup')c.stats.lineupDrifts++;
@@ -531,28 +554,67 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
   if(crunched)c.recover--;
   c.boosting=d.boosting&&c.boost>0&&!crunched;
   const sp0=Math.hypot(c.vx,c.vy);
-  // power drift: break rear grip so the body yaws ~1.9x faster than the
-  // velocity vector while momentum carries through. Needs speed, throttle and
-  // real steering — no low-speed pirouettes (motion contract).
+  const va0=sp0>1e-9?Math.atan2(c.vy,c.vx):0;
+  const driftForces=typeof globalThis.__NO_DRIFT_FORCES==='undefined';
+  const priorDrift=c.drift;
+  // power drift, momentum-honest (owner audit 2026-07-11): a slide may change
+  // world velocity ONLY via rocket thrust along the nose, a bounded front-tire
+  // lateral force, and isotropic drag — no hidden catch rotation, no rear
+  // kick. Drift needs real forward flow (no backward/sideways entry), and once
+  // the handbrake is latched, steering may cross zero without releasing.
+  // Rocket-league semantics (owner 2026-07-11): the latch holds only while
+  // the car is genuinely steering or sliding — powerslide held with centered
+  // wheels and no slip is a free roll, never a brake.
+  const forward0=c.vx*Math.cos(c.a)+c.vy*Math.sin(c.a);
+  const forwardShare=sp0>1e-9?forward0/sp0:0;
+  const steerLatched=driftForces&&priorDrift>0&&
+    (Math.abs(d.steer)>0.05||Math.abs(c.slip)>0.15);
   const wantsDrift=typeof globalThis.__NO_DRIFT==='undefined'&&
-    !!d.drifting&&d.throttle>0.15&&sp0>0.90&&Math.abs(d.steer)>0.18;
+    !!d.drifting&&d.throttle>0.15&&sp0>0.90&&
+    (steerLatched||Math.abs(d.steer)>0.18)&&
+    (!driftForces||(forward0>0.20&&forwardShare>0.12));
+  const driftStarted=driftForces?wantsDrift&&priorDrift<=0.05
+    :wantsDrift&&!c.wasDrifting;
   if(typeof globalThis.__NO_DRIFT!=='undefined')c.drift=0;
-  else c.drift=clamp(c.drift+(wantsDrift?0.20:-0.16),0,1);
+  else c.drift=clamp(priorDrift+(wantsDrift?0.20:(driftForces?-0.125:-0.16)),0,1);
   c.driftHeld=wantsDrift;c.drifting=c.drift>0.22;
-  // grip steering turns the body directly (legacy math, bit-exact at drift 0).
-  // Mid-slide the car is a sliding MASS: the front wheels can only lever the
-  // body around, so yaw carries inertia — counter-steer takes real frames and
-  // the tail cannot wiggle side-to-side around a target. Handbrake feel: one
-  // committed slide per direction, adjusted at the front wheels.
+  // front tire: the force is perpendicular to the steered wheel direction and
+  // always OPPOSES measured lateral wheel velocity, so it can redirect
+  // momentum only by paying a bounded force — it can never add energy
+  let frontDv=0;
+  if(driftForces&&c.drift>0){
+    const wheelA=c.a+d.steer*0.30;
+    const wheelRx=-Math.sin(wheelA),wheelRy=Math.cos(wheelA);
+    const wheelSide=c.vx*wheelRx+c.vy*wheelRy;
+    const tireGrip=0.055+(0.130-0.055)*(1-c.drift);
+    const tireCap=0.045+(0.110-0.045)*(1-c.drift);
+    frontDv=clamp(-wheelSide*tireGrip,-tireCap,tireCap);
+    c.vx+=wheelRx*frontDv;c.vy+=wheelRy*frontDv;
+    if(frontDv*wheelSide>1e-9)c.stats.positiveTireWorkFrames++;
+  }
+  // grip steering turns the body directly (legacy math, bit-exact at drift 0)
   const steerBase=d.steer*0.068*Math.min(1,sp0*0.9+0.35)*(crunched?0.5:1);
   if(c.drift<=0||typeof globalThis.__NO_SLIDE_INERTIA!=='undefined'){
     c.a+=steerBase*(1+c.drift*0.90);
     c.av=steerBase;
+  }else if(driftForces){
+    // body yaw is a bounded torque proxy driven by the same front-tire bite:
+    // as forward flow disappears steering loses leverage, so the chassis
+    // cannot rotate itself through sideways into backward travel
+    const tireSpeed=Math.hypot(c.vx,c.vy);
+    const along=tireSpeed>1e-9?(c.vx*Math.cos(c.a)+c.vy*Math.sin(c.a))/tireSpeed:0;
+    const flow=clamp((along+0.15)/1.15,0,1);
+    const yawTarget=clamp(d.steer*Math.abs(frontDv)*2.4*flow,-0.110,0.110);
+    const yawResponse=driftStarted?0.55:wantsDrift?0.12+0.08*(1-c.drift):0.28;
+    c.av+=(yawTarget-c.av)*yawResponse;
+    c.a+=c.av;
   }else{
-    if(wantsDrift&&!c.wasDrifting) // handbrake bite: the tail breaks loose
-      c.av+=d.steer*0.055*Math.min(1,sp0*0.5); // with one committed swing
+    // __NO_DRIFT_FORCES: exact pre-audit slide-yaw kinematics (regression
+    // oracle for the same-seed A/B — copied, not approximated)
+    if(wantsDrift&&!c.wasDrifting)
+      c.av+=d.steer*0.055*Math.min(1,sp0*0.5);
     const yawTarget=steerBase*(1+c.drift*0.90);
-    c.av+=(yawTarget-c.av)*(0.14-0.07*c.drift); // deeper slide = lazier body
+    c.av+=(yawTarget-c.av)*(0.14-0.07*c.drift);
     c.a+=c.av;
   }
   if(c.drift>0.5){ // a genuine mid-slide yaw reversal — rare when committed
@@ -572,18 +634,25 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
     let lx=c.vx-fwd*fx,ly=c.vy-fwd*fy;
     lx*=0.87;ly*=0.87;
     c.vx=fx*fwd*0.985+lx;c.vy=fy*fwd*0.985+ly;
+  }else if(driftForces){
+    // world-space isotropic drag: bleeds speed but cannot rotate momentum —
+    // the catch happens because the front tire gradually aligns velocity,
+    // never because the velocity vector is reassigned
+    const drag=0.985+0.007*c.drift;
+    c.vx*=drag;c.vy*=drag;
   }else{
+    // __NO_DRIFT_FORCES: exact pre-audit frame-relative keeps, rear kick and
+    // catch rotation (the cheats the 2026-07-11 audit removed)
     const rx=-fy,ry=fx; // car-right basis
     let fwd=c.vx*fx+c.vy*fy;
     let side=c.vx*rx+c.vy*ry;
-    // full drift keeps nearly all lateral motion while the body yaws
     const sideKeep=0.87+(0.98-0.87)*c.drift;
     const fwdKeep=0.985+(0.992-0.985)*c.drift;
     fwd*=fwdKeep;side*=sideKeep;
-    side-=d.steer*c.drift*Math.min(0.04,sp0*0.015); // readable rear kick
+    side-=d.steer*c.drift*Math.min(0.04,sp0*0.015);
     c.vx=fx*fwd+rx*side;c.vy=fy*fwd+ry*side;
-    if(!wantsDrift){ // release: rotate momentum toward the new heading —
-      const speed=Math.hypot(c.vx,c.vy); // the catch, no invented speed
+    if(!wantsDrift){
+      const speed=Math.hypot(c.vx,c.vy);
       if(speed>0.05){
         const va=Math.atan2(c.vy,c.vx);
         const caught=va+angDiff(c.a-va)*(0.04+0.10*(1-c.drift));
@@ -596,7 +665,22 @@ function advanceCar(c,d){ // one physics path: human and bot intents land here
   c.sup=sp>2.5;
   const finalSp=Math.hypot(c.vx,c.vy);
   c.slip=finalSp>0.12?angDiff(Math.atan2(c.vy,c.vx)-c.a):0;
-  if(wantsDrift){c.stats.driftFrames++;if(!c.wasDrifting)c.stats.driftStarts++;}
+  // physics-invariant telemetry (owner audit 2026-07-11): hard zeroes for the
+  // honest force model, not tuned bands — any tick is a reintroduced cheat
+  if(wantsDrift){
+    c.stats.driftFrames++;
+    if(Math.abs(c.slip)>c.stats.maxHeldSlip)c.stats.maxHeldSlip=Math.abs(c.slip);
+    if(c.vx*fx+c.vy*fy<=0)c.stats.reverseDriftFrames++;
+  }
+  if(driftStarted){c.stats.driftStarts++;
+    if(priorDrift>0.05)c.stats.microReentries++;}
+  // catch-snap invariant: at speed, non-boost drift/release frames can only
+  // rotate velocity by bounded tire force + throttle thrust (~0.118 rad max at
+  // 1.6 px/f) — the old catch teleport reached 0.179+. Boost frames excluded:
+  // rocket thrust legitimately swings momentum.
+  if((priorDrift>0||c.drift>0)&&!c.boosting&&sp0>1.6&&finalSp>1.6&&
+     Math.abs(angDiff(Math.atan2(c.vy,c.vx)-va0))>0.12)
+    c.stats.catchSnapFrames++;
   const released=!wantsDrift&&c.wasDrifting;
   c.wasDrifting=wantsDrift;
   c.x+=c.vx;c.y+=c.vy;
@@ -950,19 +1034,18 @@ function drawCar(c){
   ctx.save();ctx.translate(Math.round(c.x),Math.round(c.y));ctx.rotate(c.a);
   if(c.demoImmune>0)ctx.globalAlpha=0.55+0.45*((frame>>2)&1); // respawn blink
   if(c.sup){const ga=ctx.globalAlpha;ctx.globalAlpha=ga*0.35;rect(-11,-2,4,1,'#fff');rect(-13,1,4,1,'#fff');ctx.globalAlpha=ga;}
-  // drift pose: the rear half articulates on a hinge behind the cockpit and
-  // swings with the slip angle while the nose holds its line — the fishtail
-  // is the drift read, so it is amplified well past the physical angle
-  const swing=c.drift>0.15?clamp(c.slip*1.6,-0.85,0.85):0;
-  if(swing){
-    ctx.save();ctx.translate(2,0);ctx.rotate(-swing);
-    rect(-7,-3,7,6,TEAM[c.team].c);   // swung rear
-    rect(-7,-3,2,6,TEAM[c.team].c2);  // rear accent rides the swing
+  // drift pose (owner audit 2026-07-11): the car is ONE rigid mass rendered at
+  // c.a — the slide reads from the whole body travelling off its nose (real
+  // slip), the twin skid arcs and the tire smoke, never from articulating the
+  // chassis. The old rear-half hinge was exactly the "wiggling back end" the
+  // owner rejected. Steered front wheels are the only articulation.
+  rect(-5,-3,10,6,TEAM[c.team].c);
+  rect(-5,-3,2,6,TEAM[c.team].c2);
+  if(c.drift>0.15){ // counter-steered front wheels peek out mid-slide
+    const wa=clamp(-c.slip*0.6,-0.45,0.45);
+    ctx.save();ctx.translate(4,0);ctx.rotate(wa);
+    rect(-1,-4,2,2,'#141a2e');rect(-1,2,2,2,'#141a2e');
     ctx.restore();
-    rect(0,-3,5,6,TEAM[c.team].c);    // steady front
-  }else{
-    rect(-5,-3,10,6,TEAM[c.team].c);
-    rect(-5,-3,2,6,TEAM[c.team].c2);
   }
   rect(3,-2,2,4,TEAM[c.team].c2);
   rect(0,-2,3,4,'#141a2e');
