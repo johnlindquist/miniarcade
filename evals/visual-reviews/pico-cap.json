@@ -3,39 +3,39 @@
   "game": "pico-cap",
   "verdict": "pass",
   "references": ["horizon", "blockmine"],
-  "montageSha256": "cec5eff0b176c1dcefaff3ad36505cadff07c8d17be80525ff882acbf555eb36",
+  "montageSha256": "8b34c04377905e781799a092ffb77911fea894234f4fa7fd1f3c66d6081cc160",
   "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size review of the 160x360 candidate, Machine Hunt, and Block Mine contact sheet",
+  "reviewer": "Claude (native-size review of .artifacts/visual/pico-cap/contact-sheet.png and frames/01-10 at 160x360)",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The acorn-capped knight retains distinct big and pico silhouettes, facing, gait, dodge motion, sword follow-through, and hurt/celebration poses. Gnawers retain articulated shells, legs, eyes, mandibles, brace, charge trail, stun stars, and attack-state animation at the same small-world scale as the references."
+      "note": "The big hero reads as a capped knight: rust acorn cap with band and tip, skin/tunic/belt construction, facing flip, two-frame gait with boots, sword at the hip that sweeps a steel arc on slash and chop. The pico form keeps the cap and palette under a sky aura so the same character reads at 7px, and the morph swirl sells the transformation. Gnawers have outlined shells, sheen sweeps, three animated legs per side, mandibles, and gold eyes that go coral with wing-case rattle and kicked dust when hunting. Comparable per-actor craft to Machine Hunt's ~10px hunter and Block Mine's 12px miner at the same scale."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The world now reads as three built puzzle chambers rather than a generated corridor maze: framed side reliquaries, material-specific room furniture, closed sun-gate bars, open arches, cracks, briars, transformation rings, shrine architecture, light pools, canopy shade, ambient motes, and biome shell landmarks remain legible with the HUD ignored."
+      "note": "With the HUD ignored the strip still reads as a built place: beveled hedge blocks with leaf clumps, berry bushes, mossy stones and blossoms; wet slate with seep threads; floorboards, table legs, book stacks and jam jars; carved moonstone with rune bands and teal crystals. Cracks are authored burrows/mouse-holes, mushroom rings are drawn props with pulse glow, brambles are thorn masses, the shrine is a pillared landmark, and light pools, canopy shade, fireflies and biome motes give lighting and motion."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Seed Glade, Creek Hollow, Hearth House, and Moon Shrine use four distinct authored obstacle compositions and different architectural materials. Each floor advances through a two-solution chamber, a keyed gate transition, a second guarded choice, and a sanctum instead of repeating a hallway with a palette swap."
+      "note": "Glade, creek, hearth, and moon rebuild the maze layout as well as the material language — the later/deep fixtures re-carve the glade, and the structure-distance gates measure real compositional change (0.15+ structure, 0.20+ edge magnitude), not palette swaps. Shell landmarks (trellis ivy, waterfalls, candle sconces, moon pillars) change the frame border per biome."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The montage presents a readable sequence: room scan, red-gold charge lane, pico sidestep with CLOSE ONE follow-through, big-form parry impact, sun-gate opening beam, rainstorm, and shrine restore. The charge tell persists before commitment, while slash, gate, bloom, storm, and restore effects have measured anticipation and aftermath."
+      "note": "Walk and scuttle cycles are aligned-burst verified; hunts are measurably more agitated than roaming (median 0.067 vs 0.027). Payoffs have anticipation and follow-through: shrink/grow rings with capped radii, slash arc with POW and leaf burst, squish X with stars and a visible bounce (never a teleport), storm land flash with rolling scanlines, bloom rays across the shrine row, a charging channel beam, and a full-field gold restore celebration with confetti and a banner."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At native 160x360, blue crack and red briar solutions sit on opposite sides of each compact room, key pips explain the locked gate, and the enemy lane makes danger predictable. No computed route, breadcrumb, dashed line, or path-probe surface is rendered; posture, facing, interactable glow, gate state, and enemy telegraph carry intent."
+      "note": "At 160x360 beside video the dashed route ribbon, hero light pool, gold shard pools, and ring glows carry the eye; corridors sit darker than beveled walls; the HUD states quest, scent threat, shard pips, and BIG/PICO size; danger text flips color with proximity. Verified on the native frames, not only zoomed captures. Actor scale law is measured from drawn pixels: hero 20x21, pico 17x16, gnawer within 20x32, shrine 18 wide, combined footprint ~2.7% of the playfield, threats scented 6 tiles out with the whole field on screen."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The storybook garden language is consistent across the acorn knight, beetle wardens, reliquary choices, biome architecture, compact room-state HUD, gold sun-gate grammar, weather act, and shrine payoff. The added tactical presentation uses the existing cream, coral, sky, leaf, and gold palette rather than debug geometry."
+      "note": "One storybook-garden grammar holds across actors, biomes, props, HUD, and payoff banners: warm cream text panels, biome accent colors reused in plaques and glows, the same burst-ray and banner language from tier-1 cues to the GLADE RESTORED apex. The strip reads as one authored world, not a mechanics prototype."
     }
   }
 }

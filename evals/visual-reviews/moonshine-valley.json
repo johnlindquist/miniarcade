@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "game": "moonshine-valley",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "63a39c10448f25c94ddae582472200f87cabe2cf637b8a1ed6ef102d73bf6fd4",
+  "gameSha256": "c771598253918434aa6464877beaa770923cccb117092fce4fc9cc3eaf1dea7c",
+  "seed": "0x4d565931",
+  "checkpoints": [
+    "opening@12",
+    "growth@12",
+    "harvest@12",
+    "warning@12",
+    "night@12",
+    "danger@12",
+    "dawn@12",
+    "later@12",
+    "apex@12"
+  ],
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size montage and 65-second render review",
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At 160x360 the farmer has a built body, hat, face, facing, gait, crouch, reach, watering, harvest, sling draw and recoil, hammer windup, carry, hit, and celebration silhouettes. Mireling, moth, and boar have separate construction and action reactions, while the four crops use distinct trellis, flower, bush, and crystal silhouettes, meeting both reference character floors."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The world reads without its HUD through layered valley silhouettes, water and crossings, terraces, orchard walls, press, greenhouse, paths, beds, workshop, farmhouse, barn, windmill, foreground plants, weather, and lighting. Its material density meets both references while preserving a broad threat field."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Willow Spring rebuilds the farm around flooded crossings, Ember Summer uses dry irrigation terraces, Cider Autumn becomes a walled orchard court with press infrastructure, and Frost Moon adds frozen water, snowdrifts, and a greenhouse yard. Geometry, landmarks, crop construction, foreground, lighting, and silhouettes change rather than palette alone."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The inspected 65-second motion receipt shows articulated work poses, crop sway, mill rotation, creature locomotion and reactions, lamp pulses and beams, a traveling warning front, harvest bursts, sunrise rays, a crop-wave sweep, opening barn doors, stacked crates, and the farmer celebration. Warning, contact, follow-through, and physical aftermath meet both references."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Drawn actors remain small, sampled normal footprints stay 4.2-7.5%, and the measured threat runway is 56.3%. Cyan defense cones, violet threats, bright eyes, target routes, damaged crops, the ward line, compact banner, objective, and day clock preserve focal hierarchy at native size."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Cyan moonlamp defense, violet creature pressure, gold harvest payoff, seasonal folk-farm materials, crop species, structures, compact navy HUD, particles, and lighting form one consistent authored world across all four seasons and meet the deliberate cohesion of both references."
+    }
+  }
+}

@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOONSHINE VALLEY</title>
+<style>
+  html,body{margin:0;height:100%;background:#071018}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#101a26}
+  canvas:focus-visible{outline:2px solid #f4d06f;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Moonshine Valley. A tiny farmer plants a changing moonlit farm by day and defends the harvest from valley creatures at night."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,RI,R,hash,clamp,rect,preDraw,postDraw,stepParts,drawParts,
+  start,keys,manual,initSession,sessionStep,drawSession,playing,addScore,createShow,
+  fxBurst,fxDust,shake}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// MOONSHINE VALLEY — Stardew Valley x survival automation. The full farm stays
+// visible: the farmer is tiny, jobs are legible, crops visibly mature, dusk is
+// a real warning, and every dawn reveals what the night took or spared.
+const TAU=Math.PI*2,DAY_FRAMES=3600,DUSK_AT=2100,NIGHT_AT=2340,DAWN_AT=3360,SPAWN_EVERY=120;
+const WORLD_TOP=42,WORLD_BOTTOM=334,SPAWN_Y=55,CONTACT_Y=198,GOAL_Y=309;
+const PLOT_X=[58,79,100,121],PLOT_Y=[218,239,260,281];
+const HOME={x:24,y:291},BIN={x:143,y:292},WORKSHOP={x:20,y:253};
+const WARD_SITES=[{x:48,y:190},{x:83,y:184},{x:118,y:190}];
+const INK='#071018',CREAM='#fff3d1',GOLD='#f4d06f',MINT='#79d68c',CYAN='#79d8df',
+  CORAL='#ef6f61',VIOLET='#9b7bd1',SOIL='#6c4932';
+const SEASONS=[
+  {name:'WILLOW SPRING',sky0:'#6eb7c7',sky1:'#d9e7bc',far:'#688f78',mid:'#3f7058',
+    grass:'#638f4a',grass2:'#4f783d',soil:'#75513a',path:'#b89b68',accent:'#f7d87c',crop:'#79d68c',kind:'willow'},
+  {name:'EMBER SUMMER',sky0:'#87658f',sky1:'#f0a66e',far:'#a65d4e',mid:'#745043',
+    grass:'#8a8741',grass2:'#686c34',soil:'#77452f',path:'#c6965e',accent:'#ffbf65',crop:'#e8c84e',kind:'ember'},
+  {name:'CIDER AUTUMN',sky0:'#577c8d',sky1:'#d9b06d',far:'#8e6848',mid:'#614b38',
+    grass:'#826f3f',grass2:'#665734',soil:'#684535',path:'#b48a57',accent:'#f08b57',crop:'#e79d4f',kind:'cider'},
+  {name:'FROST MOON',sky0:'#273d67',sky1:'#9dc6d5',far:'#536d83',mid:'#3c5668',
+    grass:'#76939a',grass2:'#5b777e',soil:'#5e4b49',path:'#b7c5bf',accent:'#c8f5ef',crop:'#9fe7dc',kind:'frost'}
+];
+const PERSONAS=[
+  {name:'STEWARD',color:MINT,risk:.35,range:82},
+  {name:'TINKER',color:CYAN,risk:.52,range:88},
+  {name:'MOONRUNNER',color:GOLD,risk:.76,range:94}
+];
+const CROP_NAMES=['MOONBEAN','SUNROOT','CIDERBERRY','FROSTBLOOM'];
+const ENEMY={
+  mireling:{hp:3,speed:.255,w:13,h:14,color:'#665a82'},
+  moth:{hp:2,speed:.34,w:16,h:11,color:'#9a78bd'},
+  boar:{hp:6,speed:.205,w:18,h:14,color:'#765242'}
+};
+
+let showFrame=0,runFrame=0,cycleFrame=0,day=1,seasonIndex=0,worldSeed=1,skillSeed=1;
+let actPhase='day',nightSerial=0,spawnSerial=0,actNotes=[],farmer=null,plots=[],enemies=[],shots=[],wards=[];
+let objective=null,skill=null,persona=PERSONAS[0],lastLapsed=false,visualFixture='';
+let banner={text:'',color:CREAM,t:0},pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0;
+const stats={days:1,objectives:0,missedObjectives:0,planted:0,watered:0,harvests:0,
+  shipped:0,shipments:0,coins:8,wardsBuilt:0,fenceLevel:0,kills:0,hits:0,shots:0,
+  cropHits:0,cropLosses:0,breaches:0,nightsHeld:0,perfectNights:0,lastSecondSaves:0,lapses:0,events:0,progress:0,
+  maxEventLull:0,maxProgressLull:0,heldFrames:0,slowedFrames:0,admireFrames:0,
+  appliedIntents:0,maxFarmerStep:0,acts:0,dawns:0};
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},2:{frames:44,minGap:90},
+  3:{frames:84,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+
+const round=(v,n)=>{const p=Math.pow(10,n||4);return Math.round(v*p)/p;};
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),
+  m=s=>Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t);
+  return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1);};
+const poly=(pts,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill();};
+const line=(pts,c,w)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.stroke();ctx.lineWidth=1;};
+const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const season=()=>SEASONS[seasonIndex];
+const plotId=i=>'plot:'+i;
+const enemyId=e=>'enemy:'+e.id;
+const wardId=w=>'ward:'+w.id;
+const cropId=i=>'crop:'+i;
+const wantsActor=id=>{const only=globalThis.__MV_VISUAL_ONLY_ACTOR;return only===undefined||only===null||only===''||only===id;};
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function say(text,color,t){banner={text,color:color||CREAM,t:t||90};}
+function payoffBurst(x,y,n,color,speed,gravity){if(typeof globalThis.__NO_PAYOFF_FX==='undefined')fxBurst(x,y,n,color,speed,gravity);}
+function payoffDust(x,y,n,color){if(typeof globalThis.__NO_PAYOFF_FX==='undefined')fxDust(x,y,n,color);}
+
+function makePlot(x,y,index){return{id:index,x,y,growth:0,watered:false,hp:3,seeded:false,variant:index%4,flash:0};}
+function objectiveCounter(kind){
+  if(kind==='plant')return stats.planted;if(kind==='ship')return stats.shipped;
+  if(kind==='ward')return stats.wardsBuilt;if(kind==='harvest')return stats.harvests;
+  return stats.fenceLevel;
+}
+function startObjective(){
+  const order=['plant','ship','ward','harvest','fence'],kind=order[(day-1)%order.length],start=objectiveCounter(kind);
+  const data=kind==='plant'?['SOW 6 '+CROP_NAMES[seasonIndex],6]:kind==='ship'?['SHIP 5 HARVESTS',5]:
+    kind==='ward'?['RAISE A MOONLAMP',1]:kind==='harvest'?['HARVEST 6 CROPS',6]:['FORTIFY 2 FENCE POSTS',2];
+  objective={kind,label:data[0],start,target:data[1],done:false};say('DAY '+day+' · '+objective.label,season().accent,150);
+}
+function objectiveValue(){return objective?objectiveCounter(objective.kind)-objective.start:0;}
+function completeObjective(){
+  if(!objective||objective.done||objectiveValue()<objective.target)return;
+  objective.done=true;stats.objectives++;stats.coins+=7;markProgress(100);markEvent(50);
+  offer('objective',2,farmer.x,farmer.y,objective.label);payoffBurst(farmer.x,farmer.y-5,18,season().accent,2.2,.03);
+  say('OBJECTIVE COMPLETE · +7',GOLD,110);
+}
+
+function resetGame(){
+  worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;cycleFrame=0;day=1;seasonIndex=0;actPhase='day';nightSerial=0;spawnSerial=0;actNotes=[];
+  farmer={x:HOME.x,y:HOME.y,vx:0,vy:0,face:1,pose:'walk',carry:0,seeds:14,actionCd:0,hitT:0,
+    intent:null,targetId:'',tactic:'OPEN THE FARM',walk:0,watering:0,swing:0,admireT:0,lastX:HOME.x,lastY:HOME.y};
+  plots=[];for(let y=0;y<PLOT_Y.length;y++)for(let x=0;x<PLOT_X.length;x++)plots.push(makePlot(PLOT_X[x],PLOT_Y[y],plots.length));
+  // A lived-in opening: six beds show four growth stages immediately.
+  for(let i=0;i<6;i++){plots[i].seeded=true;plots[i].watered=true;plots[i].growth=[180,360,590,820,940,1040][i];plots[i].variant=i%4;}
+  enemies=[];shots=[];wards=[];objective=null;lastLapsed=false;visualFixture='';eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;
+  beginDawn.lastLosses=0;beginDawn.lastHits=0;
+  for(const key in stats)stats[key]=0;Object.assign(stats,{days:1,coins:8});
+  persona=PERSONAS[RI(0,PERSONAS.length-1)];
+  skill=skillProfile({rng:createRng(skillSeed),skill:.82,precision:.86,risk:persona.risk,recovery:.9,
+    reactionFrames:[3,7],lapseChance:.0005,lapseFrames:[18,36]});
+  startObjective();SHOW.reset(showFrame);
+}
+
+function nearestPlot(test,origin){let best=null,bestD=Infinity;for(const p of plots){if(!test(p))continue;const d=distance(origin||farmer,p);if(d<bestD){bestD=d;best=p;}}return best;}
+function targetPoint(id){
+  if(id==='home')return HOME;if(id==='bin')return BIN;if(id==='workshop')return WORKSHOP;
+  if(id&&id.startsWith('plot:'))return plots[+id.slice(5)]||null;
+  if(id&&id.startsWith('enemy:'))return enemies.find(e=>e.id===+id.slice(6))||null;
+  return null;
+}
+function moveIntentTo(target,id,tactic,act,aim){
+  if(!target)return{dx:0,dy:0,act:false,aimX:farmer.x,aimY:farmer.y,targetId:'none',tactic:'CHECK THE LEDGER'};
+  const dx=target.x-farmer.x,dy=target.y-farmer.y,d=Math.hypot(dx,dy)||1;
+  return{dx:dx/d,dy:dy/d,act:!!act,aimX:aim?aim.x:target.x,aimY:aim?aim.y:target.y,targetId:id,tactic};
+}
+function dayIntent(){
+  if(farmer.carry>=4){const d=distance(farmer,BIN);return moveIntentTo(BIN,'bin','SHIP THE HARVEST',d<8);}
+  if(objective&&objective.kind==='ward'&&!objective.done){const d=distance(farmer,WORKSHOP);return moveIntentTo(WORKSHOP,'workshop','RAISE A MOONLAMP',d<8);}
+  if(objective&&objective.kind==='fence'&&!objective.done){const d=distance(farmer,WORKSHOP);return moveIntentTo(WORKSHOP,'workshop','FORTIFY THE FENCE',d<8);}
+  const ripe=nearestPlot(p=>p.seeded&&p.growth>=900,farmer);
+  if(ripe){const d=distance(farmer,ripe);return moveIntentTo(ripe,plotId(ripe.id),'HARVEST '+CROP_NAMES[ripe.variant],d<7);}
+  const dry=nearestPlot(p=>p.seeded&&!p.watered,farmer);
+  if(dry){const d=distance(farmer,dry);return moveIntentTo(dry,plotId(dry.id),'WATER THE ROW',d<7);}
+  const empty=farmer.seeds>0&&nearestPlot(p=>!p.seeded,farmer);
+  if(empty){const d=distance(farmer,empty);return moveIntentTo(empty,plotId(empty.id),'SOW '+CROP_NAMES[seasonIndex],d<7);}
+  if(farmer.carry>0){const d=distance(farmer,BIN);return moveIntentTo(BIN,'bin','SHIP THE HARVEST',d<8);}
+  return moveIntentTo({x:42+hash(day,worldSeed)*82,y:203},'home','TEND THE VALLEY',false);
+}
+function baselineNightIntent(){
+  // Shipping baseline: it only reacts after a creature has crossed most of the
+  // yard, and fires at current position. It works, but squanders approach room.
+  let threat=null,best=Infinity;for(const e of enemies)if(!e.dead&&e.y>192){const d=distance(farmer,e);if(d<best){best=d;threat=e;}}
+  if(threat){const close=best<62;return moveIntentTo(close?farmer:{x:threat.x,y:clamp(threat.y+34,204,288)},enemyId(threat),
+    close?'SLING AT THE SHADOW':'CLOSE THE DISTANCE',close,{x:threat.x,y:threat.y});}
+  return moveIntentTo({x:80,y:286},'home','GUARD THE HARVEST',false);
+}
+function forecastThreat(e){
+  // Pure copied-state read: no engine RNG and no mutation. Rank by time to a
+  // live row, crop value, and current damage; then lead the exact linear
+  // velocity the creature is already applying while the pebble is in flight.
+  const target=plots[e.target]||{x:80,y:GOAL_Y,growth:0,hp:3},spec=ENEMY[e.kind];
+  const remaining=distance(e,target)/Math.max(.01,spec.speed),shotFrames=distance(farmer,e)/2.35;
+  // A hash-stable hand wobble keeps the forecast readable without turning it
+  // into an aimbot. __NO_LAPSE removes the wobble for the competence anchor.
+  const fuzz=typeof globalThis.__NO_LAPSE!=='undefined'?0:
+    (hash(e.id*37+worldSeed,(runFrame/24)|0)-.5)*(24+persona.risk*18);
+  const aim={x:clamp(e.x+e.vx*shotFrames+fuzz,6,154),y:clamp(e.y+e.vy*shotFrames+fuzz*.18,WORLD_TOP+2,WORLD_BOTTOM-2)};
+  const intercept={x:clamp(aim.x,18,142),y:clamp(aim.y+68,150,286)};
+  const urgency=remaining-target.growth*.012-target.hp*11+(e.kind==='boar'?-55:0);
+  return{id:e.id,remaining,shotFrames,urgency,aim,intercept,target:target.id,y:e.y,drama:e.drama};
+}
+function smartNightIntent(){
+  let plans=enemies.filter(e=>!e.dead&&!e.flee).map(forecastThreat).sort((a,b)=>a.urgency-b.urgency||a.id-b.id);
+  // Roughly one creature per night is deliberately read late. The viewer gets
+  // a forecastable last-light save instead of a flawless firing solution.
+  if(typeof globalThis.__NO_LAPSE==='undefined')plans=plans.filter(p=>!p.drama||p.y>=195);
+  if(!plans.length)return moveIntentTo({x:80,y:286},'home','LISTEN AT THE FENCE',false);
+  const plan=plans[0],threat=enemies.find(e=>e.id===plan.id),d=distance(farmer,threat),close=d<persona.range;
+  return moveIntentTo(close?farmer:plan.intercept,enemyId(threat),close?'LEAD THE '+threat.kind.toUpperCase():'CUT OFF THE '+threat.kind.toUpperCase(),close,plan.aim);
+}
+function rawBotIntent(){
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'&&actPhase==='dawn')
+    return{dx:0,dy:0,act:false,aimX:farmer.x,aimY:farmer.y,targetId:'home',tactic:'WATCH THE SUNRISE'};
+  if(actPhase==='warn'){
+    if(farmer.carry>0){const d=distance(farmer,BIN);return moveIntentTo(BIN,'bin','BEAT DUSK · SHIP NOW',d<8);}
+    return moveIntentTo(HOME,'home','BATTEN THE FARM',false);
+  }
+  if(actPhase==='night')return typeof globalThis.__NO_NIGHT_PLAN!=='undefined'?baselineNightIntent():smartNightIntent();
+  return dayIntent();
+}
+function lapseIntent(context,last){const base=last||rawBotIntent();return Object.assign({},base,{dx:(base.dx||0)*.08,dy:(base.dy||0)*.08,act:false,tactic:'WATCHING FIREFLIES'});}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined'){lastLapsed=false;return rawBotIntent();}
+  const before=skill.isLapsed(runFrame),intent=skill.decide(runFrame,null,rawBotIntent,lapseIntent),after=skill.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();say('... FIREFLIES',VIOLET,42);}
+  lastLapsed=after;return intent||rawBotIntent();
+}
+function humanIntent(){
+  const dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0);
+  let target=enemies.filter(e=>!e.dead).sort((a,b)=>distance(farmer,a)-distance(farmer,b))[0],targetId=target?enemyId(target):'manual';
+  return{dx,dy,act:!!(keys.a||keys.b||keys.c),aimX:target?target.x:farmer.x+farmer.face*30,
+    aimY:target?target.y:farmer.y,targetId,tactic:'MANUAL FARMHAND'};
+}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+function plantPlot(p){if(p.seeded||farmer.seeds<=0)return;p.seeded=true;p.growth=0;p.watered=false;p.hp=3;p.variant=seasonIndex;farmer.seeds--;farmer.actionCd=24;farmer.pose='plant';stats.planted++;markEvent(7);markProgress();offer('plant',1,p.x,p.y,p.id);payoffDust(p.x,p.y,6,season().soil);}
+function waterPlot(p){if(!p.seeded||p.watered)return;p.watered=true;farmer.actionCd=20;farmer.watering=20;farmer.pose='water';stats.watered++;markEvent(4);offer('water',1,p.x,p.y,p.id);}
+function harvestPlot(p){if(!p.seeded||p.growth<900||farmer.carry>=4)return;p.seeded=false;p.growth=0;p.watered=false;p.hp=3;farmer.carry++;farmer.seeds=Math.min(20,farmer.seeds+1);farmer.actionCd=20;farmer.pose='harvest';stats.harvests++;markEvent(12);markProgress();offer('harvest',1,p.x,p.y,p.variant);payoffBurst(p.x,p.y-5,10,season().accent,1.5,.04);}
+function shipHarvest(){if(!farmer.carry)return;const n=farmer.carry;farmer.carry=0;stats.shipped+=n;stats.shipments++;stats.coins+=n*4;farmer.actionCd=26;farmer.pose='carry';markEvent(15);markProgress(n);offer('shipment',2,BIN.x,BIN.y,n);payoffBurst(BIN.x,BIN.y-8,14,GOLD,2,.04);say('SHIPPED '+n+' · +'+n*4,GOLD,58);}
+function buildAtWorkshop(){
+  if(objective&&objective.kind==='ward'&&!objective.done&&wards.length<WARD_SITES.length&&stats.coins>=10){
+    const site=WARD_SITES[wards.length];stats.coins-=10;wards.push({id:wards.length,x:site.x,y:site.y,hp:5,cool:20,flash:0});stats.wardsBuilt++;
+    farmer.actionCd=42;farmer.pose='hammer';markEvent(20);markProgress(2);offer('ward',2,site.x,site.y,wards.length);payoffBurst(site.x,site.y-8,16,CYAN,2,.03);say('MOONLAMP ONLINE',CYAN,72);
+  }else if(objective&&objective.kind==='fence'&&!objective.done&&stats.coins>=6){
+    stats.coins-=6;stats.fenceLevel++;farmer.actionCd=36;farmer.pose='hammer';markEvent(14);markProgress();offer('fence',1,WORKSHOP.x,WORKSHOP.y,stats.fenceLevel);payoffDust(WORKSHOP.x,WORKSHOP.y,8,GOLD);
+  }
+}
+function shootAt(intent){
+  if(farmer.actionCd>0)return;const dx=intent.aimX-farmer.x,dy=intent.aimY-farmer.y,d=Math.hypot(dx,dy)||1;
+  shots.push({id:stats.shots,x:farmer.x+dx/d*6,y:farmer.y-3+dy/d*6,vx:dx/d*2.35,vy:dy/d*2.35,life:72,damage:1,source:'farmer'});
+  farmer.actionCd=24;farmer.swing=10;farmer.pose='sling';farmer.face=dx<0?-1:1;stats.shots++;markEvent(2);
+}
+function contextAction(intent){
+  let target=targetPoint(intent.targetId);
+  if(target&&intent.targetId.startsWith('enemy:')){shootAt(intent);return;}
+  if(target&&intent.targetId.startsWith('plot:')){if(!target.seeded)plantPlot(target);else if(!target.watered)waterPlot(target);else harvestPlot(target);return;}
+  if(intent.targetId==='bin'){shipHarvest();return;}if(intent.targetId==='workshop'){buildAtWorkshop();return;}
+  // Manual context: nearby crop, bin, workshop, otherwise sling at nearest threat.
+  const p=nearestPlot(q=>distance(farmer,q)<8,farmer);if(p){if(!p.seeded)plantPlot(p);else if(!p.watered)waterPlot(p);else harvestPlot(p);return;}
+  if(distance(farmer,BIN)<9){shipHarvest();return;}if(distance(farmer,WORKSHOP)<9){buildAtWorkshop();return;}
+  if(enemies.length)shootAt(intent);
+}
+function applyIntent(intent){
+  intent=intent||{dx:0,dy:0,act:false,aimX:farmer.x,aimY:farmer.y,targetId:'none',tactic:'WAIT'};
+  stats.appliedIntents++;farmer.intent=intent;farmer.targetId=intent.targetId;farmer.tactic=intent.tactic;
+  farmer.lastX=farmer.x;farmer.lastY=farmer.y;let dx=clamp(intent.dx||0,-1,1),dy=clamp(intent.dy||0,-1,1),d=Math.hypot(dx,dy);
+  if(d>1){dx/=d;dy/=d;}const speed=farmer.hitT>0?.34:.68;farmer.vx+=(dx*speed-farmer.vx)*.32;farmer.vy+=(dy*speed-farmer.vy)*.32;
+  if(!dx&&!dy){farmer.vx*=.6;farmer.vy*=.6;}farmer.x=clamp(farmer.x+farmer.vx,8,152);farmer.y=clamp(farmer.y+farmer.vy,104,318);
+  const moved=Math.hypot(farmer.x-farmer.lastX,farmer.y-farmer.lastY);stats.maxFarmerStep=Math.max(stats.maxFarmerStep,moved);farmer.walk+=moved;
+  if(Math.abs(farmer.vx)>.05)farmer.face=farmer.vx<0?-1:1;
+  if(farmer.actionCd>0)farmer.actionCd--;if(farmer.hitT>0)farmer.hitT--;if(farmer.watering>0)farmer.watering--;if(farmer.swing>0)farmer.swing--;
+  if(intent.act)contextAction(intent);
+  if(farmer.actionCd<=0)farmer.pose=moved>.08?'walk':'idle';
+}
+
+function spawnEnemy(forceType){
+  const kind=forceType||(day>=4&&spawnSerial%6===5?'boar':spawnSerial%3===1?'moth':'mireling'),spec=ENEMY[kind];
+  const target=plots[RI(0,plots.length-1)],x=clamp(38+(spawnSerial%4)*29+R(-5,5),18,142);
+  const id=spawnSerial++,drama=hash(id*29+worldSeed,day*17)<.12;
+  enemies.push({id,kind,x,y:SPAWN_Y,vx:0,vy:spec.speed,hp:spec.hp,maxHp:spec.hp,target:target.id,drama,
+    hitT:0,attackCd:30,dead:false,flee:false,phase:hash(spawnSerial,worldSeed)*TAU});stats.acts++;markEvent();
+}
+function killEnemy(e){if(e.dead)return;e.dead=true;stats.kills++;markEvent(15);markProgress();
+  if(e.drama&&e.y>=CONTACT_Y-12){stats.lastSecondSaves++;offer('last-light-save',2,e.x,e.y,e.kind);say('LAST-LIGHT SAVE!',GOLD,48);}
+  else offer('creature-down',1,e.x,e.y,e.kind);payoffBurst(e.x,e.y,12,ENEMY[e.kind].color,1.8,.035);}
+function hitEnemy(e,damage){if(e.dead)return;e.hp-=damage;e.hitT=8;stats.hits++;markEvent(2);if(e.hp<=0)killEnemy(e);}
+function stepShots(){
+  for(const s of shots){s.x+=s.vx;s.y+=s.vy;s.life--;
+    for(const e of enemies){if(e.dead||e.flee)continue;const spec=ENEMY[e.kind];if(Math.abs(s.x-e.x)<spec.w/2+2&&Math.abs(s.y-e.y)<spec.h/2+2){hitEnemy(e,s.damage);s.life=0;break;}}
+  }shots=shots.filter(s=>s.life>0&&s.x>-8&&s.x<W+8&&s.y>WORLD_TOP&&s.y<WORLD_BOTTOM+8);
+}
+function retargetEnemy(e){const live=plots.filter(p=>p.seeded);const target=(live.length?live:plots).slice().sort((a,b)=>distance(e,a)-distance(e,b))[0];e.target=target.id;}
+function stepEnemies(){
+  for(const e of enemies){if(e.dead)continue;const spec=ENEMY[e.kind];if(e.hitT>0)e.hitT--;
+    if(e.flee){e.vy+=(-.62-e.vy)*.08;e.y+=e.vy;e.x+=Math.sin(runFrame*.08+e.phase)*.18;continue;}
+    let target=plots[e.target];if(!target||!target.seeded)retargetEnemy(e);target=plots[e.target]||{x:80,y:GOAL_Y};
+    const dx=target.x-e.x,dy=target.y-e.y,d=Math.hypot(dx,dy)||1;
+    const weave=e.kind==='moth'?Math.sin(runFrame*.075+e.phase)*.24:0;
+    e.vx+=(dx/d*spec.speed+weave-e.vx)*.12;e.vy+=(dy/d*spec.speed-e.vy)*.12;e.x=clamp(e.x+e.vx,7,153);e.y+=e.vy;
+    if(d<8){e.attackCd--;if(e.attackCd<=0){e.attackCd=e.kind==='boar'?24:36;target.hp--;stats.cropHits++;markEvent();offer('crop-hit',1,target.x,target.y,e.id);
+      if(target.hp<=0){target.seeded=false;target.growth=0;target.watered=false;target.hp=3;stats.cropLosses++;markProgress();say('A ROW WAS TRAMPLED',CORAL,58);retargetEnemy(e);}}}
+    if(e.y>GOAL_Y+8){e.dead=true;stats.breaches++;markEvent();}
+  }
+  enemies=enemies.filter(e=>!e.dead&&e.y>WORLD_TOP-20);
+}
+function stepWards(){
+  for(const w of wards){if(w.flash>0)w.flash--;if(--w.cool>0)continue;w.cool=66;
+    let target=null,best=58;for(const e of enemies)if(!e.dead&&!e.flee){const d=distance(w,e);if(d<best){best=d;target=e;}}
+    if(target){const dx=target.x-w.x,dy=target.y-w.y,d=Math.hypot(dx,dy)||1;shots.push({id:100000+stats.shots++,x:w.x,y:w.y-10,vx:dx/d*2.05,vy:dy/d*2.05,life:45,damage:1,source:'ward'});w.flash=10;markEvent();}
+  }
+}
+function stepCrops(){for(const p of plots){if(p.flash>0)p.flash--;if(p.seeded&&p.watered&&actPhase!=='night')p.growth=Math.min(1080,p.growth+1.05);}}
+
+function beginDusk(){actPhase='warn';const note={kind:'act-warning',id:'night',at:showFrame,tag:day,landsAt:showFrame+(NIGHT_AT-DUSK_AT)};actNotes.push(note);SHOW.note(note);say('DUSK · CREATURES STIR',VIOLET,150);}
+function beginNight(){actPhase='night';nightSerial++;stats.acts++;const note={kind:'act-land',id:'night',at:showFrame,tag:day};actNotes.push(note);SHOW.note(note);spawnEnemy();offer('nightfall',2,80,96,day);say('NIGHTFALL · HOLD THE ROWS',CORAL,110);}
+function beginDawn(){
+  actPhase='dawn';stats.dawns++;const lost=stats.cropLosses-(beginDawn.lastLosses||0),hits=stats.cropHits-(beginDawn.lastHits||0);beginDawn.lastLosses=stats.cropLosses;beginDawn.lastHits=stats.cropHits;
+  if(lost<=1)stats.nightsHeld++;if(hits===0)stats.perfectNights++;for(const e of enemies)if(!e.dead)e.flee=true;
+  farmer.seeds=Math.min(18,farmer.seeds+6);stats.coins+=lost===0?5:2;markEvent(70);markProgress(3);
+  offer('dawn',3,80,85,lost===0?'PERFECT DAWN':lost+' ROWS LOST');payoffBurst(80,190,lost===0?42:28,lost===0?GOLD:MINT,3,.02);shake(lost===0?7:4);
+  say(lost===0?'DAWN · EVERY ROW SURVIVED':'DAWN · '+lost+' ROW'+(lost===1?'':'S')+' LOST',lost===0?GOLD:MINT,150);
+  const note={kind:'dawn',id:'daycycle',at:showFrame,tag:day};actNotes.push(note);SHOW.note(note);
+}
+function nextDay(){
+  if(objective&&!objective.done)stats.missedObjectives++;day++;stats.days=day;seasonIndex=Math.floor((day-1)/3)%SEASONS.length;cycleFrame=0;actPhase='day';
+  for(const p of plots){if(p.seeded)p.watered=false;p.hp=3;}for(const e of enemies)e.dead=true;enemies=[];shots=[];
+  startObjective();
+}
+function stepCycle(){
+  cycleFrame++;
+  if(typeof globalThis.__NO_ACTS==='undefined'){
+    if(cycleFrame===DUSK_AT)beginDusk();
+    else if(cycleFrame===NIGHT_AT)beginNight();
+    else if(cycleFrame===DAWN_AT)beginDawn();
+    if(actPhase==='night'&&cycleFrame>NIGHT_AT&&cycleFrame<DAWN_AT&&((cycleFrame-NIGHT_AT)%SPAWN_EVERY===0))spawnEnemy();
+  }else actPhase='day';
+  if(cycleFrame>=DAY_FRAMES)nextDay();
+}
+function stepWorld(){
+  runFrame++;stepCycle();stepCrops();applyIntent(controller());stepWards();stepEnemies();stepShots();completeObjective();
+}
+function allFinite(){return[showFrame,runFrame,cycleFrame,farmer.x,farmer.y,farmer.vx,farmer.vy,stats.coins]
+  .every(Number.isFinite)&&plots.every(p=>[p.x,p.y,p.growth,p.hp].every(Number.isFinite))&&
+  enemies.every(e=>[e.x,e.y,e.vx,e.vy,e.hp].every(Number.isFinite))&&shots.every(s=>[s.x,s.y,s.vx,s.vy,s.life].every(Number.isFinite));}
+function step(){
+  showFrame++;sessionStep({reset:resetGame});pres=SHOW.step(showFrame);
+  if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  if(pres.holdWorld)stats.heldFrames++;if(pres.physicsEvery>1)stats.slowedFrames++;if(pres.admire)stats.admireFrames++;
+  if(banner.t>0)banner.t--;stepParts();
+}
+
+// ---- authored farm renderer ----------------------------------------------------
+function daylight(){
+  if(typeof globalThis.__NO_ACTS!=='undefined')return 1;
+  if(cycleFrame<DUSK_AT)return .78+.22*Math.sin(cycleFrame/DUSK_AT*Math.PI);
+  if(cycleFrame<NIGHT_AT)return 1-(cycleFrame-DUSK_AT)/(NIGHT_AT-DUSK_AT)*.78;
+  if(cycleFrame<DAWN_AT)return .18;
+  return .18+(cycleFrame-DAWN_AT)/(DAY_FRAMES-DAWN_AT)*.82;
+}
+function drawSky(){
+  const z=season(),lit=daylight(),top=mix('#10152d',z.sky0,lit),bot=mix('#262141',z.sky1,lit);
+  for(let i=0;i<7;i++)rect(0,i*16,W,17,mix(top,bot,i/6));
+  const sunP=cycleFrame/DAY_FRAMES,x=8+sunP*144,y=72-Math.sin(sunP*Math.PI)*48;
+  if(lit>.35){ctx.globalAlpha=.18;ctx.fillStyle=z.accent;ctx.beginPath();ctx.arc(x,y,12,0,TAU);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle=z.accent;ctx.beginPath();ctx.arc(x,y,5,0,TAU);ctx.fill();}
+  else{const mx=128-(cycleFrame-NIGHT_AT)/(DAWN_AT-NIGHT_AT)*70,my=38-Math.sin(clamp((cycleFrame-NIGHT_AT)/(DAWN_AT-NIGHT_AT),0,1)*Math.PI)*16;
+    ctx.globalAlpha=.18;ctx.fillStyle='#d8e8ff';ctx.beginPath();ctx.arc(mx,my,11,0,TAU);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#e9eddb';ctx.beginPath();ctx.arc(mx,my,5,0,TAU);ctx.fill();ctx.fillStyle=top;ctx.beginPath();ctx.arc(mx+2,my-1,5,0,TAU);ctx.fill();
+    for(let i=0;i<22;i++){ctx.globalAlpha=.35+.35*Math.sin(showFrame*.04+i);rect(hash(i*17,worldSeed)*W,8+hash(i*7,worldSeed+9)*75,1+(i%7===0),1,'#e8f4ff');}ctx.globalAlpha=1;}
+}
+function drawFarValley(){
+  const z=season();poly([[0,126],[0,82],[18,65],[37,88],[61,54],[86,87],[115,61],[139,88],[160,68],[160,126]],z.far);
+  poly([[0,132],[0,103],[24,84],[46,111],[73,76],[103,112],[132,85],[160,104],[160,132]],z.mid);
+  if(z.kind==='willow'){for(const x of[15,140]){rect(x-1,77,3,29,'#5a4631');ctx.fillStyle='#5b8f61';ctx.beginPath();ctx.arc(x,72,13,0,TAU);ctx.fill();for(let i=0;i<5;i++)line([[x-8+i*4,72],[x-10+i*4,93]],'#78aa70');}}
+  else if(z.kind==='ember'){for(const x of[14,126]){rect(x,72,3,32,'#664135');poly([[x-6,75],[x+1,58],[x+9,75]],'#a75f46');rect(x-8,92,18,3,'#9a5a45');}}
+  else if(z.kind==='cider'){for(let i=0;i<4;i++){const x=12+i*45;rect(x,74,3,30,'#604632');ctx.fillStyle=i%2?'#b46c42':'#cc8848';ctx.beginPath();ctx.arc(x,70,10,0,TAU);ctx.fill();}}
+  else{for(let i=0;i<5;i++){const x=7+i*38;poly([[x,105],[x+7,63-(i%2)*8],[x+14,105]],'#365666');poly([[x+2,91],[x+7,70-(i%2)*8],[x+12,91]],'#8fb5ba');}}
+}
+function drawGround(){
+  const z=season();rect(0,106,W,WORLD_BOTTOM-106,z.grass);for(let y=112;y<WORLD_BOTTOM;y+=13)for(let x=3;x<W;x+=17)
+    if(hash(x+worldSeed,y+seasonIndex)>.58)rect(x+(y%5),y,2,1,z.grass2);
+  // Every season rebuilds the farm's spatial grammar while preserving the
+  // full threat runway. Spring floods crossings, summer terraces the slope,
+  // autumn walls an orchard court, and winter freezes a greenhouse yard.
+  if(z.kind==='willow'){
+    rect(0,116,26,218,'#287b91');for(let y=120;y<330;y+=15){ctx.globalAlpha=.38;rect(2+(y%7),y,20,2,CYAN);}ctx.globalAlpha=1;
+    rect(21,168,119,7,'#2b8194');for(let x=26;x<139;x+=17){ctx.globalAlpha=.3;rect(x,170,10,1,'#a9e9e8');}ctx.globalAlpha=1;
+    for(const bx of[43,77,111]){rect(bx,166,13,11,'#8a603b');for(let x=bx+1;x<bx+13;x+=4)rect(x,165,2,13,'#c18b4f');}
+    ctx.globalAlpha=.8;rect(28,190,111,10,z.path);rect(31,190,10,124,z.path);rect(36,286,108,10,z.path);ctx.globalAlpha=1;
+  }else if(z.kind==='ember'){
+    rect(0,118,21,216,'#70482f');for(let y=123;y<330;y+=19){rect(2+(y%8),y,15,3,'#9b6940');rect(5+(y%5),y+1,5,1,'#c18b56');}
+    for(const q of[{y:132,x:28,w:112},{y:160,x:38,w:102},{y:187,x:29,w:110}]){ctx.globalAlpha=.3;rect(q.x,q.y,q.w,12,'#b68b50');ctx.globalAlpha=1;rect(q.x,q.y+9,q.w,3,'#7b5639');for(let x=q.x+4;x<q.x+q.w;x+=16)rect(x,q.y+8,7,2,'#d0a565');}
+    ctx.globalAlpha=.82;rect(22,193,118,9,z.path);rect(33,193,9,121,z.path);rect(36,286,108,9,z.path);ctx.globalAlpha=1;
+  }else if(z.kind==='cider'){
+    rect(0,118,24,216,'#2d7184');for(let y=122;y<330;y+=17){ctx.globalAlpha=.32;rect(3+(y%6),y,17,2,'#83c9cf');}ctx.globalAlpha=1;
+    rect(27,128,4,66,'#7d735e');rect(31,128,108,4,'#9a8d70');for(let x=34;x<139;x+=15){rect(x,128,8,3,'#b0a27d');rect(x+7,131,2,6,'#6d624f');}
+    rect(32,174,107,4,'#776a53');for(let x=35;x<138;x+=14)rect(x,172,7,3,'#a49573');
+    ctx.globalAlpha=.8;rect(26,194,114,9,z.path);rect(32,194,10,120,z.path);rect(36,286,108,10,z.path);ctx.globalAlpha=1;
+  }else{
+    rect(0,114,31,220,'#79a8b5');for(let y=118;y<330;y+=18){rect(2+(y%9),y,25,2,'#c9e4e3');line([[3,y+5],[13,y+2],[24,y+7]],'#5f8797');}
+    ctx.globalAlpha=.65;for(const q of[[32,135,44],[89,151,56],[34,184,104]]){rect(q[0],q[1],q[2],5,'#dbe9e5');rect(q[0]+4,q[1]-2,q[2]-8,3,'#eef6f1');}ctx.globalAlpha=1;
+    rect(23,185,18,9,'#8a7458');for(let x=24;x<41;x+=4)rect(x,184,2,11,'#d4bd8c');
+    ctx.globalAlpha=.8;rect(30,195,110,9,z.path);rect(33,195,10,119,z.path);rect(36,286,108,10,z.path);ctx.globalAlpha=1;
+  }
+  for(let i=0;i<10;i++){const x=33+hash(i,worldSeed)*103,y=198+hash(i+17,worldSeed)*108;rect(x,y,2,1,mix(z.path,z.soil,.55));}
+}
+function drawSeasonProps(front){
+  const z=season(),sway=Math.sin(showFrame*.045)>0?1:0;
+  if(z.kind==='willow'){
+    if(!front){
+      for(const q of[[49,153],[92,170],[132,137]]){const[x,y]=q;rect(x-1,y-2,3,18,'#5b4632');ctx.fillStyle='#4d8052';ctx.beginPath();ctx.arc(x,y-8,8,0,TAU);ctx.fill();ctx.fillStyle='#6ca963';ctx.beginPath();ctx.arc(x-3,y-11,5,0,TAU);ctx.fill();for(let i=-4;i<=4;i+=4)line([[x+i,y-8],[x+i+sway,y+5]],'#76a56c');}
+      for(let i=0;i<9;i++){const x=41+i*12,y=181+(i%3)*3;rect(x,y,2,2,i%2?'#f8d88b':'#e9a8bd');rect(x,y+2,1,3,'#4f7d43');}
+      ctx.fillStyle='#327f8e';ctx.beginPath();ctx.ellipse(116,151,17,8,0,0,TAU);ctx.fill();ctx.strokeStyle='#9bdad1';ctx.beginPath();ctx.ellipse(116,151,13,5,0,0,TAU);ctx.stroke();for(let i=0;i<5;i++)rect(104+i*6,146+(i%2)*7,2,2,'#e9d987');
+    }else for(let i=0;i<7;i++){const x=3+(i%3)*7,y=246+i*13;rect(x,y-7,1,8,'#315f48');poly([[x,y-7],[x+2,y-11],[x+3,y-7]],i%2?'#c69b54':'#769b62');}
+  }else if(z.kind==='ember'){
+    if(!front){
+      for(let i=0;i<4;i++){const x=45+i*26,y=155+(i%2)*18;rect(x-7,y-4,14,9,'#b8873e');rect(x-6,y-3,12,2,'#e1b861');line([[x-7,y],[x+7,y]],'#76512d');}
+      for(let i=0;i<6;i++){const x=39+i*19,y=188-(i%2)*8;rect(x,y-13,2,14,'#61723b');ctx.fillStyle='#d48c32';ctx.beginPath();ctx.arc(x+1,y-14,4,0,TAU);ctx.fill();rect(x,y-15,2,2,'#5b3b2c');}
+      ctx.globalAlpha=.16;for(let y=119;y<190;y+=13)line([[35,y],[139,y-4]],'#f2c17a');ctx.globalAlpha=1;
+      const px=103,py=145;rect(px-10,py-4,20,13,'#745039');rect(px-8,py-8,16,6,'#b98443');for(let x=px-6;x<px+8;x+=5)rect(x,py-9,3,17,'#e2bc67');rect(px-13,py+5,26,3,'#4d392e');
+    }else{ctx.globalAlpha=.22;for(let i=0;i<8;i++){const x=(i*37+showFrame*.2)%160,y=116+(i*29)%196;line([[x,y],[x+5,y-1]],'#efbe73');}ctx.globalAlpha=1;}
+  }else if(z.kind==='cider'){
+    if(!front){
+      for(const q of[[49,143],[78,170],[109,146],[134,174]]){const[x,y]=q;rect(x-1,y-1,3,19,'#5d402e');ctx.fillStyle='#8f5d38';ctx.beginPath();ctx.arc(x,y-9,8,0,TAU);ctx.fill();ctx.fillStyle='#c57a3f';ctx.beginPath();ctx.arc(x-3,y-12,5,0,TAU);ctx.fill();for(const dx of[-4,2])rect(x+dx,y-10+(dx>0?2:0),2,2,GOLD);}
+      for(const x of[126,136]){rect(x-5,184,10,9,'#74472e');rect(x-4,182,8,3,'#a06a3b');rect(x-5,187,10,1,'#cf9b5c');}
+      const px=92,py=160;rect(px-12,py-2,24,5,'#6b4932');rect(px-8,py-17,16,16,'#845739');rect(px-5,py-14,10,9,'#c98545');rect(px-3,py-12,6,5,'#6d3f2e');rect(px-1,py-24,3,8,'#5c4637');rect(px-7,py-23,15,3,'#a97949');line([[px-5,py-20],[px+5,py-12]],'#e1bd71',2);
+    }else for(let i=0;i<13;i++){const x=29+hash(i,day)*126,y=207+hash(i+13,worldSeed)*120;poly([[x,y],[x+3,y+1],[x+1,y+3]],i%3?'#d77b3f':'#efb151');}
+  }else{
+    if(!front){
+      for(const q of[[47,149],[92,165],[133,145]]){const[x,y]=q;rect(x-1,y-2,3,20,'#4d4b49');poly([[x-8,y-2],[x,y-22],[x+8,y-2]],'#416778');poly([[x-6,y-10],[x,y-29],[x+6,y-10]],'#e1efec');}
+      for(let i=0;i<5;i++){const x=39+i*24,y=188-(i%2)*5;poly([[x-3,y],[x,y-10],[x+3,y]],i%2?'#b7e7e5':'#8fc8d4');rect(x-1,y-7,2,5,'#f1ffff');}
+      ctx.globalAlpha=.55;for(let x=35;x<142;x+=27)rect(x,176+(x%9),18,3,'#d9e8e3');ctx.globalAlpha=1;
+      const gx=82,gy=163;ctx.globalAlpha=.55;rect(gx-22,gy-24,44,25,'#b7d8d7');ctx.globalAlpha=1;line([[gx-22,gy-24],[gx,gy-37],[gx+22,gy-24]],'#eaf7f1',2);rect(gx-20,gy-22,40,21,'#6e9ba3');for(let x=gx-17;x<gx+19;x+=9)rect(x,gy-21,1,19,'#d6efeb');for(let y=gy-17;y<gy;y+=7)rect(gx-20,y,40,1,'#bfe0dd');rect(gx-3,gy-13,6,12,'#eff8ec');
+    }else for(let i=0;i<16;i++){const x=hash(i,worldSeed)*160,y=110+((hash(i+9,day)*220+showFrame*.24*(1+i%2))%220);ctx.globalAlpha=.45;rect(x,y,1+(i%5===0),1,'#f2ffff');}ctx.globalAlpha=1;
+  }
+}
+function drawFarmhouse(){
+  const z=season(),x=25,y=137;rect(x-12,y-18,24,20,'#744b3f');poly([[x-14,y-18],[x,y-34],[x+14,y-18]],z.accent);rect(x-5,y-11,10,13,'#3e2f2a');rect(x-3,y-9,6,11,'#5b4031');rect(x-10,y-13,6,7,'#9bd4d8');rect(x-9,y-12,2,5,'#d9f2e8');rect(x+7,y-27,4,9,'#5e4338');
+  if(daylight()<.35){ctx.globalAlpha=.18;rect(x-13,y-19,26,22,GOLD);ctx.globalAlpha=1;rect(x-9,y-12,4,5,GOLD);}
+}
+function drawBarnAndMill(){
+  const z=season(),x=141,y=151,open=actPhase==='dawn'&&pres.cue&&pres.cue.tier>=3;rect(x-11,y-20,22,22,'#8f453e');poly([[x-13,y-20],[x,y-35],[x+13,y-20]],mix(z.accent,'#c44b42',.45));
+  if(open){rect(x-7,y-12,14,14,'#261d21');rect(x-10,y-11,5,13,'#a75a45');rect(x+5,y-11,5,13,'#a75a45');line([[x-10,y-10],[x-5,y]],'#e7c98c');line([[x+10,y-10],[x+5,y]],'#e7c98c');for(let i=0;i<3;i++){rect(x-5+i*4,y-3-i*2,5,4,'#8a6038');rect(x-4+i*4,y-4-i*2,3,2,GOLD);}}
+  else{rect(x-5,y-10,10,12,'#4b3029');line([[x-5,y-10],[x+5,y+2]],'#e7c98c',2);line([[x+5,y-10],[x-5,y+2]],'#e7c98c',2);}
+  const wx=113,wy=137;rect(wx-1,wy-8,3,25,'#6d5238');ctx.save();ctx.translate(wx,wy-8);ctx.rotate(showFrame*.012);for(let i=0;i<4;i++){ctx.rotate(Math.PI/2);poly([[0,-2],[16,-5],[17,1],[0,2]],'#d9cfaa');}ctx.restore();rect(wx-3,wy-11,7,7,z.accent);
+}
+function drawWellAndWorkshop(){
+  rect(15,224,16,7,'#77716c');rect(17,221,12,5,'#9e9690');ctx.strokeStyle='#6b4a32';ctx.strokeRect(17.5,208.5,11,15);rect(18,207,10,3,'#9b5d43');
+  rect(WORKSHOP.x-9,WORKSHOP.y-7,18,10,'#6d4b32');rect(WORKSHOP.x-7,WORKSHOP.y-10,14,4,'#9e7143');rect(WORKSHOP.x-3,WORKSHOP.y-15,6,5,'#535a64');rect(WORKSHOP.x-6,WORKSHOP.y+3,12,2,'#3b2d25');
+}
+function drawFence(){
+  const z=season(),y=199,c=stats.fenceLevel>=2?'#c7b183':'#8a6845';for(let x=42;x<136;x+=13){rect(x,y-8,2,13,c);rect(x-2,y-6,6,2,mix(c,z.accent,.25));if(stats.fenceLevel>0)rect(x,y-11,2,3,z.accent);}rect(39,y-4,98,2,c);rect(39,y+2,98,2,mix(c,'#3a2b24',.3));
+}
+function drawPlotBed(p){
+  const z=season(),row=(p.id/PLOT_X.length)|0,col=p.id%PLOT_X.length,x=p.x,y=p.y;
+  if(z.kind==='willow'){
+    rect(x-9,y-7,18,14,'#466448');rect(x-8,y-6,16,12,z.soil);for(let k=-4;k<=4;k+=4)rect(x-6,y+k,12,1,mix(z.soil,CREAM,.13));
+    if(col<3){ctx.globalAlpha=.4;rect(x+9,y-5,3,10,'#2d8492');ctx.globalAlpha=1;}
+  }else if(z.kind==='ember'){
+    rect(x-10,y-7,20,14,'#8b6037');rect(x-9,y-5,18,10,z.soil);for(let k=-4;k<=4;k+=4)line([[x-8,y+k],[x+8,y+k-2]],'#a36c3d');
+    if(row===0)rect(x-10,y-9,20,2,'#cf9b58');
+  }else if(z.kind==='cider'){
+    rect(x-9,y-7,18,14,'#514233');rect(x-8,y-6,16,12,z.soil);for(let i=-5;i<=5;i+=5)rect(x+i,y-5,1,10,'#806242');
+    if(col%2===0){rect(x-8,y-12,1,17,'#6b4934');rect(x+7,y-12,1,17,'#6b4934');line([[x-8,y-11],[x+7,y-11]],'#a47c4e');}
+  }else{
+    rect(x-9,y-8,18,16,'#dce9e5');rect(x-8,y-6,16,12,'#62514d');rect(x-7,y-5,14,2,'#88a8a6');line([[x-8,y-7],[x,y-12],[x+8,y-7]],'#eff8f2');
+  }
+  if(p.watered){ctx.globalAlpha=.24;rect(x-6,y-5,12,10,'#4f84a3');ctx.globalAlpha=1;}
+  if(!p.seeded&&((row+col+day)&3)===0)rect(x-1,y-1,2,1,'#b59a68');
+}
+function cropStage(p){return p.growth>=900?4:p.growth>=650?3:p.growth>=360?2:p.growth>=100?1:0;}
+function cropBoxFor(p){const s=cropStage(p),h=[4,7,10,13,16][s];return{x:p.x-10,y:p.y-h-4,width:20,height:h+7};}
+function drawCrop(p){
+  if(!p.seeded||!wantsActor(cropId(p.id)))return;const z=season(),s=cropStage(p),hurt=p.hp<3?(((showFrame>>2)&1)?1:-1):0,
+    dawn=actPhase==='dawn'&&pres.cue&&pres.cue.tier>=3?-Math.max(0,Math.sin((showFrame+p.id*4)*.11))*2:0,x=p.x+hurt,y=p.y+dawn;
+  if(s===0){rect(x-1,y-2,2,2,'#d9bc75');return;}const sway=(((showFrame/5+p.id)|0)&1)?1:-1;
+  if(p.variant===0){ // moonbean: a climbing trellis with hanging pods
+    const top=y-4-s*3;rect(x-4,top,1,y-top-1,'#72543a');rect(x+3,top+1,1,y-top-2,'#72543a');line([[x-4,top+2],[x+3,top+5],[x-3,top+8],[x+3,y-3]],'#4e8a4d');
+    if(s>=2){rect(x-6+sway,top+5,3,2,'#77b766');rect(x+3-sway,top+8,3,2,'#6eaa5e');}if(s>=3){rect(x-2,top+3,2,4,'#a5e07b');rect(x+2,top+9,2,4,'#8ed16c');}if(s>=4)rect(x-1,top,3,3,mix(z.accent,CREAM,.25));
+  }else if(p.variant===1){ // sunroot: broad leaves and a turning flower head
+    const top=y-5-s*2;rect(x-1,top,2,y-top,'#56783b');if(s>=2){poly([[x,top+6],[x-6-sway,top+3],[x-4,top+8]],'#7ea649');poly([[x,top+8],[x+6+sway,top+5],[x+4,top+10]],'#6f963f');}
+    if(s>=3){ctx.fillStyle='#d9a73d';ctx.beginPath();ctx.arc(x,top,3+s*.35,0,TAU);ctx.fill();rect(x-2,top-2,4,4,'#68452f');for(let i=0;i<4;i++){const a=i*Math.PI/2;rect(x+Math.cos(a)*5-1,top+Math.sin(a)*5-1,2,2,GOLD);}}else rect(x-2,top,4,3,'#8db34c');
+  }else if(p.variant===2){ // ciderberry: low woody bush with clustered fruit
+    const top=y-4-s*2;line([[x,y-2],[x-4+sway,top+3]],'#654735',2);line([[x,y-2],[x+4+sway,top+2]],'#654735',2);ctx.fillStyle='#6e914c';ctx.beginPath();ctx.arc(x-3+sway,top+4,4+s*.35,0,TAU);ctx.fill();ctx.beginPath();ctx.arc(x+3+sway,top+3,4+s*.35,0,TAU);ctx.fill();
+    if(s>=2)for(const q of[[-5,2],[0,5],[4,1],[-1,0]])rect(x+q[0]+sway,top+q[1],2,2,s>=4?'#e77d50':'#b5664a');if(s>=4)rect(x-1+sway,top-2,3,3,'#f1ad62');
+  }else{ // frostbloom: crystalline petals and forked ice leaves
+    const top=y-4-s*2;rect(x-1,top+3,2,y-top-3,'#629b83');if(s>=2){poly([[x,top+8],[x-6+sway,top+5],[x-3,top+10]],'#91c9b6');poly([[x,top+9],[x+6+sway,top+6],[x+3,top+11]],'#7eb6aa');}
+    if(s>=3){poly([[x+sway,top-3],[x+2,top],[x+6+sway,top+1],[x+2,top+3],[x,top+7],[x-2,top+3],[x-6+sway,top+1],[x-2,top]],'#a9e5de');rect(x-1+sway,top,2,2,CREAM);}else rect(x-2+sway,top+1,4,4,'#83baa6');
+  }
+  if(p.hp<3){ctx.globalAlpha=.72;line([[x-6,y-15],[x+5,y-3]],CORAL,2);ctx.globalAlpha=1;}
+}
+function drawBin(){const x=BIN.x,y=BIN.y;rect(x-7,y-9,14,12,'#76502f');rect(x-6,y-8,12,2,'#b17a43');rect(x-6,y-4,12,2,'#51351f');rect(x-8,y-12,16,4,'#9b6b3e');for(let i=0;i<Math.min(4,farmer.carry);i++)rect(x-5+i*3,y-14-(i%2),3,3,season().accent);}
+function wardBoxFor(w){return{x:w.x-8,y:w.y-17,width:16,height:23};}
+function drawWard(w){
+  if(!wantsActor(wardId(w)))return;const x=w.x,y=w.y,pulse=.45+.25*Math.sin(showFrame*.15+w.id);
+  ctx.globalAlpha=.18*pulse;rect(x-8,y-17,16,22,CYAN);ctx.globalAlpha=1;rect(x-1,y-11,2,16,'#6e4b31');rect(x-6,y-7,12,2,'#9c7045');rect(x-5,y-13,10,7,'#344b56');rect(x-4,y-12,8,5,w.flash?CREAM:'#70d8d9');rect(x-2,y-11,4,3,'#eaf8d5');poly([[x-6,y-13],[x,y-17],[x+6,y-13]],'#6a507e');rect(x-5,y+3,3,3,'#5a3b2a');rect(x+2,y+3,3,3,'#5a3b2a');
+}
+function farmerBox(){return{x:farmer.x-11,y:farmer.y-18,width:22,height:32};}
+function drawFarmer(){
+  if(!wantsActor('farmer'))return;const x=Math.round(farmer.x),baseY=Math.round(farmer.y),face=farmer.face,walk=((farmer.walk/3)|0)&1,pose=farmer.pose,hit=farmer.hitT>0,
+    crouch=pose==='plant'||pose==='harvest'?2:0,lean=pose==='sling'?face*(farmer.swing>5?-1:1):0,y=baseY+crouch;
+  ctx.globalAlpha=.25;ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(x,baseY+8,pose==='sling'?8:6,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  if(farmer.carry){const lift=pose==='celebrate'||actPhase==='dawn'&&pres.admire?-8:0,cx=x-face*6,cy=y-3+lift;rect(cx,cy,6,7,'#81582f');rect(cx+face,cy-1,4,2,GOLD);for(let i=0;i<Math.min(3,farmer.carry);i++)rect(cx+1+i%2*2,cy-3-i*2,2,2,season().accent);}
+  const legSpread=pose==='sling'?2:0;rect(x-3-legSpread+(walk?1:0),y+3,3,5,'#293f64');rect(x+legSpread+(walk?0:1),y+3,3,5,'#1f3152');rect(x-4+lean,y-3,8,7,hit?CREAM:'#4c806b');rect(x-3+lean,y-2,6,4,'#6da17f');
+  rect(x-3+lean,y-8,7,5,'#d6a17d');rect(x-4+lean,y-10,8,3,persona.color);rect(x-5+lean,y-9,10,2,mix(persona.color,'#3b2b2a',.2));rect(x+face*2+lean,y-7,1,1,INK);rect(x-face*3+lean,y-7,2,4,'#5a3c31');
+  if(pose==='water'){
+    const reach=farmer.watering>10?1:0;line([[x+face*3,y-2],[x+face*(6+reach),y+1]],'#d6a17d',2);rect(x+face*(5+reach),y-1,5,5,'#6c92a5');rect(x+face*(8+reach),y-2,2,2,CYAN);
+    for(let i=0;i<3;i++){const dx=face*(8+i),dy=1+i*2+((showFrame+i)&1);rect(x+dx,y+dy,1,2,'#9ee8ed');}
+  }else if(pose==='sling'){
+    const draw=farmer.swing>5?2:-1,handX=x+face*(4+draw);line([[x+face*2+lean,y-2],[handX,y-5]],'#d6a17d',2);line([[x-face*2+lean,y-1],[x+face*4,y]],'#d6a17d',2);
+    line([[x+face*4,y-7],[x+face*9,y-3],[x+face*4,y+1]],'#7d4f31',1.5);line([[x+face*4,y-7],[handX,y-5],[x+face*4,y+1]],CREAM);
+    if(farmer.swing<=4)line([[x-face*8,y-4],[x-face*4,y-4]],GOLD,2);
+  }else if(pose==='hammer'){
+    const up=farmer.actionCd>18;line([[x+face*3,y-2],[x+face*(up?2:6),y+(up?-10:2)]],'#d6a17d',2);rect(x+face*(up?1:5),y+(up?-13:0),2,9,'#7b5230');rect(x+face*(up?-2:3),y+(up?-14:-2),7,3,'#858c91');
+  }else if(pose==='plant'){
+    line([[x+face*3,y-1],[x+face*7,y+5]],'#d6a17d',2);rect(x+face*7,y+5,3,2,'#d6a17d');for(let i=0;i<3;i++)rect(x+face*(7+i),y+8+(i&1),1,1,SOIL);
+  }else if(pose==='harvest'){
+    line([[x+face*3,y-1],[x+face*8,y+2]],'#d6a17d',2);ctx.strokeStyle=CREAM;ctx.beginPath();ctx.arc(x+face*7,y+1,4,face>0?-1.2:Math.PI-1.2,face>0?1.2:Math.PI+1.2);ctx.stroke();rect(x+face*7,y-1,2,6,'#6f5133');rect(x+face*4,y+3,4,3,season().accent);
+  }
+  if(actPhase==='dawn'&&pres.admire){line([[x-3,y-2],[x-8,y-11]],'#d6a17d',2);line([[x+3,y-2],[x+8,y-11]],'#d6a17d',2);rect(x-9,y-13,3,3,GOLD);rect(x+6,y-13,3,3,GOLD);rect(x-1,y-6,3,1,CREAM);}
+}
+function enemyBoxFor(e){const spec=ENEMY[e.kind];return{x:e.x-spec.w/2-3,y:e.y-spec.h/2-4,width:spec.w+6,height:spec.h+8};}
+function drawEnemy(e){
+  if(!wantsActor(enemyId(e)))return;const spec=ENEMY[e.kind],target=plots[e.target],attacking=!!target&&distance(e,target)<10,
+    recoil=e.hitT>0?(((showFrame>>1)&1)?1:-1):0,x=Math.round(e.x-recoil),y=Math.round(e.y),gait=((showFrame/5+e.id)|0)&1,flash=e.hitT>0;
+  ctx.globalAlpha=.23;ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(x,y+spec.h/2,Math.max(4,spec.w/2),2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  if(e.dead){rect(x-8,y+2,16,3,'#3c3347');rect(x-5,y,7,3,flash?CREAM:spec.color);for(let i=0;i<4;i++)rect(x-7+i*5,y-3-(i&1),2,2,GOLD);return;}
+  if(e.kind==='mireling'){
+    const squash=flash?2:attacking?1:0;rect(x-5,y-5+squash,10,9-squash,flash?CREAM:spec.color);rect(x-4,y-8+squash,3,4,'#4d4768');rect(x+1,y-8+squash,3,4,'#4d4768');rect(x-3,y-4+squash,6,3,'#b5a1d1');rect(x-3,y-3+squash,2,1,CREAM);rect(x+1,y-3+squash,2,1,CREAM);
+    if(attacking){line([[x-4,y],[x-8,y+4]],'#b5a1d1',2);line([[x+4,y],[x+8,y+4]],'#b5a1d1',2);}rect(x-4+(gait?1:0),y+4,3,3,'#3f334d');rect(x+1-(gait?1:0),y+4,3,3,'#3f334d');
+  }else if(e.kind==='moth'){
+    const flap=flash?0:attacking?-2:gait?1:4;poly([[x,y],[x-8,y-flap],[x-6,y+(flash?2:5)],[x-1,y+3]],flash?CREAM:'#a88bc5');poly([[x,y],[x+8,y-flap],[x+6,y+(flash?2:5)],[x+1,y+3]],flash?CREAM:'#8e70af');rect(x-2,y-5+(attacking?2:0),4,10,'#564061');rect(x-1,y-6+(attacking?2:0),2,2,GOLD);if(attacking)poly([[x-2,y+4],[x,y+9],[x+2,y+4]],CORAL);
+  }else{
+    const charge=attacking||e.y>185,headY=charge?-3:-7,stretch=charge?1:0;rect(x-7-stretch,y-4,14+stretch,9,flash?CREAM:spec.color);rect(x+4,y+headY,5,charge?6:7,'#8d684c');rect(x+7,y+headY+2,1,1,INK);rect(x-7-stretch,y+4,3,3+(gait?1:0),'#4b352d');rect(x+2+stretch,y+4,3,3+(gait?0:1),'#4b352d');poly([[x+7,y+headY+5],[x+10,y+headY+7],[x+7,y+headY+8]],CREAM);rect(x-8-stretch,y-6,4,3,'#5c4034');if(charge){line([[x-9,y+7],[x-5,y+7]],'#c6a176');line([[x-6,y+9],[x-1,y+9]],'#c6a176');}
+  }
+  if(e.flee){ctx.globalAlpha=.6;line([[x-5,y+7],[x+5,y+7]],MINT,2);ctx.globalAlpha=1;}
+  if(e.hp<e.maxHp){rect(x-6,y-spec.h/2-4,12,1,'#311f2a');rect(x-6,y-spec.h/2-4,12*e.hp/e.maxHp,1,CORAL);}
+}
+function drawShots(){for(const s of shots){ctx.globalAlpha=.7;line([[s.x-s.vx*2,s.y-s.vy*2],[s.x,s.y]],s.source==='ward'?CYAN:GOLD,2);ctx.globalAlpha=1;rect(s.x-1,s.y-1,2,2,CREAM);}}
+function drawRoute(){
+  const target=farmer.intent&&targetPoint(farmer.intent.targetId);if(!target)return;ctx.globalAlpha=.55;ctx.setLineDash([3,3]);ctx.lineDashOffset=-(showFrame/4);line([[farmer.x,farmer.y],[target.x,target.y]],persona.color,1);ctx.setLineDash([]);ctx.globalAlpha=1;
+  ctx.strokeStyle=persona.color;ctx.strokeRect(Math.round(target.x)-4.5,Math.round(target.y)-4.5,9,9);
+}
+function drawNightBack(){
+  if(actPhase==='day')return;
+  if(actPhase==='warn'){
+    const p=clamp((cycleFrame-DUSK_AT)/(NIGHT_AT-DUSK_AT),0,1),front=WORLD_TOP+p*(CONTACT_Y-WORLD_TOP);
+    ctx.globalAlpha=.16+.12*p;rect(0,WORLD_TOP,W,WORLD_BOTTOM-WORLD_TOP,'#201a3c');ctx.globalAlpha=.24;rect(0,WORLD_TOP,W,front-WORLD_TOP,VIOLET);ctx.globalAlpha=.24;for(let i=0;i<6;i++){const y=front-6+i*3;line([[-12,y],[W+12,y-12]],i%2?VIOLET:CORAL,2);}ctx.globalAlpha=1;
+    for(const x of[44,80,116]){ctx.globalAlpha=.17+.1*Math.sin(showFrame*.18+x);poly([[x,SPAWN_Y],[x-20,CONTACT_Y+6],[x+20,CONTACT_Y+6]],VIOLET);}ctx.globalAlpha=1;
+    return;
+  }
+  if(actPhase==='night'){
+    ctx.globalAlpha=.34;rect(0,WORLD_TOP,W,WORLD_BOTTOM-WORLD_TOP,'#11162d');ctx.globalAlpha=1;
+    // The lamps own real defended cones: threats enter in darkness, cross a
+    // visible cyan read-zone, then meet the fence and crops.
+    for(const w of wards){ctx.globalAlpha=.055+.02*Math.sin(showFrame*.12+w.id);poly([[w.x-3,w.y-13],[w.x-28,SPAWN_Y+22],[w.x+28,SPAWN_Y+22]],CYAN);ctx.fillStyle=CYAN;ctx.beginPath();ctx.arc(w.x,w.y-8,28,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+    ctx.setLineDash([3,5]);for(const e of enemies)if(!e.dead&&!e.flee){const p=plots[e.target];if(p){ctx.globalAlpha=.18;line([[e.x,e.y],[p.x,p.y]],e.drama?GOLD:VIOLET);}}ctx.setLineDash([]);ctx.globalAlpha=1;
+    for(let i=0;i<5;i++){const y=82+i*31+((showFrame*(.12+i*.02))%18);ctx.globalAlpha=.045+i*.008;rect(-15+(i%2)*9,y,W+30,8,'#a99cc5');}ctx.globalAlpha=1;
+  }else if(actPhase==='dawn'){
+    ctx.globalAlpha=.09;rect(0,WORLD_TOP,W,WORLD_BOTTOM-WORLD_TOP,GOLD);ctx.globalAlpha=1;
+    for(let i=0;i<8;i++){ctx.globalAlpha=.045+i*.008;poly([[18+i*12,42],[38+i*18,WORLD_BOTTOM],[53+i*18,WORLD_BOTTOM]],i%2?GOLD:CREAM);}ctx.globalAlpha=1;
+  }
+}
+function drawNightFront(){
+  if(actPhase==='night'){
+    for(const e of enemies)if(!e.dead){const pulse=.16+.08*Math.sin(showFrame*.16+e.id);ctx.globalAlpha=pulse;ctx.fillStyle=e.drama?GOLD:VIOLET;ctx.beginPath();ctx.arc(e.x,e.y,11+(e.kind==='boar'?3:0),0,TAU);ctx.fill();ctx.globalAlpha=1;rect(e.x-3,e.y-3,2,1,CREAM);rect(e.x+2,e.y-3,2,1,CREAM);if(e.hitT>0){ctx.strokeStyle=CREAM;ctx.beginPath();ctx.arc(e.x,e.y,7+e.hitT*.45,0,TAU);ctx.stroke();}}
+    for(const w of wards)if(w.flash>0){ctx.globalAlpha=.35;line([[w.x,w.y-11],[w.x+(w.id-1)*20,SPAWN_Y+18]],CYAN,2);ctx.globalAlpha=1;}
+    for(let i=0;i<16;i++){const x=28+hash(i,day)*128,y=103+hash(i+7,worldSeed)*90;ctx.globalAlpha=.35+.3*Math.sin(showFrame*.09+i);rect(x,y,1+(i%5===0),1,i%3?CYAN:GOLD);}ctx.globalAlpha=1;
+  }else if(actPhase==='dawn'){
+    const wave=(showFrame*2)%190;ctx.globalAlpha=.32;for(let row=0;row<4;row++){const x=40+((wave+row*31)%118);line([[x,210+row*21],[x+18,210+row*21]],row%2?GOLD:CREAM,2);}ctx.globalAlpha=1;
+    const crates=Math.min(5,Math.max(2,Math.floor(stats.shipped/35)));for(let i=0;i<crates;i++){const x=124+(i%2)*9,y=182-(i>>1)*7;rect(x,y,8,6,'#815633');rect(x+1,y+1,6,2,'#c28b49');rect(x+3,y,2,6,GOLD);}
+    for(const w of wards){ctx.globalAlpha=.16;poly([[w.x,w.y-14],[w.x-34,112],[w.x+34,112]],GOLD);ctx.globalAlpha=1;}
+  }
+}
+function drawHud(){
+  const z=season();ctx.globalAlpha=.94;rect(0,0,W,42,INK);ctx.globalAlpha=1;ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('MOONSHINE VALLEY',4,10);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText((farmer.tactic||'OPEN THE FARM').slice(0,24),4,20);ctx.fillStyle=z.accent;ctx.fillText('DAY '+day,132,10);ctx.fillStyle=GOLD;ctx.fillText('$'+stats.coins,132,20);
+  const value=Math.max(0,objectiveValue()),ratio=objective?clamp(value/objective.target,0,1):0;ctx.fillStyle='#8fa5ad';ctx.font='5px monospace';ctx.fillText(objective?objective.label.slice(0,26):'READ THE ALMANAC',4,29);const count=objective?value+'/'+objective.target:'';ctx.fillText(count,W-4-count.length*3,29);
+  rect(4,33,152,4,'#243039');rect(4,33,152*ratio,4,objective&&objective.done?MINT:z.accent);
+  // Day dial is the act clock; no second event timeline is drawn.
+  const p=cycleFrame/DAY_FRAMES;rect(4,39,152,2,'#18222b');rect(4,39,152*p,2,actPhase==='night'?VIOLET:actPhase==='warn'?CORAL:GOLD);
+  ctx.globalAlpha=.9;rect(0,334,W,26,INK);ctx.globalAlpha=1;ctx.font='bold 6px monospace';ctx.fillStyle=z.accent;ctx.fillText(z.name,4,344);ctx.fillStyle=CREAM;ctx.fillText('CRATE '+farmer.carry+'/4',4,353);ctx.fillText('ROWS '+plots.filter(q=>q.seeded).length,59,353);ctx.fillText('WARD '+wards.length,111,353);
+  if(banner.t>0){const a=Math.min(1,banner.t/16);ctx.globalAlpha=.96*a;rect(2,22,156,17,INK);ctx.globalAlpha=a;ctx.strokeStyle=banner.color;ctx.strokeRect(2.5,22.5,155,16);ctx.fillStyle=banner.color;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(banner.text,80,33);ctx.textAlign='left';ctx.globalAlpha=1;}
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.10;rect(2,43,156,289,GOLD);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,43.5,155,288);}
+  drawSession();
+}
+function render(){
+  drawSky();drawFarValley();drawGround();drawSeasonProps(false);drawFarmhouse();drawBarnAndMill();drawWellAndWorkshop();drawFence();for(const p of plots)drawPlotBed(p);drawBin();drawSeasonProps(true);drawNightBack();
+  preDraw();for(const p of plots)drawCrop(p);for(const w of wards)drawWard(w);drawRoute();for(const e of enemies)drawEnemy(e);drawShots();drawFarmer();drawParts();postDraw();drawNightFront();drawHud();
+}
+
+// ---- probes, parity surfaces, and deterministic visual fixtures ----------------
+function objectiveProbe(){return objective&&{kind:objective.kind,label:objective.label,start:objective.start,target:objective.target,value:objectiveValue(),done:objective.done};}
+function probe(){return{showFrame,runFrame,cycleFrame,day,season:season().name,actPhase,worldSeed,skillSeed,persona:persona.name,finite:allFinite(),
+  farmer:{x:farmer.x,y:farmer.y,vx:farmer.vx,vy:farmer.vy,carry:farmer.carry,seeds:farmer.seeds,pose:farmer.pose,targetId:farmer.targetId,tactic:farmer.tactic},
+  plots:plots.map(p=>({id:p.id,growth:p.growth,watered:p.watered,hp:p.hp,seeded:p.seeded,variant:p.variant})),
+  enemies:enemies.map(e=>({id:e.id,kind:e.kind,x:e.x,y:e.y,vx:e.vx,vy:e.vy,hp:e.hp,target:e.target,flee:e.flee,drama:e.drama})),wards:wards.map(w=>({...w})),shots:shots.length,
+  objective:objectiveProbe(),stats:{...stats},events:eventSerial,progress:progressSerial,
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  actNotes:actNotes.slice(),show:SHOW.probe(),playing:playing()};}
+function signature(){return JSON.stringify({runFrame,cycleFrame,day,seasonIndex,actPhase,worldSeed,skillSeed,persona:persona.name,
+  farmer:[farmer.x,farmer.y,farmer.vx,farmer.vy,farmer.face,farmer.carry,farmer.seeds,farmer.actionCd,farmer.hitT,farmer.targetId].map(v=>typeof v==='number'?round(v,5):v),
+  plots:plots.map(p=>[p.seeded,round(p.growth,3),p.watered,p.hp,p.variant]),
+  enemies:enemies.map(e=>[e.id,e.kind,round(e.x,4),round(e.y,4),round(e.vx,4),round(e.vy,4),e.hp,e.target,e.flee,e.drama]),
+  shots:shots.map(s=>[s.id,round(s.x,4),round(s.y,4),round(s.vx,4),round(s.vy,4),s.life,s.source]),
+  wards:wards.map(w=>[w.id,w.x,w.y,w.hp,w.cool]),objective:objectiveProbe(),
+  stats:[stats.objectives,stats.missedObjectives,stats.planted,stats.watered,stats.harvests,stats.shipped,stats.shipments,stats.coins,stats.wardsBuilt,stats.fenceLevel,stats.kills,stats.hits,stats.shots,stats.cropHits,stats.cropLosses,stats.breaches,stats.nightsHeld,stats.perfectNights,stats.lastSecondSaves,stats.lapses,stats.events,stats.progress]});}
+function physical(){return[round(farmer.x,5),round(farmer.y,5),round(farmer.vx,5),round(farmer.vy,5),farmer.targetId,farmer.tactic,farmer.carry].join('|');}
+function visualActors(){
+  const visualPose=actPhase==='dawn'&&pres.admire?'celebrate':farmer.pose,
+    actors=[{id:'farmer',kind:'farmer',type:visualPose,box:farmerBox()}];
+  for(const p of plots)if(p.seeded)actors.push({id:cropId(p.id),kind:'crop',type:'stage-'+cropStage(p),box:cropBoxFor(p)});
+  for(const w of wards)actors.push({id:wardId(w),kind:'structure',type:'moonlamp',box:wardBoxFor(w)});
+  for(const e of enemies)if(!e.dead)actors.push({id:enemyId(e),kind:'creature',type:e.kind,box:enemyBoxFor(e)});
+  return actors;
+}
+function visualProbe(){return{fixture:visualFixture,finite:allFinite(),frame:showFrame,day,season:season().name,actPhase,
+  objective:objectiveProbe(),farmerBox:farmerBox(),cropBox:(plots.find(p=>p.seeded)&&cropBoxFor(plots.find(p=>p.seeded)))||null,
+  creatureBox:(enemies[0]&&enemyBoxFor(enemies[0]))||null,actors:visualActors(),
+  layout:{playfield:{x:0,y:WORLD_TOP,width:160,height:WORLD_BOTTOM-WORLD_TOP},approaches:[
+    {axis:'y',visibleSpawn:SPAWN_Y,contact:CONTACT_Y,goal:GOAL_Y,approachVisibilityFraction:(CONTACT_Y-SPAWN_Y)/(GOAL_Y-SPAWN_Y)}]},
+  planted:plots.filter(p=>p.seeded).length,ripe:plots.filter(p=>p.seeded&&p.growth>=900).length,enemies:enemies.length,wards:wards.length,cue:pres.cue&&pres.cue.id};}
+function stageVisualFarm(index){seasonIndex=index;day=index*3+1;for(let i=0;i<plots.length;i++){const p=plots[i];p.seeded=i<12;p.watered=i%3!==0;p.growth=p.seeded?[160,420,700,960][i%4]:0;p.variant=(index+i)%4;p.hp=3;}farmer.seeds=12;}
+function setVisualBeat(name){
+  visualFixture=name;enemies=[];shots=[];wards=[];banner.t=0;actNotes=[];globalThis.__MV_VISUAL_ONLY_ACTOR=undefined;stageVisualFarm(0);cycleFrame=480;actPhase='day';farmer.x=44;farmer.y=286;farmer.face=1;farmer.pose='walk';farmer.carry=0;farmer.actionCd=0;farmer.swing=0;farmer.watering=0;farmer.intent={dx:1,dy:0,act:false,aimX:79,aimY:239,targetId:'plot:5',tactic:'SOW THE EAST ROW'};farmer.targetId='plot:5';farmer.tactic='SOW THE EAST ROW';SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};startObjective();
+  if(name==='opening'){}
+  else if(name==='growth'){cycleFrame=1250;farmer.x=84;farmer.y=302;farmer.pose='water';farmer.watering=20;farmer.actionCd=20;farmer.targetId='plot:10';farmer.tactic='WATER THE ROW';for(let i=0;i<plots.length;i++)if(plots[i].seeded)plots[i].growth=180+i%4*240;}
+  else if(name==='harvest'){cycleFrame=1780;farmer.x=101;farmer.y=272;farmer.pose='harvest';farmer.actionCd=18;farmer.swing=9;farmer.carry=3;farmer.targetId='plot:10';farmer.tactic='HARVEST CIDERBERRY';plots[10].seeded=true;plots[10].growth=1040;payoffBurst(101,260,14,GOLD,1.8,.03);}
+  else if(name==='warning'){cycleFrame=DUSK_AT+80;actPhase='warn';farmer.x=122;farmer.y=282;farmer.carry=3;farmer.pose='carry';farmer.face=-1;farmer.targetId='bin';farmer.tactic='BEAT DUSK · SHIP NOW';say('DUSK · CREATURES STIR',VIOLET,999);}
+  else if(name==='night'||name==='danger'){cycleFrame=NIGHT_AT+420;actPhase='night';stageVisualFarm(1);farmer.x=82;farmer.y=250;farmer.pose='sling';farmer.actionCd=14;farmer.swing=name==='danger'?3:9;farmer.targetId='enemy:0';farmer.tactic='INTERCEPT THE MIRELING';wards=WARD_SITES.slice(0,2).map((q,i)=>({id:i,x:q.x,y:q.y,hp:5,cool:20,flash:i===0?8:0}));
+    enemies=[{id:0,kind:'mireling',x:74,y:name==='danger'?203:128,vx:.05,vy:.25,hp:name==='danger'?2:3,maxHp:3,target:5,hitT:name==='danger'?7:0,attackCd:20,dead:false,flee:false,phase:0},
+      {id:1,kind:'moth',x:118,y:160,vx:-.12,vy:.3,hp:2,maxHp:2,target:11,hitT:0,attackCd:20,dead:false,flee:false,phase:1},
+      {id:2,kind:'boar',x:42,y:112,vx:.06,vy:.2,hp:6,maxHp:6,target:12,hitT:0,attackCd:20,dead:false,flee:false,phase:2}];
+    startObjective();if(name==='danger'){shots=[{id:1,x:78,y:224,vx:-.1,vy:-2.3,life:40,damage:1,source:'farmer'}];plots[5].hp=1;say('THE WEST ROW IS EXPOSED',CORAL,999);}else say('NIGHTFALL · HOLD THE ROWS',CORAL,999);}
+  else if(name==='dawn'||name==='apex'){cycleFrame=DAWN_AT+18;actPhase='dawn';stageVisualFarm(name==='apex'?3:2);farmer.x=80;farmer.y=283;farmer.pose='celebrate';farmer.tactic='WATCH THE SUNRISE';farmer.carry=4;stats.shipped=name==='apex'?210:126;stats.nightsHeld=day;wards=WARD_SITES.map((q,i)=>({id:i,x:q.x,y:q.y,hp:5,cool:30,flash:0}));offer('visual-dawn',3,80,85,'EVERY ROW SURVIVED');pres=SHOW.step(showFrame+1);say(name==='apex'?'FROST MOON HARVEST · PERFECT':'DAWN · EVERY ROW SURVIVED',GOLD,999);if(name==='apex')payoffBurst(80,205,44,GOLD,3,.02);}
+  else if(name==='later'){stageVisualFarm(2);cycleFrame=1520;stats.fenceLevel=3;stats.coins=74;wards=WARD_SITES.map((q,i)=>({id:i,x:q.x,y:q.y,hp:5,cool:25,flash:0}));farmer.x=118;farmer.y=302;farmer.carry=4;farmer.pose='carry';farmer.targetId='bin';farmer.tactic='SHIP THE CIDER HARVEST';}
+  else if(name==='scale-contract'){stageVisualFarm(3);farmer.x=31;farmer.y=309;farmer.pose='hammer';farmer.face=1;farmer.actionCd=26;wards=WARD_SITES.map((q,i)=>({id:i,x:q.x,y:q.y,hp:5,cool:20,flash:0}));enemies=[
+    {id:0,kind:'mireling',x:50,y:150,vx:0,vy:.2,hp:3,maxHp:3,target:0,hitT:0,attackCd:20,dead:false,flee:false,phase:0},
+    {id:1,kind:'moth',x:82,y:136,vx:0,vy:.3,hp:2,maxHp:2,target:4,hitT:0,attackCd:20,dead:false,flee:false,phase:1},
+    {id:2,kind:'boar',x:116,y:151,vx:0,vy:.2,hp:6,maxHp:6,target:8,hitT:0,attackCd:20,dead:false,flee:false,phase:2}];}
+  else return false;
+  return true;
+}
+
+globalThis.__moonshineValleyProbe=probe;
+globalThis.__moonshineValleySignature=signature;
+globalThis.__moonshineValleyPhysical=physical;
+globalThis.__moonshineValleyVisualProbe=visualProbe;
+globalThis.__moonshineValleySetVisualBeat=setVisualBeat;
+globalThis.__moonshineValleyVisualBeats=['opening','growth','harvest','warning','night','danger','dawn','later','apex'];
+globalThis.__moonshineValleyIntentSchemas=()=>{const h=humanIntent(),b=rawBotIntent();return{human:h,bot:b,humanKeys:Object.keys(h).sort(),botKeys:Object.keys(b).sort()};};
+globalThis.__moonshineValleyManual=()=>({x:farmer.x,y:farmer.y,intent:farmer.intent&&{...farmer.intent}});
+globalThis.__moonshineValleyAdmireFixture=()=>{const oldPhase=actPhase,old=pres;actPhase='dawn';pres={cue:{id:'dawn'},t:2,holdWorld:false,physicsEvery:1,admire:true};delete globalThis.__NO_ADMIRE;const admired=rawBotIntent();globalThis.__NO_ADMIRE=1;const gated=rawBotIntent();delete globalThis.__NO_ADMIRE;actPhase=oldPhase;pres=old;return{admired,gated};};
+globalThis.__moonshineValleyActFixture=()=>{cycleFrame=DUSK_AT-1;actPhase='day';farmer.x=121;farmer.y=281;farmer.vx=0;farmer.vy=0;farmer.carry=0;farmer.actionCd=0;farmer.targetId='plot:15';plots[15].seeded=false;actNotes=[];skill.reset();return probe();};
+globalThis.__moonshineValleyPlannerFixture=()=>{const sample=enemies.find(e=>!e.dead&&!e.flee)||
+  {id:999,kind:'moth',x:74,y:118,vx:.11,vy:.31,hp:2,maxHp:2,target:5,drama:false},before=signature(),a=forecastThreat(sample),mid=signature(),b=forecastThreat(sample),after=signature();return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),forecast:a,finite:allFinite()};};
+globalThis.__moonshineValleyNextRandom=()=>E.random();
+globalThis.__soakProbe=()=>({sig:[Math.round(farmer.x*10),Math.round(farmer.y*10),farmer.pose,enemies.reduce((n,e)=>n+Math.round(e.x+e.y),0),plots.filter(p=>p.seeded).length,shots.length].join('|'),events:eventSerial,progress:progressSerial,finite:allFinite()});
+
+initSession('moonshine-valley',[["ARROWS / WASD","MOVE"],["SPACE / X","TEND · HARVEST · SLING"],["ESC","AUTOPILOT"]]);
+resetGame();start(()=>step(),()=>render());
+</script>
+</html>

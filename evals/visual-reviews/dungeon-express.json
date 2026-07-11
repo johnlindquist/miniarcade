@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "game": "dungeon-express",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "a385fe90080d14939f24da6781e55e791fde1390b0946f9149af125c13618989",
+  "reviewedAt": "2026-07-10",
+  "reviewer": "Codex native-size reference and autoplay-clip review",
+  "seed": "0xded011",
+  "checkpoints": [
+    "opening@2",
+    "scout@6",
+    "route@8",
+    "danger@8",
+    "warning@8",
+    "later@2",
+    "ossuary@2",
+    "deep@2",
+    "apex@6"
+  ],
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native 160x360, the 17x22 caped hero has a face, hair, separate limbs, boots, sword arm, facing, gait, slash, hurt, collapse, and admire poses. Slime, bat, armored guard, and the singular 29x34 horned warden keep distinct construction and locomotion at reference-game scale; none reads as a board token or enlarged hitbox."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The dungeon reads as a built overhead place with masonry walls, recessed floors, lintels, foreground courses, room thresholds, fogged unknown chambers, and role-specific landmarks. Shelves and astrolabes, forges and chains, sarcophagi and moon dials, then roots and fountains give each floor the prop density and material specificity visible in MACHINE HUNT and BLOCK MINE."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The Scriptorium, Ember Forge, Moon Ossuary, and Verdant Reliquary replace wall, floor, landmark, light, ambient-motion, and act silhouettes rather than recoloring one room set. The native montage makes every floor recognizable without its title, and measured adjacent-floor structure distances all clear the executable composition floor."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The 30-second autoplay clip shows readable walking, enemy gait and flight, attacks, recoil, discoveries, a full-screen floor-routed payoff, and the transition into a materially new floor. Biome-specific warnings occupy the whole dungeon before their gates land, while tier-three presentation adds exact hitstop, slow motion, admire, physical overlay, and subordinate sim-inert particles."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Gold planned lines, cyan execution trails, coral superseded plans, fogged unknown rooms, the mini-map, and split readout make intent and revision legible beside video. The drawn warden is forecast across more than 90% of its route axis; normal sampled actor occupancy is only 3.2-6.5%, preserving the small-actors, big-world breathing room of the references."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Cream stone highlights, ink recesses, biome accents, gold route memory, cyan execution, and coral danger form one consistent retro-adventure language across architecture, actors, HUD, telegraphs, and payoffs. The dense tiled craft is distinct from both references while meeting their authored-world floor at the actual 160x360 viewing size."
+    }
+  },
+  "renderReceipt": {
+    "seed": "0xded011",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 3244304,
+    "sha256": "59c0408c1e7cc87bf3a2052d4423421c7eb6f1b75172724018a9209f8d589773",
+    "command": "node render/render.js dungeon-express 30 .artifacts/visual/dungeon-express/dungeon-express-30s.mp4 --seed 14602257 --probe --fps 30"
+  }
+}

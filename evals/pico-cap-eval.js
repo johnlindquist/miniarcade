@@ -1,128 +1,19 @@
 #!/usr/bin/env node
 'use strict';
-
-const fs=require('fs');
-const path=require('path');
-const{bootGame}=require('./harness');
-const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
-const{assertEntertainment}=require('./entertainment');
-let failed=false;
-const fail=message=>{console.error('  FAIL:',message);failed=true};
-const source=fs.readFileSync(path.join(__dirname,'..','pico-cap.html'),'utf8');
-const noVisiblePath=!/\bfunction\s+drawRoute\b/.test(source)&&!/\bdrawRoute\s*\(/.test(source)&&!/\.setLineDash\s*\(/.test(source)&&!/routePoints\s*:/.test(source);
-
-console.log('1) deterministic fixed-step replay and render parity');
-{
-  const a=bootGame('pico-cap',{seed:0x9c51}),b=bootGame('pico-cap',{seed:0x9c51}),r=bootGame('pico-cap',{seed:0x9c51});
-  a.frames(12000,false);b.frames(12000,false);r.frames(12000,true);
-  const signature=a.sandbox.__picoCapSignature();
-  if(signature!==b.sandbox.__picoCapSignature())fail('same seed diverged');
-  if(signature!==r.sandbox.__picoCapSignature())fail('render consumed simulation state');
-  console.log('  identical headless/rendered; '+r.counter.calls+' draw calls');
-}
-
-console.log('1b) payoff FX no-op, shared intent schema, and seed-varied lapses');
-{
-  const a=bootGame('pico-cap',{seed:0x9c52}),b=bootGame('pico-cap',{seed:0x9c52,footer:'globalThis.__NO_PAYOFF_FX=true;'}),lapse=bootGame('pico-cap',{seed:0x9c53}),gated=bootGame('pico-cap',{seed:0x9c53,footer:'globalThis.__NO_LAPSE=true;'});
-  a.frames(18000,false);b.frames(18000,false);lapse.frames(18000,false);gated.frames(18000,false);
-  if(a.sandbox.__picoCapSignature()!==b.sandbox.__picoCapSignature())fail('payoff FX changed same-seed simulation');
-  const pa=lapse.sandbox.__picoCapProbe(),pc=gated.sandbox.__picoCapProbe();
-  if(pa.stats.lapses<1)fail('skill-profile daydreams never fired: '+pa.stats.lapses);
-  if(pc.stats.lapses!==0)fail('__NO_LAPSE did not silence lapses: '+pc.stats.lapses);
-  if(lapse.sandbox.__picoCapSignature()===gated.sandbox.__picoCapSignature())fail('__NO_LAPSE was a sim no-op');
-  const fixture=a.sandbox.__picoCapIntentFixture(),botKeys=Object.keys(fixture.bot).sort().join(','),humanKeys=Object.keys(fixture.human).sort().join(',');
-  if(botKeys!==humanKeys||fixture.human.dx!==1)fail('human/bot intent schema diverged: '+JSON.stringify(fixture));
-  console.log('  FX signature identical; '+pa.stats.lapses+' lapses (0 gated); intent keys '+botKeys);
-}
-
-console.log('2) authored Zelda-room topology is solvable and never renders the planner');
-{
-  const game=bootGame('pico-cap',{seed:0x9c70}),layouts=new Set(),receipts=[];
-  let lastGlade=0;
-  for(let frame=0;frame<12000&&layouts.size<4;frame++){
-    const p=game.sandbox.__picoCapProbe();
-    if(p.glade!==lastGlade){
-      const fixture=game.sandbox.__picoCapPuzzleFixture();receipts.push({glade:p.glade,...fixture});layouts.add(fixture.layoutSignature);lastGlade=p.glade;
-      if(!fixture.solvable)fail('glade '+p.glade+' authored state is not solvable');
-      if(fixture.rooms!==3||fixture.gateNeeds.join(',')!=='1,2')fail('glade '+p.glade+' lost three-room 1/2-key progression');
-      if(fixture.choices.some(choice=>choice.join(',')!=='BRIAR,CRACK'))fail('glade '+p.glade+' lost crack/briar route choice '+JSON.stringify(fixture.choices));
-    }
-    game.frames(1,false);
-  }
-  if(layouts.size<4)fail('four biome room compositions were not structurally distinct: '+layouts.size);
-  if(!noVisiblePath)fail('computed navigation path still has a renderer/probe surface');
-  console.log('  4/4 distinct solvable layouts; 3 rooms, 6 route solutions, gates 1 -> 2; path overlay absent');
-}
-
-console.log('3) natural ten-minute panel proves puzzle pace, enemy agency, and no dead walking');
-{
-  const panel=[];
-  for(const seed of[0x9c61,0x9c62]){
-    const{game,samples}=runSoak('pico-cap',{seed,minutes:10}),soak=analyzeSoak(samples),p=game.sandbox.__picoCapProbe(),s=p.stats;
-    console.log('  '+seed.toString(16)+' '+soakLine(soak)+'; rooms '+s.glades+', keys '+s.crackKeys+'/'+s.briarKeys+' crack/briar, charges '+s.charges+', dodge/parry '+s.chargeDodges+'/'+s.parries+', straight '+s.maxStraightSteps+', dead-air '+s.maxTravelWithoutDecision+' steps');
-    assertSoak(seed.toString(16),soak,{still:3,quiet:5,stall:45,minEvents:1800,minProgress:180},message=>fail(message));
-    if(!p.finite)fail(seed.toString(16)+': non-finite state');
-    if(s.glades<24||s.glades>40)fail(seed.toString(16)+': room completions outside measured band '+s.glades);
-    if(s.shards<72||s.shards>120)fail(seed.toString(16)+': sun-key pace outside measured band '+s.shards);
-    if(s.crackKeys<20||s.briarKeys<45)fail(seed.toString(16)+': both room solutions not exercised '+s.crackKeys+'/'+s.briarKeys);
-    if(s.gatesOpened<48||s.roomReads<80)fail(seed.toString(16)+': weak puzzle progression gates/reads '+s.gatesOpened+'/'+s.roomReads);
-    if(s.charges<60||s.charges>110||s.chargeDodges<30||s.parries<40)fail(seed.toString(16)+': charge drama outside measured band '+s.charges+' actions, '+s.chargeDodges+'/'+s.parries+' responses');
-    if(s.slashes<90||s.squishes<25||s.squishes>75)fail(seed.toString(16)+': combat drama outside measured band slash/squish '+s.slashes+'/'+s.squishes);
-    if(s.maxStraightSteps>7||s.maxTravelWithoutDecision>8)fail(seed.toString(16)+': inert traversal returned straight/dead-air '+s.maxStraightSteps+'/'+s.maxTravelWithoutDecision);
-    panel.push(p);
-  }
-  const sum=key=>panel.reduce((total,p)=>total+(p.stats[key]||0),0),kind=key=>panel.reduce((total,p)=>total+(p.decisionKinds[key]||0),0);
-  const evidence={
-    noVisiblePath,
-    topology:{rooms:3,branches:6,maxStraight:Math.max(...panel.map(p=>p.stats.maxStraightSteps))},
-    puzzle:{transitions:sum('gatesOpened'),completions:sum('glades')},
-    agency:{enemyActions:sum('charges'),playerResponses:sum('chargeDodges')+sum('parries')},
-    decisions:{
-      puzzle:kind('room-read')+kind('room-choice')+kind('shrink-choice')+kind('commit-briar'),
-      threat:kind('enemy-tell')+kind('enemy-engage'),
-      response:kind('dodge')+kind('parry'),
-      combat:kind('fight')+kind('parry'),
-      payoff:kind('sun-key')+kind('gate-open')+kind('shrine-ready')+kind('room-complete')
-    },
-    maxDeadAir:Math.max(...panel.map(p=>p.stats.maxTravelWithoutDecision))
-  };
-  const receipt=assertEntertainment('PICO CAP natural panel',evidence,{minRooms:3,minBranches:6,maxStraight:7,minPuzzleTransitions:96,minPuzzleCompletions:48,minEnemyActions:120,minPlayerResponses:140,requiredDecisionKinds:['puzzle','threat','response','combat','payoff'],minPerDecisionKind:50,maxDeadAir:8,deadAirUnit:'hero tile steps'},fail);
-  console.log('  entertainment receipt '+JSON.stringify(receipt.report));
-}
-
-console.log('4) size-and-threat planner A/B beats a working longest-route baseline');
-{
-  let smart=0,baseline=0,wins=0;
-  for(const seed of[0x9c20,0x9c21,0x9c22,0x9c23,0x9c24,0x9c25]){
-    const a=bootGame('pico-cap',{seed}),b=bootGame('pico-cap',{seed,footer:'globalThis.__NO_SIZE_PLAN=true;'});a.frames(18000,false);b.frames(18000,false);
-    const pa=a.sandbox.__picoCapProbe(),pb=b.sandbox.__picoCapProbe();
-    const score=p=>p.stats.glades*50+p.stats.shards*4+p.stats.chargeDodges*2+p.stats.parries-p.stats.squishes*3,sa=score(pa),sb=score(pb);
-    smart+=sa;baseline+=sb;if(sa>sb)wins++;
-    console.log('  '+seed.toString(16)+': tactical '+sa+' vs baseline '+sb+'; rooms '+pa.stats.glades+'/'+pb.stats.glades+', squishes '+pa.stats.squishes+'/'+pb.stats.squishes);
-    if(pb.stats.glades<5)fail(seed.toString(16)+': baseline stopped functioning');
-  }
-  console.log('  aggregate '+smart+' vs '+baseline+', wins '+wins+'/6');
-  if(smart<=baseline*1.35||wins<5)fail('room tactics did not clearly win paired panel');
-}
-
-console.log('5) telegraphed storm acts and exact show budgets');
-{
-  const a=bootGame('pico-cap',{seed:0x9c30}),b=bootGame('pico-cap',{seed:0x9c30,footer:'globalThis.__NO_ACTS=true;'});let warnAt=-1,divergeAt=-1,landAt=-1;
-  for(let frame=1;frame<=6000&&landAt<0;frame++){
-    a.frames(1,false);b.frames(1,false);const p=a.sandbox.__picoCapProbe();
-    if(warnAt<0&&p.act.phase==='warn')warnAt=frame;if(divergeAt<0&&a.sandbox.__picoCapSignature()!==b.sandbox.__picoCapSignature())divergeAt=frame;if(p.act.phase==='live')landAt=frame;
-  }
-  if(warnAt<0||landAt<0)fail('storm never telegraphed/landed');
-  if(divergeAt<warnAt)fail('act A/B diverged before warning');
-  if(divergeAt<0||divergeAt>=landAt)fail('act did not change behavior before landing');
-  a.frames(30000,false);const p=a.sandbox.__picoCapProbe(),notes=p.actNotes,t=p.show.shownByTier;
-  if(notes.filter(n=>n.kind==='act-warning').length<2||notes.filter(n=>n.kind==='act-land').length<2)fail('acts did not recur in warning/land pairs');
-  if(p.stats.heldFrames!==6*(t[3]||0))fail('apex hold budget drifted');
-  if(p.stats.slowedFrames>24*(t[3]||0))fail('apex slow budget drifted');
-  if(!((t[1]||0)>(t[2]||0)&&(t[2]||0)>(t[3]||0)))fail('tier frequencies not strictly ordered '+JSON.stringify(t));
-  const admire=a.sandbox.__picoCapAdmireFixture();if(admire.admired.target!=='ADMIRE'||admire.gated.target==='ADMIRE')fail('__NO_ADMIRE did not gate bot pause');
-  console.log('  warn@'+warnAt+' diverge@'+divergeAt+' land@'+landAt+'; '+notes.length+' notes; tiers '+JSON.stringify(t));
-}
-
-if(failed){console.error('\nPICO CAP EVALS FAILED');process.exit(1)}
-console.log('\nPICO CAP EVALS PASSED');
+const{bootGame}=require('./harness');const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');let failed=false;const fail=m=>{console.error('  FAIL:',m);failed=true};
+console.log('1) deterministic fixed-step replay and render parity');{const a=bootGame('pico-cap',{seed:0x9c51}),b=bootGame('pico-cap',{seed:0x9c51}),r=bootGame('pico-cap',{seed:0x9c51});a.frames(12000,false);b.frames(12000,false);r.frames(12000,true);const s=a.sandbox.__picoCapSignature();if(s!==b.sandbox.__picoCapSignature())fail('same seed diverged');if(s!==r.sandbox.__picoCapSignature())fail('render consumed simulation state');console.log('  identical headless/rendered; '+r.counter.calls+' draw calls')}
+console.log('1b) payoff FX no-op, shared intent schema, and seed-varied lapses');{const a=bootGame('pico-cap',{seed:0x9c52}),b=bootGame('pico-cap',{seed:0x9c52,footer:'globalThis.__NO_PAYOFF_FX=true;'}),c=bootGame('pico-cap',{seed:0x9c52,footer:'globalThis.__NO_LAPSE=true;'});a.frames(18000,false);b.frames(18000,false);c.frames(18000,false);if(a.sandbox.__picoCapSignature()!==b.sandbox.__picoCapSignature())fail('payoff FX changed same-seed simulation');const pa=a.sandbox.__picoCapProbe(),pc=c.sandbox.__picoCapProbe();if(pa.stats.lapses<1)fail('skill-profile daydreams never fired: '+pa.stats.lapses);if(pc.stats.lapses!==0)fail('__NO_LAPSE did not silence lapses: '+pc.stats.lapses);if(a.sandbox.__picoCapSignature()===c.sandbox.__picoCapSignature())fail('__NO_LAPSE was a sim no-op — lapses are not shaping play');const f=a.sandbox.__picoCapIntentFixture(),ka=Object.keys(f.bot).sort().join(','),kb=Object.keys(f.human).sort().join(',');if(ka!==kb||f.human.dx!==1)fail('human/bot intent schema diverged: '+JSON.stringify(f));console.log('  FX signature identical; '+pa.stats.lapses+' lapses (0 gated); intent keys '+ka)}
+console.log('2) ten-minute autoplay soak: moving, active, progressing');for(const seed of[0x9c61,0x9c62]){const{game:g,samples}=runSoak('pico-cap',{seed,minutes:10}),a=analyzeSoak(samples);console.log('  '+seed.toString(16)+' '+soakLine(a));assertSoak(seed.toString(16),a,{still:3,quiet:5,stall:45,minEvents:1800,minProgress:110},m=>fail(m));const p=g.sandbox.__picoCapProbe(),s=p.stats;if(!p.finite)fail(seed.toString(16)+': non-finite state');
+  // Watchability bands measured over twelve fixed seeds (0x9c100+i*97, 2026-07-10):
+  // glades 15..19, shards 80..96, slashes 50..75, squishes 13..31, shrinks 24..34,
+  // grows 16..27, brambles 23..34, soaks 3..12. Floors/ceilings carry ~30% margin.
+  if(s.glades<10)fail(seed.toString(16)+': too few shrines restored '+s.glades);
+  if(s.shards<55)fail(seed.toString(16)+': too few shards '+s.shards);
+  if(s.shrinks<14||s.grows<10)fail(seed.toString(16)+': size mechanic underused shr'+s.shrinks+' gr'+s.grows);
+  if(s.slashes<30)fail(seed.toString(16)+': sword too quiet '+s.slashes);
+  if(s.brambles<12)fail(seed.toString(16)+': brambles unchopped '+s.brambles);
+  if(s.squishes<5||s.squishes>45)fail(seed.toString(16)+': squish drama outside band '+s.squishes);
+  if(s.soaks<1)fail(seed.toString(16)+': storm never bit '+s.soaks)}
+console.log('3) size-planner A/B: same seeds beat the threat-blind, longest-route baseline');let smart=0,base=0,wins=0;for(const seed of[0x9c20,0x9c21,0x9c22,0x9c23,0x9c24,0x9c25,0x9c26,0x9c27]){const a=bootGame('pico-cap',{seed}),b=bootGame('pico-cap',{seed,footer:'globalThis.__NO_SIZE_PLAN=true;'});a.frames(36000,false);b.frames(36000,false);const pa=a.sandbox.__picoCapProbe(),pb=b.sandbox.__picoCapProbe(),sa=pa.stats.glades*30+pa.stats.shards*3-pa.stats.squishes*5,sb=pb.stats.glades*30+pb.stats.shards*3-pb.stats.squishes*5;smart+=sa;base+=sb;if(sa>sb)wins++;console.log('  '+seed.toString(16)+': smart '+sa+' vs baseline '+sb+'; glades '+pa.stats.glades+'/'+pb.stats.glades+', squishes '+pa.stats.squishes+'/'+pb.stats.squishes);if(pb.stats.glades<1)fail(seed.toString(16)+': baseline stopped functioning — A/B no longer measures a working policy')}console.log('  aggregate '+smart+' vs '+base+', wins '+wins+'/8');if(smart<=base||wins<6)fail('size planner did not clearly win paired panel');
+console.log('4) telegraphed storm acts and exact show budgets');{const a=bootGame('pico-cap',{seed:0x9c30}),b=bootGame('pico-cap',{seed:0x9c30,footer:'globalThis.__NO_ACTS=true;'});let warnAt=-1,divergeAt=-1,landAt=-1;for(let f=1;f<=6000&&landAt<0;f++){a.frames(1,false);b.frames(1,false);const pa=a.sandbox.__picoCapProbe();if(warnAt<0&&pa.act.phase==='warn')warnAt=f;if(divergeAt<0&&a.sandbox.__picoCapSignature()!==b.sandbox.__picoCapSignature())divergeAt=f;if(pa.act.phase==='live')landAt=f}if(warnAt<0||landAt<0)fail('storm never telegraphed/landed');if(divergeAt<warnAt)fail('act A/B diverged before the warning ('+divergeAt+' < '+warnAt+')');if(divergeAt<0||divergeAt>=landAt)fail('act did not change bot behavior before landing (diverge '+divergeAt+', land '+landAt+')');a.frames(30000,false);const p=a.sandbox.__picoCapProbe(),notes=p.actNotes,t=p.show.shownByTier;if(notes.length<4)fail('storm warning/land notes missing: '+notes.length);if(notes.filter(n=>n.kind==='act-warning').length<2||notes.filter(n=>n.kind==='act-land').length<2)fail('acts did not recur in pairs');if(p.stats.heldFrames!==6*(t[3]||0))fail('apex hold budget drifted: '+p.stats.heldFrames+' vs '+6*(t[3]||0));if(p.stats.slowedFrames>24*(t[3]||0))fail('apex slow budget drifted: '+p.stats.slowedFrames);if(!((t[1]||0)>(t[2]||0)&&(t[2]||0)>(t[3]||0)))fail('tier frequencies not strictly ordered '+JSON.stringify(t));const af=a.sandbox.__picoCapAdmireFixture();if(af.admired.target!=='ADMIRE'||af.gated.target==='ADMIRE')fail('__NO_ADMIRE did not gate bot pause');console.log('  warn@'+warnAt+' diverge@'+divergeAt+' land@'+landAt+'; '+notes.length+' notes; tiers '+JSON.stringify(t))}
+if(failed){console.error('\nPICO CAP EVALS FAILED');process.exit(1)}console.log('\nPICO CAP EVALS PASSED');

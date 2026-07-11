@@ -29,5 +29,7 @@
   {id:'robo-rally',title:'ROBO RALLY',label:'robo rally',tagline:'reveal · predict · collide',tone:'rr'},
   {id:'castle-crasher',title:'CASTLE CRASHER',label:'castle crasher',tagline:'plan · fire · topple',tone:'cc'},
   {id:'hotel-haunt',title:'HOTEL HAUNT',label:'hotel haunt',tagline:'sweep · reveal · relight',tone:'hh'},
-  {id:'kaiju-control',title:'KAIJU CONTROL',label:'kaiju control',tagline:'evacuate · divert · rebuild',tone:'kc'}
+  {id:'kaiju-control',title:'KAIJU CONTROL',label:'kaiju control',tagline:'evacuate · divert · rebuild',tone:'kc'},
+  {id:'moonshine-valley',title:'MOONSHINE VALLEY',label:'moonshine valley',tagline:'plant · harvest · defend',tone:'mv'},
+  {id:'dungeon-express',title:'DUNGEON EXPRESS',label:'dungeon express',tagline:'scout · remember · steal the split',tone:'de'}
 ]));
