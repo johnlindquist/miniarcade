@@ -906,25 +906,50 @@ function drawChains(){
       ctx.font='bold 6px monospace';ctx.fillStyle=GOLD;ctx.fillText('1ST',RIGHT-10,gy-2);}
   }
 }
-function drawBike(x,py,z,c,wheelie,tumble,star){
-  const lift=z*2.4;
-  if(z>0){ctx.globalAlpha=.3;rect(x-3,py,6,2,'#000');ctx.globalAlpha=1;}
+// Constructed rear-view rider at reference character scale (~12x17): tire,
+// fender, exhausts, boots on pegs, team jacket with arms to real handlebars,
+// striped helmet. Pose is sim truth — lean follows lateral velocity, engaged
+// blockers spread into a grapple, the carrier tucks a visible gold ball on a
+// cream plate. Purely presentation; hitboxes and physics are untouched.
+function drawBike(x,py,z,c,wheelie,tumble,star,lean,engaged){
+  const lift=z*2.4,TIRE='#1a1d24',HUB='#39404f',PIPE='#5b6472',DARK='#0a0c10',BAR='#8b95a6';
+  if(z>0){ctx.globalAlpha=.3;rect(x-4,py,8,2,'#000');ctx.globalAlpha=1;}
   ctx.save();ctx.translate(Math.round(x),Math.round(py-lift));
+  lean=clamp(lean===undefined?0:lean,-1.4,1.4);
   if(tumble)ctx.rotate(Math.sin(showFrame*.6)*.7);
   else if(wheelie)ctx.rotate(-.35);
-  if(star)rect(-4,-8,8,11,'#fffbe8'); // the ball carrier reads at a glance
-  rect(-3,-1,6,3,'#1a1d24');
-  rect(-3,-4,6,3,c);
-  rect(-1,-7,3,3,star?GOLD:CREAM);
-  rect(-4,1,3,2,'#0a0c10');rect(2,1,3,2,'#0a0c10');
+  else if(engaged)ctx.rotate(Math.sin(showFrame*.4)*.08);
+  else ctx.rotate(lean*.16);
+  if(star)rect(-6,-14,13,18,'#fffbe8'); // the ball carrier reads at a glance
+  // machine: rear tire, hub, fender, exhaust pair
+  rect(-2,-1,5,5,TIRE);rect(-1,1,3,2,HUB);rect(0,4,1,1,HUB);
+  rect(-3,-3,7,2,HUB);
+  rect(-5,-2,2,4,PIPE);rect(4,-2,2,4,PIPE);rect(-5,2,2,1,DARK);rect(4,2,2,1,DARK);
+  // rider: boots on pegs, jacket, arms to the bars, gloves
+  rect(-4,0,2,2,DARK);rect(3,0,2,2,DARK);
+  rect(-3,-8,7,5,c);ctx.globalAlpha=.3;rect(0,-8,1,5,CREAM);ctx.globalAlpha=1;
+  if(tumble){rect(-6,-10,2,3,c);rect(5,-10,2,3,c);}
+  else if(engaged){rect(-6,-8,2,2,c);rect(5,-8,2,2,c);rect(-7,-8,1,2,CREAM);rect(7,-8,1,2,CREAM);}
+  else{rect(-5,-7,2,4,c);rect(4,-7,2,4,c);rect(-5,-8,2,1,DARK);rect(4,-8,2,1,DARK);
+    rect(-6,-9,3,1,BAR);rect(4,-9,3,1,BAR);}
+  // helmet with team stripe
+  rect(-2,-13,5,5,star?GOLD:CREAM);rect(0,-13,1,5,c);rect(-2,-9,5,1,DARK);
+  if(star){rect(3,-6,3,4,GOLD);rect(4,-5,1,2,INK);} // tucked ball, laces out
   ctx.restore();
 }
 function drawDefender(d){
-  const py=sy(d.y);if(py<-10||py>H+10)return;
+  const py=sy(d.y);if(py<-12||py>H+12)return;
   if(d.diveT>0){ctx.save();ctx.translate(Math.round(d.x),Math.round(py));
-    ctx.rotate(Math.atan2(-d.dvy,d.dvx));rect(-5,-2,10,4,BLUE);rect(3,-2,2,2,CREAM);ctx.restore();return;}
-  if(d.sprawlT>0){ctx.globalAlpha=.85;rect(d.x-4,py-2,8,4,'#4a5f9e');ctx.globalAlpha=1;return;}
-  drawBike(d.x,py,0,BLUE,false,false);
+    ctx.rotate(Math.atan2(-d.dvy,d.dvx));
+    rect(-6,-2,11,4,BLUE);rect(-6,-1,2,2,'#0a0c10');
+    rect(5,-3,3,2,BLUE);rect(7,-2,2,2,CREAM);
+    rect(2,-4,4,4,CREAM);rect(4,-4,1,4,BLUE);
+    ctx.restore();return;}
+  if(d.sprawlT>0){ctx.globalAlpha=.85;
+    rect(d.x-6,py-4,4,4,'#1a1d24');rect(d.x-5,py-3,2,2,'#39404f');
+    rect(d.x-2,py-2,8,4,'#4a5f9e');rect(d.x+4,py-3,3,3,'#aeb9d6');
+    ctx.globalAlpha=1;return;}
+  drawBike(d.x,py,0,BLUE,false,false,false,d.vx*.5);
 }
 function drawHuddleCards(){
   if(state!=='huddle')return;
@@ -1011,11 +1036,11 @@ function draw(){
   preDraw();
   drawField();drawTerrainBits();drawChains();
   for(const bk of blockers){const py=sy(bk.y);
-    if(py>-10&&py<H+10)drawBike(bk.x,py,0,bk.engageT>0?'#c97f3d':'#ffb066',false,false);}
+    if(py>-12&&py<H+12)drawBike(bk.x,py,0,bk.engageT>0?'#c97f3d':'#ffb066',false,false,false,bk.vx*.5,bk.engageT>0);}
   for(const d of defenders)drawDefender(d);
-  drawBike(rusher.x,sy(rusher.y),rusher.z,rusher.stallT>0?'#8a5a3a':ORANGE,rusher.wheelie>4,rusher.tumbleT>0,true);
+  drawBike(rusher.x,sy(rusher.y),rusher.z,rusher.stallT>0?'#8a5a3a':ORANGE,rusher.wheelie>4,rusher.tumbleT>0,true,rusher.vx);
   if(rusher.stallT>0){ctx.globalAlpha=.6+.3*Math.sin(showFrame*.5);
-    ctx.font='bold 6px monospace';ctx.fillStyle=CORAL;ctx.fillText('!',rusher.x-1,sy(rusher.y)-12);ctx.globalAlpha=1;}
+    ctx.font='bold 6px monospace';ctx.fillStyle=CORAL;ctx.fillText('!',rusher.x-1,sy(rusher.y)-16);ctx.globalAlpha=1;}
   drawRings();drawParts();
   for(const t of texts){
     const py=t.worldY!==undefined?sy(t.worldY):120;

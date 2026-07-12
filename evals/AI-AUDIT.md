@@ -1092,6 +1092,22 @@ little or no palette-separated presentation at all.
   reaction) poisons per-category floors, and the fix is scoping the LEDGER,
   not lowering the gate.
 
+## MOTO BOWL: reference-scale riders (2026-07-12)
+
+Owner directive: "make the characters a little bit bigger, it's impossible to
+tell what they're actually doing." The old bike was an 8x11 abstract mark
+(two rects and a head). Replaced with a constructed rear-view rider at ~12x17:
+rear tire with hub, fender, exhaust pair, boots on pegs, team jacket with
+spine highlight, arms to drawn handlebars with gloves, striped helmet. Pose
+now shows the sim: lean follows lateral velocity (rusher and defenders),
+engaged blockers spread into a grapple with cream fists and shoulder jitter,
+the carrier tucks a visible gold ball (laces out) on the cream plate, dives
+became a full horizontal lunge with helmet and outstretched glove, and
+sprawls show the downed rider beside the fallen bike. Presentation only —
+hitboxes, physics, and every behavioral band untouched (full eval + suite
+green). Native-size checks: huddle formation, mid-play traffic, breakaway,
+goal-line stand, dive, wipeout, and grapple frames all read at 160px.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board
