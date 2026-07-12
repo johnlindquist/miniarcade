@@ -353,24 +353,32 @@ function drawShell(z,zi){
   }
 }
 function drawFloorCell(z,zi,x,y){
-  const sx=LEFT+x*TILE,sy=TOP+y*TILE,h=hash(x+zi*29,y+glade*7);
+  const sx=LEFT+x*TILE,sy=TOP+y*TILE,h=hash(x+zi*29,y+glade*7),h2=hash(x*3+zi*7,y*5+glade*11); // second stream dresses the ground so smaller actors keep a full room
   rect(sx,sy,TILE,TILE,z.floor);
   if(zi===0){ // mossy flagstones with clover
     if((x+y)%3===0){rect(sx+1,sy+2,TILE-2,TILE-4,z.floor2);rect(sx+2,sy+3,1,1,z.trim);rect(sx+TILE-4,sy+TILE-5,2,1,'#39592f')}
     else{rect(sx+2,sy+7,TILE-4,2,z.floor2);if(h>.55){rect(sx+4,sy+3,2,2,'#39592f');rect(sx+8,sy+4,1,1,LEAF)}}
     if(h>.82){rect(sx+9,sy+9,2,1,'#8fd465');rect(sx+10,sy+8,1,1,'#e56f8c')}
+    if(h2>.88){rect(sx+11,sy+5,2,2,'#c9364d');rect(sx+11,sy+4,1,1,'#ff8598');rect(sx+11,sy+7,1,1,'#e8dcc0')} // toadstool sprout
+    else if(h2<.14){rect(sx+3,sy+11,2,1,'#39592f');rect(sx+6,sy+12,1,1,'#4f7440')} // pebbles in the moss
   }else if(zi===1){ // wet slate and stream glints
     rect(sx+1,sy+1,TILE-2,TILE-2,z.floor2);rect(sx+2,sy+2,TILE-4,1,'#2a5563');rect(sx+2,sy+2,1,TILE-4,'#1c3a46');
     if(h>.5){const gl=((showFrame>>3)+x*3+y)%5;rect(sx+3+gl,sy+9,3,1,'#7fd0dd')}
     if(h>.86){rect(sx+4,sy+4,4,3,'#123039');rect(sx+5,sy+5,2,1,SKY)}
+    if(h2>.88){rect(sx+10,sy+3,1,3,'#3f7a5c');rect(sx+11,sy+2,1,1,'#8ce0a0')} // reed shoot
+    else if(h2<.14){rect(sx+3,sy+11,3,1,'#123039');rect(sx+4,sy+11,1,1,'#8fc3d2')} // slate crack with a wet glint
   }else if(zi===2){ // floorboards with nails and knots
     rect(sx+1,sy+1,TILE-2,TILE-2,z.floor2);for(let i=1;i<TILE-1;i+=5)rect(sx+i,sy+1,1,TILE-2,'#241608');
     if((x+y)%4===0){rect(sx+2,sy+3,TILE-4,1,'#5c3a1c');rect(sx+3,sy+2,1,1,'#d8a95e');rect(sx+10,sy+9,1,1,'#d8a95e')}
     if(h>.8){rect(sx+6,sy+6,3,2,'#241608');rect(sx+7,sy+7,1,1,'#452c15')}
+    if(h2>.88){rect(sx+9,sy+11,2,1,'#f2c778');rect(sx+8,sy+12,1,1,'#8a5a36')} // dropped crumbs
+    else if(h2<.14)rect(sx+4,sy+8,1,4,'#1a0f05') // split plank seam
   }else{ // glyph tiles and starlit inlay
     rect(sx+1,sy+1,TILE-2,TILE-2,z.floor2);rect(sx+2,sy+TILE-4,TILE-4,1,'#372c5c');
     if(h>.42){rect(sx+3,sy+3,5,1,'#5d4c96');rect(sx+7,sy+3,1,5,'#5d4c96');if(((showFrame>>4)+x+y)%5===0)rect(sx+5,sy+5,1,1,'#c9a7ff')}
     if(h>.87)rect(sx+9,sy+8,2,2,'#241b45');
+    if(h2>.88){rect(sx+4,sy+9,2,2,'#48387a');rect(sx+4,sy+9,1,1,'#7ff7d4')} // inlaid moonstone
+    else if(h2<.14)rect(sx+10,sy+11,1,1,'#b3a5e8') // stray starlight fleck
   }
   if(!solidAt(x,y-1)&&grid[y-1]&&grid[y-1][x]!==3)rect(sx,sy,TILE,1,z.wallHi);
   if(!solidAt(x-1,y))rect(sx,sy,1,TILE,z.shadow);
@@ -425,8 +433,8 @@ function drawZonePlaque(z,zi){
   const sy=TOP+2;rect(8,sy,46,9,z.shadow);rect(9,sy+1,44,7,z.wallHi);rect(11,sy+3,4,3,z.accent);
   ctx.textAlign='left';ctx.font='bold 5px monospace';ctx.fillStyle=zi===2?'#24120d':z.base;ctx.fillText(z.code+' // '+(zi===0?'GLADE':zi===1?'CREEK':zi===2?'HEARTH':'MOON'),17,sy+6);ctx.textAlign='center';
 }
-function drawLightPools(z){
-  const hq=heroDrawPos();lightPool(hq.x,hq.y,hero.size===PICO?SKY:'#9fe36b',hero.size===PICO?13:15);
+function drawLightPools(z,skipHero){
+  if(!skipHero){const hq=heroDrawPos();lightPool(hq.x,hq.y,hero.size===PICO?SKY:'#9fe36b',hero.size===PICO?13:15)}
   for(const s of shards)if(!s.taken){const q=pos(s.x,s.y);lightPool(q.x,q.y,GOLD,10)}
   for(const p of pads){const q=pos(p.x,p.y);lightPool(q.x,q.y,z.glow,9)}
   for(const g of gates){const q=pos(g.x,g.y);lightPool(q.x,q.y,g.open?GOLD:z.accent,g.open?12:8)}
@@ -491,34 +499,41 @@ function drawLandmarks(z){
   drawShrine(z);
 }
 function closestHunter(){let best=99;for(const g of gnawers)if(!g.dead&&['HUNT','PRESS','WINDUP','CHARGE'].includes(g.mode))best=Math.min(best,Math.abs(g.x-hero.x)+Math.abs(g.y-hero.y));return best}
+// Reference-scale knight (2026-07-11): drawn extent ~9x13 big, aura-inclusive
+// ~10x10 pico. Block Mine's ~12px hero is the ceiling; character comes from the
+// 2-frame stride, facing, sword-arm slash arc, and the signature acorn cap kept
+// proportionally oversized (9px brim over a 5px head), not from pixel count.
 function drawHeroBig(q,face,walk,hunted,celebrate,hurt){
   const slashing=showFrame-hero.slashAt<10||hero.chop>0,sf=hero.chop>0?(hero.chop>>2)%2:Math.min(2,(showFrame-hero.slashAt)>>2);
-  withAlpha(.34,()=>{ctx.fillStyle='#02060a';ctx.beginPath();ctx.ellipse(0,6,5,2,0,0,7);ctx.fill()});
-  if(celebrate){ // arms up, cap raised
-    rect(-2,0,5,5,TUNIC);rect(-2,-4,4,4,SKIN);rect(-6,-3,3,2,SKIN);rect(4,-3,3,2,SKIN);
-    rect(-3,-9,7,3,CAP);rect(-2,-11,5,3,CAPHI);rect(-3,-6,7,1,CAPBAND);rect(1,-13,2,2,CAP);
-    rect(-2,5,2,3,'#1c3038');rect(1,5,2,3,'#1c3038');return;
+  withAlpha(.32,()=>rect(-3,4,7,1,'#02060a')); // ground shadow
+  if(celebrate){ // arms up, cap tossed high
+    rect(-2,3,2,1,'#101c22');rect(1,3,2,1,'#101c22'); // planted boots
+    rect(-3,-1,7,4,TUNIC);rect(-2,0,5,2,TUNIC2);rect(-3,1,7,1,'#6f5a24');
+    rect(-4,-4,2,2,SKIN);rect(3,-4,2,2,SKIN); // raised arms
+    rect(-2,-4,5,3,SKIN);rect(face,-3,1,1,'#20262c');
+    rect(-3,-8,7,2,CAP);rect(-2,-8,4,1,CAPHI);rect(-3,-6,7,1,CAPBAND);rect(face*2,-9,2,1,CAPHI);
+    return;
   }
-  rect(-2+(walk?0:0),1+(walk?1:0),2,5,'#1c3038');rect(1,1+(walk?0:1),2,5,'#1c3038'); // legs
-  rect(-3,6+(walk?1:0),3,2,'#101c22');rect(1,6+(walk?0:1),3,2,'#101c22'); // boots
-  rect(-3,-2,7,5,hurt&&showFrame%8<4?CREAM:TUNIC);rect(-2,-1,5,3,TUNIC2);rect(-3,2,7,1,CAPBAND); // tunic + belt
-  rect(face*3,-1,2,3,TUNIC); // sword arm
-  if(slashing){ctx.strokeStyle=STEEL;ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,-1,8,face>0?-0.9+sf*.5:2.2+sf*.5,face>0?0.6+sf*.5:3.9+sf*.5);ctx.stroke();
-    rect(face*5,-4+sf,2,5,STEEL);rect(face*5,1+sf,2,1,GOLD)}
-  else{rect(face*4,-3,1,5,STEEL);rect(face*4,2,1,1,GOLD)}
-  rect(-2,-5,5,4,SKIN);rect(face*1,-4,1,1,'#20262c'); // head + eye
-  rect(-4,-8,9,3,CAP);rect(-3,-10,7,3,CAPHI);rect(-4,-6,9,1,CAPBAND);rect(2*face+1,-12,2,3,CAP);rect(2*face+1,-12,1,1,CAPHI); // oversized acorn cap with tip
-  if(hunted){ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText('!',face*-6,-8)}
+  rect(-3+(walk?1:0),2,2,2,'#1c3038');rect(1-(walk?1:0),2,2,2,'#1c3038'); // striding legs
+  rect(-3+(walk?1:0),3,2,1,'#101c22');rect(1-(walk?1:0),3,2,1,'#101c22'); // boots
+  rect(-3,-1,7,3,hurt&&showFrame%8<4?CREAM:TUNIC);rect(-2,0,5,1,TUNIC2);rect(-3,1,7,1,'#6f5a24'); // tunic + belt
+  rect(face*3,-1+(walk?1:0),2,2,hurt&&showFrame%8<4?CREAM:TUNIC); // swinging sword arm
+  if(slashing){ctx.strokeStyle=STEEL;ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,-1,6,face>0?-0.9+sf*.5:2.2+sf*.5,face>0?0.6+sf*.5:3.9+sf*.5);ctx.stroke();
+    rect(face*4,-3+sf,2,4,STEEL);rect(face*4,1+sf,1,1,GOLD)}
+  else{rect(face*4,-3,1,4,STEEL);rect(face*4,1,1,1,GOLD)}
+  rect(-2,-4,5,3,SKIN);rect(face,-3,1,1,'#20262c'); // head + eye
+  rect(-4,-5,9,1,CAPBAND);rect(-3,-7,7,2,CAP);rect(-2,-7,4,1,CAPHI);rect(face*2,-8,2,1,CAP);rect(face*2+(face>0?0:1),-8,1,1,CAPHI); // oversized acorn cap: gold brim band, dome, tilted tip
+  if(hunted){ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText('!',face*-5,-7)}
 }
 function drawHeroPico(q,face,walk,hunted,hurt){
-  withAlpha(.3,()=>{ctx.fillStyle='#02060a';ctx.beginPath();ctx.ellipse(0,4,3,1,0,0,7);ctx.fill()});
-  withAlpha(.35+.15*Math.sin(showFrame*.25),()=>{ctx.strokeStyle=SKY;ctx.beginPath();ctx.arc(0,-1,6,0,7);ctx.stroke()}); // pico aura keeps him readable
-  rect(-1,2+(walk?1:0),1,2,'#1c3038');rect(1,2+(walk?0:1),1,2,'#1c3038');
-  rect(-2,0,4,3,hurt&&showFrame%8<4?CREAM:TUNIC);
-  rect(-1,-2,3,2,SKIN);
-  rect(-3,-4,6,2,CAP);rect(-2,-6,4,2,CAPHI);rect(-3,-3,6,1,CAPBAND);rect(face+1,-7,1,2,CAP);
-  if(hero.t>0)withAlpha(.5,()=>rect(-face*4,3,2,1,SKY));
-  if(hunted){ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText('!',-face*4,-6)}
+  withAlpha(.3,()=>rect(-2,3,4,1,'#02060a'));
+  withAlpha(.35+.15*Math.sin(showFrame*.25),()=>{ctx.strokeStyle=SKY;ctx.beginPath();ctx.arc(0,-1,4,0,7);ctx.stroke()}); // pico aura keeps him readable
+  rect(-1+(walk?1:0),2,1,1,'#101c22');rect(1-(walk?1:0),2,1,1,'#101c22'); // little boots
+  rect(-2,0,4,2,hurt&&showFrame%8<4?CREAM:TUNIC);rect(-1,0,2,1,TUNIC2);
+  rect(-1,-2,3,2,SKIN);rect(face,-2,1,1,'#20262c');
+  rect(-2,-3,5,1,CAPBAND);rect(-1,-4,3,1,CAP);rect(face,-5,1,1,CAPHI); // same cap, doll-sized
+  if(hero.t>0)withAlpha(.5,()=>rect(-face*3,2,2,1,SKY));
+  if(hunted){ctx.fillStyle=CORAL;ctx.font='bold 5px monospace';ctx.fillText('!',-face*4,-5)}
 }
 function drawHero(){
   const q=heroDrawPos(),face=heroFacing(),walk=hero.t>0?((showFrame>>2)&1):0,hunted=closestHunter()<4,celebrate=hero.channel>0||!!activeArt('restore',90)||(pres.cue&&pres.cue.id==='restore'),hurt=hero.stun>0||flash>0;
@@ -551,28 +566,31 @@ function drawGnawer(g,index){
     withAlpha(.82,()=>{for(let i=1;i<=5;i++){const tx=g.x+dx*i,ty=g.y+dy*i;if(!inside(tx,ty)||!passable(tx,ty,BIG))break;const p=pos(tx,ty),c=i%2?CORAL:GOLD;rect(p.x-5,p.y-1,10,3,c);rect(p.x-1,p.y-5,3,10,c)}});
   }
   if(charging)for(let i=1;i<=3;i++)withAlpha(.35/i,()=>rect(q.x-g.chargeDX*i*5-5,q.y-g.chargeDY*i*5-2,10,4,CORAL));
-  const bob=hunt?Math.round(Math.sin(showFrame*.5+index)*1.7):((showFrame>>3)+index)%2?0:-1,lean=hunt?face:0,skitter=hunt?((step&1)?1:-1):0;
+  // Reference-scale beetle (2026-07-11): drawn extent ~11x9 roaming — the old
+  // ~13x12 shell nearly filled its 14px tile. Menace comes from the hunt-state
+  // scuttle, raised wing cases, mandible chatter, and eye color, not bulk.
+  const bob=hunt?Math.round(Math.sin(showFrame*.5+index)*1.5):((showFrame>>3)+index)%2?0:-1,lean=hunt?face:0,skitter=hunt?((step&1)?1:-1):0;
   ctx.save();ctx.translate(Math.round(q.x+lean+skitter),Math.round(q.y+bob));
-  withAlpha(.3,()=>{ctx.fillStyle='#02060a';ctx.beginPath();ctx.ellipse(-lean,5-bob,5,1.5,0,0,7);ctx.fill()});
-  for(let i=0;i<3;i++){const ph=(step+i)&1,amp=hunt?2:1;rect(-4+i*3,3+ph*amp,1,2+(hunt?1:0),'#17100a');rect(-3+i*3,3+(1-ph)*amp,1,2+(hunt?1:0),'#17100a')} // scuttling legs
-  poly([[-6,2],[-5,-4],[0,-5],[5,-4],[6,2],[0,4]],'#241407'); // dark outline
-  poly([[-5,2],[-4,-3],[0,-4],[4,-3],[5,2],[0,4]],'#4a2e1c'); // shell
-  rect(-3,-2,6,4,'#6b4025');rect(-2,-1,4,2,'#8a5a36');
-  rect(-4,-3,8,1,'#b5854f');rect(-2+((hunt?step:step>>1)%5)-1,-4,2,1,'#e8c084'); // sheen sweep, agitated on the hunt
-  if(hunt){rect(-4,-5,3,1,'#b5854f');rect(2,-5,3,1,'#b5854f')} // raised wing cases make the attack silhouette read before contact
-  rect(-1,-3,1,6,'#2e1a0d'); // wing split
-  if(hunt&&(step&1)){rect(-4,-4,3,1,'#7a4e33');rect(2,-4,3,1,'#7a4e33')} // wing-case rattle
-  rect(face*4,-1,2,2,'#2e1a0d');rect(face*5,0,1,1,'#17100a'); // head
-  const blink=hunt&&(showFrame>>2)%3===0;
-  rect(face*5,-2,1,1,hunt?(blink?CREAM:CORAL):'#ffd166');rect(face*4,-3,1,1,hunt?(blink?CREAM:CORAL):'#ffd166'); // eyes
-  const chomp=hunt?(step&1):0;rect(face*6,0-chomp,1,1,'#b5854f');rect(face*6,1+chomp,1,1,'#b5854f'); // mandibles chatter
-  if(hunt&&(showFrame>>2)%2===0){rect(face*7,-4,1,1,CORAL);rect(face*6,-5,1,1,CORAL)}
-  if(hunt){withAlpha(.45,()=>{rect(-face*6,3+((step)&1),2,1,'#8a6242');rect(-face*8,4,2,1,'#5d3b2a')})} // dust kicked up
-  if(flee){withAlpha(.5,()=>{rect(-face*7,2,3,1,'#8a6242');rect(-face*9,4,2,1,'#8a6242')})}
-  if(g.mode==='STUN'){for(let i=0;i<3;i++){const a=showFrame*.25+i*2.1;rect(Math.cos(a)*7-1,-7+Math.sin(a)*2,2,2,i===1?CREAM:GOLD)}}
+  withAlpha(.3,()=>rect(-3-lean,4-bob,7,1,'#02060a'));
+  for(let i=0;i<3;i++){const ph=(step+i)&1,amp=hunt?2:1;rect(-3+i*2,2+ph*amp,1,hunt?2:1,'#17100a');rect(-2+i*2,2+(1-ph)*amp,1,hunt?2:1,'#17100a')} // scuttling legs
+  poly([[-4,1],[-3,-3],[0,-4],[3,-3],[4,1],[0,2]],'#241407'); // dark outline
+  poly([[-3,1],[-2,-2],[0,-3],[2,-2],[3,1],[0,2]],'#4a2e1c'); // shell
+  rect(-2,-1,4,2,'#6b4025');rect(-1,0,2,1,'#8a5a36');
+  rect(-2,-2,4,1,'#b5854f');rect(-2+((hunt?step:step>>1)%4),-3,1,1,'#e8c084'); // sheen sweep, agitated on the hunt
+  if(hunt){rect(-3,-4,2,1,'#b5854f');rect(1,-4,2,1,'#b5854f')} // raised wing cases make the attack silhouette read before contact
+  rect(0,-2,1,4,'#2e1a0d'); // wing split
+  if(hunt&&(step&1)){rect(-3,-3,2,1,'#7a4e33');rect(1,-3,2,1,'#7a4e33')} // wing-case rattle
+  const hx=face>0?3:-5;rect(hx,-1,2,2,'#2e1a0d');rect(face>0?4:-5,0,1,1,'#17100a'); // head
+  const blink=hunt&&(showFrame>>2)%3===0,eyeC=hunt?(blink?CREAM:CORAL):'#ffd166';
+  rect(face>0?4:-5,-2,1,1,eyeC);rect(face>0?3:-4,-3,1,1,eyeC); // eyes
+  const chomp=hunt?(step&1):0,mx=face>0?5:-6;rect(mx,0-chomp,1,1,'#b5854f');rect(mx,1+chomp,1,1,'#b5854f'); // mandibles chatter
+  if(hunt&&(showFrame>>2)%2===0){rect(face>0?5:-6,-4,1,1,CORAL)}
+  if(hunt){withAlpha(.45,()=>{rect(-face*5,3+(step&1),2,1,'#8a6242');rect(-face*7,4,2,1,'#5d3b2a')})} // dust kicked up
+  if(flee){withAlpha(.5,()=>{rect(-face*6,2,3,1,'#8a6242');rect(-face*8,4,2,1,'#8a6242')})}
+  if(g.mode==='STUN'){for(let i=0;i<3;i++){const a=showFrame*.25+i*2.1;rect(Math.cos(a)*6-1,-6+Math.sin(a)*2,2,2,i===1?CREAM:GOLD)}}
   ctx.restore();
 }
-function drawActors(){if(typeof globalThis.__HIDE_GNAWERS==='undefined')for(let i=0;i<gnawers.length;i++)if(globalThis.__HIDE_GNAWER_INDEX!==i)drawGnawer(gnawers[i],i);if(typeof globalThis.__HIDE_HERO==='undefined')drawHero()}
+function drawActors(){for(let i=0;i<gnawers.length;i++)drawGnawer(gnawers[i],i);drawHero()}
 function drawAmbient(z,zi){
   for(let i=0;i<12;i++){ // biome motes: fireflies, dragonfly glints, dust, spores
     const x=6+((i*43+glade*17)%148),y=TOP+4+((i*67+Math.floor(showFrame*(i%3+1)/4))%(ROWS*TILE-8));
@@ -653,6 +671,15 @@ function drawBottomHud(z){
 }
 function render(){
   const z=zone(),zi=zoneIndex();ctx.fillStyle=INK;ctx.fillRect(0,0,W,H);
+  const only=typeof globalThis.__PICOCAP_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__PICOCAP_VISUAL_ONLY_SUBJECT:null;
+  if(only!==null){ // isolated renders for the visual eval's drawn-extent pixel diffs
+    preDraw();
+    if(only==='env'){drawShell(z,zi);drawFloors(z,zi);drawLightPools(z,true);drawWalls(z,zi);drawZonePlaque(z,zi);drawLandmarks(z);drawAmbient(z,zi);drawStorm(z)}
+    else if(only==='hero')drawHero();
+    else if(only==='shrine')drawShrine(z);
+    else if(only.startsWith('gnawer-')){const i=+only.slice(7);if(gnawers[i]&&!gnawers[i].dead)drawGnawer(gnawers[i],i)}
+    postDraw();return;
+  }
   preDraw();ctx.save();const kick=worldKick();ctx.translate(kick.x,kick.y);
   drawShell(z,zi);drawFloors(z,zi);drawLightPools(z);drawWalls(z,zi);drawZonePlaque(z,zi);drawLandmarks(z);drawActors();drawAmbient(z,zi);drawStorm(z);drawParts();drawArtEvents();
   ctx.restore();postDraw();
@@ -761,14 +788,23 @@ function setVisualBeat(name){
   }
   return true;
 }
-function heroBox(){const q=heroDrawPos();return hero.size===PICO?{x:q.x-6,y:q.y-8,width:12,height:14}:{x:q.x-7,y:q.y-13,width:14,height:22}}
+// Probe boxes wrap the redrawn sprites (2026-07-11): big knight draws ~9x13
+// (cap tip -8 .. shadow +4), pico ~10x10 around his r4 aura, beetle ~11x9.
+function heroBox(){const q=heroDrawPos();return hero.size===PICO?{x:q.x-5,y:q.y-6,width:11,height:11}:{x:q.x-5,y:q.y-9,width:11,height:14}}
+function gnawerBox(g,i){const q=gnawerDrawPos(g,i);return{x:q.x-7,y:q.y-6,width:13,height:12}}
 function visualProbe(){
   const g=gnawers.find(v=>!v.dead)||gnawers[0],gi=g?gnawers.indexOf(g):-1,gq=g?gnawerDrawPos(g,gi):heroDrawPos(),sq=pos(shrine.x,shrine.y);
-  const live=gnawers.filter(v=>!v.dead).length,hb=heroBox();
-  const footprint=(hb.width*hb.height+live*15*13)/(COLS*TILE*ROWS*TILE);
+  const live=gnawers.filter(v=>!v.dead).length,hb=heroBox(),sb={x:sq.x-9,y:sq.y-16,width:18,height:26};
+  const footprint=(hb.width*hb.height+live*13*12)/(COLS*TILE*ROWS*TILE);
   return{fixture:visualFixture,glade,zone:zone().name,act:act.phase,cue:pres.cue?pres.cue.id:null,pathOverlay:false,puzzleStage:gates.filter(v=>v.open).length,gates:gates.map(v=>({open:v.open,need:v.need,x:v.x,y:v.y})),
     art:artEvents.map(e=>({kind:e.kind,age:showFrame-e.at})),size:hero.size===PICO?'pico':'big',
-    heroBox:hb,gnawerBox:g?{x:gq.x-8,y:gq.y-7,width:16,height:14}:null,shrineBox:{x:sq.x-9,y:sq.y-16,width:18,height:26},
+    heroBox:hb,gnawerBox:g?gnawerBox(g,gi):null,shrineBox:sb,
+    layout:{playfield:{x:LEFT,y:TOP,width:COLS*TILE,height:ROWS*TILE}},
+    actors:[
+      {id:'hero',kind:'standard',type:hero.size===PICO?'pico-knight':'big-knight',box:hb},
+      ...gnawers.map((v,i)=>({v,i})).filter(({v})=>!v.dead).map(({v,i})=>({id:'gnawer-'+i,kind:'standard',type:'gnawer',box:gnawerBox(v,i)})),
+      {id:'shrine',kind:'structure',type:'shrine',box:sb}
+    ],
     scentRadiusPx:6*TILE,fieldSpanPx:COLS*TILE,footprintFraction:+footprint.toFixed(5),
     finite:[hb.x,hb.y,gq.x,gq.y,glade,showFrame,runFrame,hero.read||0].every(Number.isFinite)};
 }

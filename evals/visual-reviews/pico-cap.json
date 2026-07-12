@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "38f949224e226e6d2ed9bd3de4019fd4154561deaa6879ea666d48e2140bfd86",
+  "montageSha256": "44d274082ee0fb2791a64395f62bb806bf0f4c11f615e3dd7cf7cdfc6a0aa0bc",
   "seed": "0x9c0cab",
   "checkpoints": [
     "opening@12",
@@ -20,41 +20,52 @@
     "storm@6",
     "restore@6"
   ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size review of the 160x360 candidate, Machine Hunt, and Block Mine contact sheet",
+  "reviewedAt": "2026-07-11",
+  "reviewer": "Claude native-size review of the 160x360 candidate, Machine Hunt, and Block Mine contact sheet after the reference-scale character pass (hero 10x21 -> 9x12, pico 13x13 -> 9x9, gnawer 13x12 -> 10x8 drawn pixels)",
+  "guidelineOverlays": "none: no path lines, breadcrumbs, predicted arcs, or future-position reticles are drawn for any actor at any sampled beat; the beetle windup lane is a diegetic enemy attack tell and the storm banner warns about the world, not about an actor's plan",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The acorn-capped knight retains distinct big and pico silhouettes, facing, gait, dodge motion, a broad readable sword impact, and hurt/celebration poses. Gnawers retain articulated shells, legs, eyes, mandibles, raised attack wing-cases, charge trail, stun stars, and measured hunt-state scuttling at the same small-world scale as the references."
+      "note": "The knight is rebuilt at reference scale (9x12 drawn vs Block Mine's ~12px hero, Machine Hunt's ~10px hunter): distinct boots/legs, gold-banded tunic, skin head with a facing eye, sword arm, and the signature acorn cap kept proportionally oversized. Pico form is a true doll (9x9 with its aura) so the size mechanic reads instantly. Gnawers slim to 10x8 with legs, shell sheen, mandibles, eyes, and hunt-state raised wing cases; character now comes from stride, scuttle, and poses instead of tile-filling bulk."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The world now reads as three built puzzle chambers rather than a generated corridor maze: framed side reliquaries, material-specific room furniture, closed sun-gate bars, open arches, cracks, briars, transformation rings, shrine architecture, light pools, canopy shade, ambient motes, and biome shell landmarks remain legible with the HUD ignored."
+      "note": "The three-chamber garden rooms stay authored (framed reliquaries, material wall furniture, sun gates, mushroom rings, shrine, light pools, canopy shade, biome shell landmarks) and the ground gains a second dressing pass — toadstool sprouts and moss pebbles, reed shoots and cracked wet slate, crumbs and split plank seams, moonstone inlay and starlight flecks — so the field reads full beside the smaller actors; measured frame entropy 3.78..4.02 and edge energy .060..074 sit above the weaker reference on every beat."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Seed Glade, Creek Hollow, Hearth House, and Moon Shrine use four distinct authored obstacle compositions and different architectural materials. Each floor advances through a two-solution chamber, a keyed gate transition, a second guarded choice, and a sanctum instead of repeating a hallway with a palette swap."
+      "note": "Seed Glade, Creek Hollow, Hearth House, and Moon Shrine keep four distinct authored obstacle compositions and materials (structureDistance .22..26 between biomes), with per-biome floor dressing now reinforcing identity at ground level; progression still advances chamber -> keyed gate -> guarded choice -> sanctum rather than a palette swap."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The montage presents a readable sequence: room scan, red-gold charge lane, pico sidestep with CLOSE ONE follow-through, big-form parry impact, sun-gate opening beam, rainstorm, and shrine restore. The charge tell persists before commitment, while slash, gate, bloom, storm, and restore effects have measured anticipation and aftermath."
+      "note": "The smaller sprites keep authored motion: 2-frame stride and boot shuffle on the knight (walk burst .455 max in a 44px aligned crop), swinging sword arm, slash arc with follow-through, hunt-state beetle scuttle measured harder than roam (.037 vs .006 median), charge lane tell before commitment, pico sidestep, big parry burst, shrink/grow morph swirls, storm landing, bloom, channel beam, and the GLADE RESTORED apex card with petal fall."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At native 160x360, blue crack and red briar solutions sit on opposite sides of each compact room, key pips explain the locked gate, and the enemy lane makes danger predictable. No computed route, breadcrumb, dashed line, or path-probe surface is rendered; posture, facing, interactable glow, gate state, and enemy telegraph carry intent."
+      "note": "At native 160x360 the smaller actors improve room legibility: blue crack and red briar solutions sit on opposite walls, key pips explain the locked gates, the charge lane makes beetle danger predictable, and light pools keep the focal hierarchy on hero, keys, rings, and shrine. Measured footprint fell to ~1.2% of the playfield and every threat is visible across the whole room, with no computed route, breadcrumb, or path-probe surface rendered."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The storybook garden language is consistent across the acorn knight, beetle wardens, reliquary choices, biome architecture, compact room-state HUD, gold sun-gate grammar, weather act, and shrine payoff. The added tactical presentation uses the existing cream, coral, sky, leaf, and gold palette rather than debug geometry."
+      "note": "One storybook-garden language across the acorn knight, beetle wardens, reliquary altars, biome architecture, floor dressing, HUD, gold sun-gate grammar, weather act, and shrine payoff; the new sprites reuse the established cap/tunic/gold palette and shading style, and the added ground details use each biome's existing material colors rather than new debug geometry."
     }
+  },
+  "renderReceipt": {
+    "seed": "0x9c0cab",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 4728883,
+    "sha256": "7c4c8bbf53ade1b67dfc63430c35dddf2c70cefbf0d6508c34945f1883df80da",
+    "command": "node render/render.js pico-cap 30 .artifacts/visual/pico-cap/pico-cap-30s.mp4 --seed 10226859 --probe --fps 30"
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "16c345ca1fdf1a9d86b7f9b25e78502a98f2e90a1a31e9554bec3cb62d112e67"
+  "reviewIdentitySha256": "3c5c4be767b3ef22c7dbc147b3fc9cece8174b2fca0d16b79a47cc9ba1f58141"
 }

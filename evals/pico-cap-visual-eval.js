@@ -13,7 +13,7 @@ const{
 }=require('../render/runtime');
 const{
   sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,analyzeBurst,
-  writeContactSheet,verifyReviewReceipt,writeJson,quantile
+  measureDrawnActorExtent,assertActorScale,writeContactSheet,verifyReviewReceipt,writeJson,quantile
 }=require('./visual-harness');
 
 const ROOT=path.join(__dirname,'..');
@@ -25,6 +25,7 @@ const METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json');
 const REVIEW_TEMPLATE_PATH=path.join(ARTIFACT_DIR,'review-template.json');
 const REVIEW_PATH=path.join(__dirname,'visual-reviews','pico-cap.json');
 const PRESERVED_CONTACT_PATH=path.join(__dirname,'visual-receipts','pico-cap-contact-sheet.png');
+const CLIP_PATH=path.join(ARTIFACT_DIR,'pico-cap-30s.mp4');
 const GAME_SOURCE=fs.readFileSync(GAME_PATH,'utf8');
 const SEED=0x9c0cab,RENDER_EVERY=2,PRE_ROLL=120;
 const WORLD_CROP={x:0,y:46,width:160,height:276};
@@ -51,6 +52,7 @@ function captureFixture(name,offsets,options){
   const setBeat=runtime.sandbox.__picoCapSetVisualBeat;
   if(typeof setBeat!=='function')throw new Error('pico-cap.html must expose __picoCapSetVisualBeat(name)');
   if(setBeat(name)!==true)throw new Error('unknown Pico Cap visual beat: '+name);
+  if(options.selector!==undefined)runtime.sandbox.__PICOCAP_VISUAL_ONLY_SUBJECT=options.selector;
   if(options.afterSet)options.afterSet(runtime);
   const frames=new Map();
   for(const target of [...new Set(offsets)].sort((a,b)=>a-b)){
@@ -125,18 +127,16 @@ function analyzeAlignedBurst(frames,boxField,size){
   };
 }
 
-// Drawn-extent measurement: diff a frozen portrait against the same scene with
-// the subject moved away, cropped to a window around the subject box so only
-// the subject's own pixels register. This measures rendered sprites, not the
-// probe's logical box.
-function drawnExtent(present,absent,box,inflate){
-  const pad=inflate===undefined?12:inflate;
-  const crop={
-    x:Math.max(0,Math.floor(box.x-pad)),y:Math.max(0,Math.floor(box.y-pad)),
-    width:Math.min(160,Math.ceil(box.width+pad*2)),height:Math.min(360,Math.ceil(box.height+pad*2))
-  };
-  const diff=frameDifference(present,absent,{native:false,crop,threshold:14});
-  return{crop,diff,bounds:diff.changedBounds};
+// Drawn-extent measurement (crystal-mesa pattern): render the frozen portrait
+// once with __PICOCAP_VISUAL_ONLY_SUBJECT='none' (empty plate) and once with
+// only the subject, then let measureDrawnActorExtent report the sprite's real
+// painted bounds. This measures rendered pixels, never the probe's logical box.
+function measureSubject(fixture,id,offset){
+  const base=captureFixture(fixture,[offset],{id:`${fixture}-plate-${id}`,selector:'none'}).get(offset);
+  const isolated=captureFixture(fixture,[offset],{id:`${fixture}-only-${id}`,selector:id}).get(offset);
+  const actor=(base.probe.actors||[]).find(value=>value.id===id);
+  if(!actor)throw new Error(`${fixture}: visual probe exposes no actor ${id}`);
+  return measureDrawnActorExtent(isolated,base,{id,kind:actor.kind,type:actor.type,probeBox:actor.box,padding:10,threshold:8});
 }
 
 function buildCandidateEvidence(){
@@ -172,14 +172,8 @@ function buildCandidateEvidence(){
     restoreBefore:{fixture:'restore-before',offsets:[6]},
     restore:{fixture:'restore',offsets:[1,3,6,12,24,48]},
     portrait:{fixture:'portrait',offsets:[6]},
-    portraitHidden:{fixture:'portrait',offsets:[6],footer:'globalThis.__HIDE_HERO=true;'},
-    portraitAway:{fixture:'portrait-away',offsets:[6]},
     portraitPico:{fixture:'portrait-pico',offsets:[6]},
-    portraitPicoHidden:{fixture:'portrait-pico',offsets:[6],footer:'globalThis.__HIDE_HERO=true;'},
-    portraitPicoAway:{fixture:'portrait-pico-away',offsets:[6]},
-    portraitGnawer:{fixture:'portrait-gnawer',offsets:[6]},
-    portraitGnawerHidden:{fixture:'portrait-gnawer',offsets:[6],footer:'globalThis.__HIDE_GNAWER_INDEX=0;'},
-    portraitGnawerAway:{fixture:'portrait-gnawer-away',offsets:[6]}
+    portraitGnawer:{fixture:'portrait-gnawer',offsets:[6]}
   };
   const runs={};
   for(const[id,spec]of Object.entries(specs))runs[id]=captureFixture(spec.fixture,spec.offsets,{id,footer:spec.footer});
@@ -203,9 +197,13 @@ function buildCandidateEvidence(){
 
 function reviewTemplate(montageSha256){
   const pending=note=>({meetsMachineHunt:false,meetsBlockMine:false,note});
+  const command=`node render/render.js pico-cap 30 .artifacts/visual/pico-cap/pico-cap-30s.mp4 --seed ${SEED} --probe --fps 30`;
   return{
     schema:1,game:'pico-cap',verdict:'pending',references:['horizon','blockmine'],montageSha256,
+    seed:'0x'+SEED.toString(16),
+    checkpoints:['opening@12','choice@12','windup@6','dodge@6','parry@6','gateOpen@6','later@12','deep@12','storm@6','restore@6'],
     reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size reference review',
+    guidelineOverlays:'PENDING: confirm no path lines, breadcrumbs, predicted arcs, or future-position reticles are drawn for any actor at any sampled beat (the beetle windup lane is a diegetic enemy attack tell).',
     categories:{
       characterCraft:pending('Inspect big/pico hero silhouettes, acorn cap, facing, walk gait, sword slash, morph swirl, hunted reaction, channel pose, and gnawer construction in both roam and hunt at 160x360.'),
       environmentCraft:pending('Inspect hedge/creek/hearth/moon walls, floors, cracks, mushroom rings, brambles, shrine, light pools, canopy shade, rain, and ambient motes with the HUD mentally removed.'),
@@ -213,7 +211,8 @@ function reviewTemplate(montageSha256){
       animationImpact:pending('Confirm walking, scuttling, shrink/grow morphs, slash, squish, shard grab, storm landing, bloom, channel beam, and restore have anticipation, impact, and follow-through.'),
       readability:pending('Confirm the two room solutions, closed/open sun gates, enemy charge lane, pico dodge, big parry, shrine, and storm state remain legible at native size without exposing the computed navigation path.'),
       artDirectionCohesion:pending('Confirm actors, garden architecture, props, lighting, HUD, and payoff grammar feel authored as one storybook-garden world.')
-    }
+    },
+    renderReceipt:{seed:'0x'+SEED.toString(16),seconds:30,fps:30,codec:'h264',dimensions:'320x720',bytes:0,sha256:'',command}
   };
 }
 
@@ -270,14 +269,26 @@ async function main(){
 
   // ---- "small actors, big worlds" scale law, measured from rendered pixels
   const pf=(id)=>evidence.runs[id].get(6);
-  const heroExtent=drawnExtent(pf('portrait'),pf('portraitHidden'),pf('portrait').probe.heroBox);
-  const picoExtent=drawnExtent(pf('portraitPico'),pf('portraitPicoHidden'),pf('portraitPico').probe.heroBox);
-  const gnawerExtent=drawnExtent(pf('portraitGnawer'),pf('portraitGnawerHidden'),pf('portraitGnawer').probe.gnawerBox);
+  const heroExtent=measureSubject('portrait','hero',6);
+  const picoExtent=measureSubject('portrait-pico','hero',6);
+  const gnawerExtent=measureSubject('portrait-gnawer','gnawer-0',6);
+  const shrineExtent=measureSubject('portrait','shrine',6);
+  const playfield=pf('portrait').probe.layout.playfield;
+  const liveGnawers=candidate.opening.probe.actors.filter(value=>value.kind==='standard'&&value.id!=='hero').length;
+  const measuredFootprint=(heroExtent.bboxArea+liveGnawers*gnawerExtent.bboxArea)/(playfield.width*playfield.height);
   const declaredBoxes=['opening','travel','small','chase','later','deep'].map(id=>{
     const probe=candidate[id]?candidate[id].probe:evidence.runs[id].get(9).probe;
     return{id,hero:probe.heroBox,gnawer:probe.gnawerBox,shrine:probe.shrineBox,footprint:probe.footprintFraction,
       scentTiles:probe.scentRadiusPx/TILE};
   });
+
+  // each biome keeps authored ambient motion with every actor and the hero's
+  // light pool removed (motes, canopy glints, waterfall seams, candle flicker)
+  const environmentMotion={};
+  for(const fixture of['opening','later','deep']){
+    const frames=captureFixture(fixture,[1,3,5,7,9,13],{id:fixture+'-env',selector:'env'});
+    environmentMotion[fixture]=analyzeBurst([1,3,5,7,9,13].map(offset=>frames.get(offset)),{native:false,crop:WORLD_CROP});
+  }
 
   const bigPico=frameDifference(fixedCrop(pf('portrait'),pf('portrait').probe.heroBox),fixedCrop(pf('portraitPico'),pf('portraitPico').probe.heroBox),{native:false});
   const roamHunt=analyzeAlignedBurst([evidence.runs.travel.get(9),evidence.runs.chase.get(9)],'gnawerBox');
@@ -302,14 +313,20 @@ async function main(){
 
   // Fixed-seed calibration for the approved native candidate capture, with
   // roughly 10-25% regression margin below the measured values recorded in
-  // metrics.json beside their executable floors.
+  // metrics.json beside their executable floors. Recalibrated 2026-07-11 for
+  // the reference-scale art pass (hero 10x21 -> 9x12 drawn, gnawer 13x12 ->
+  // 10x8): measured heroWalk max .455/firstLast .572, picoWalk .426/.620,
+  // hunterAnim median .0372/max .0475, roamAnim max .0232, roamHunt .0408,
+  // bigPico .551, weakest contrasts hero .036 / pico .073 / gnawer .066,
+  // env-only ambient motion maxes .0045/.0075/.0046, frames colors 103..181 /
+  // entropy 3.78..4.02 / edge .060..074 / rich 1.0.
   const bands={
     calibrated:true,
     colors:100,entropy:3.4,lumaStdDev:.10,largestColorShare:.30,edgeEnergy:.050,richEach:.85,richMedian:.90,
     heroWalkMax:.30,heroWalkFirstLast:.40,picoWalkMax:.22,picoWalkFirstLast:.30,
-    hunterAnimMax:.055,hunterAnimMedian:.05,roamAnimMax:.015,
+    hunterAnimMax:.038,hunterAnimMedian:.03,roamAnimMax:.015,
     heroLocalContrast:.02,picoLocalContrast:.015,gnawerLocalContrast:.012,
-    bigPico:.10,roamHuntMax:.06,
+    bigPico:.10,roamHuntMax:.032,
     earlyLaterStructure:.15,earlyLaterEdge:.20,laterDeepStructure:.15,laterDeepEdge:.20,
     warningChanged:.22,warningMean:.02,warningGrid:.9,
     stormChanged:.35,stormGrid:.60,
@@ -317,9 +334,22 @@ async function main(){
     squishChanged:.02,bloomChanged:.25,channelChanged:.008,
     restoreChanged:.60,restoreMean:.10,restoreGrid:.80,restoreStructure:.20,
     gateChanged:.18,gateGrid:.28,tellChanged:.009,tellGrid:.08,chargeChanged:.03,dodgeChanged:.02,parryChanged:.02,
-    // scale law caps are design law, not calibration: standard actors <=20x32 drawn,
-    // structures <=24 wide, combined footprint <20%, threats scented >=5 tiles out
-    heroMaxW:20,heroMaxH:32,gnawerMaxW:20,gnawerMaxH:32,shrineMaxW:24,footprintMax:.2,scentMinTiles:5
+    envMotionMin:.003,
+    // Scale caps encode the 2026-07-11 owner directive, not the loose 20x32 repo
+    // ceiling: Block Mine's ~12px hero is the ceiling for any hero. Measured on
+    // the shipped art (drawn pixels, portrait fixtures): big knight 9x12, pico
+    // knight 9x9 aura included, gnawer 10x8, shrine 16x25. Caps carry 1-3px of
+    // margin; probe boxes (big 11x14, pico 11x11, gnawer 13x12, shrine 18x26)
+    // get the same margin. Footprint <20%, threats scented >=5 tiles out.
+    heroMaxW:11,heroMaxH:14,picoMaxW:11,picoMaxH:11,gnawerMaxW:12,gnawerMaxH:10,shrineMaxW:20,shrineMaxH:28,
+    heroBoxMaxW:12,heroBoxMaxH:15,gnawerBoxMaxW:14,gnawerBoxMaxH:13,shrineBoxMaxW:20,
+    footprintMax:.2,scentMinTiles:5
+  };
+  const scaleChecks={
+    hero:assertActorScale(heroExtent,{maxWidth:bands.heroMaxW,maxHeight:bands.heroMaxH,label:'big knight'}),
+    pico:assertActorScale(picoExtent,{maxWidth:bands.picoMaxW,maxHeight:bands.picoMaxH,label:'pico knight'}),
+    gnawer:assertActorScale(gnawerExtent,{maxWidth:bands.gnawerMaxW,maxHeight:bands.gnawerMaxH,label:'gnawer'}),
+    shrine:assertActorScale(shrineExtent,{maxWidth:bands.shrineMaxW,maxHeight:bands.shrineMaxH,label:'shrine structure'})
   };
 
   const gates=[];
@@ -347,19 +377,24 @@ async function main(){
     {hero:heroContrast,pico:picoContrast,gnawer:gnawerContrast});
   gate('big and pico silhouettes are distinct',bigPico.changedFraction>=bands.bigPico,bigPico);
   gate('roam and hunt silhouettes differ',!!roamHunt&&roamHunt.changedFraction.max>=bands.roamHuntMax,roamHunt&&roamHunt.changedFraction);
-  // ---- the scale law, from drawn pixels and declared probe boxes
-  gate('drawn hero stays inside the standard actor cap',
-    !!heroExtent.bounds&&heroExtent.bounds.width<=bands.heroMaxW+2&&heroExtent.bounds.height<=bands.heroMaxH&&
-    !!picoExtent.bounds&&picoExtent.bounds.width<=18&&picoExtent.bounds.height<=20,
-    {hero:heroExtent.bounds,pico:picoExtent.bounds});
-  gate('drawn gnawer stays inside the standard actor cap',
-    !!gnawerExtent.bounds&&gnawerExtent.bounds.width<=bands.gnawerMaxW&&gnawerExtent.bounds.height<=bands.gnawerMaxH,
-    gnawerExtent.bounds);
+  // ---- the scale law, from isolated-subject drawn pixels and declared probe boxes
+  gate('drawn big and pico knights stay inside the reference-scale caps',
+    scaleChecks.hero.ok&&scaleChecks.pico.ok,
+    {hero:{bounds:heroExtent.bounds,failures:scaleChecks.hero.failures},pico:{bounds:picoExtent.bounds,failures:scaleChecks.pico.failures}});
+  gate('drawn gnawer and shrine stay inside the reference-scale caps',
+    scaleChecks.gnawer.ok&&scaleChecks.shrine.ok,
+    {gnawer:{bounds:gnawerExtent.bounds,failures:scaleChecks.gnawer.failures},shrine:{bounds:shrineExtent.bounds,failures:scaleChecks.shrine.failures}});
+  gate('measured actor footprint stays far below 20% of the playfield',
+    liveGnawers>=4&&measuredFootprint<=bands.footprintMax,
+    {playfield,liveGnawers,heroArea:heroExtent.bboxArea,gnawerArea:gnawerExtent.bboxArea,measuredFootprint:+measuredFootprint.toFixed(5)});
   gate('declared boxes, shrine width, footprint, and scent range obey the law',
-    declaredBoxes.every(v=>v.hero.width<=bands.heroMaxW&&v.hero.height<=bands.heroMaxH&&
-      (!v.gnawer||(v.gnawer.width<=bands.gnawerMaxW&&v.gnawer.height<=bands.gnawerMaxH))&&
-      v.shrine.width<=bands.shrineMaxW&&v.footprint<bands.footprintMax&&v.scentTiles>=bands.scentMinTiles),
+    declaredBoxes.every(v=>v.hero.width<=bands.heroBoxMaxW&&v.hero.height<=bands.heroBoxMaxH&&
+      (!v.gnawer||(v.gnawer.width<=bands.gnawerBoxMaxW&&v.gnawer.height<=bands.gnawerBoxMaxH))&&
+      v.shrine.width<=bands.shrineBoxMaxW&&v.footprint<bands.footprintMax&&v.scentTiles>=bands.scentMinTiles),
     declaredBoxes);
+  gate('each biome keeps ambient environmental motion with actors removed',
+    Object.values(environmentMotion).every(value=>value.changedFraction.max>=bands.envMotionMin),
+    Object.fromEntries(Object.entries(environmentMotion).map(([key,value])=>[key,{max:value.changedFraction.max,median:value.changedFraction.median}])));
   gate('later biomes change architecture, not only palette',earlyLater.structureDistance>=bands.earlyLaterStructure&&earlyLater.edgeMagnitudeDistance>=bands.earlyLaterEdge&&laterDeep.structureDistance>=bands.laterDeepStructure&&laterDeep.edgeMagnitudeDistance>=bands.laterDeepEdge,
     {earlyLater,laterDeep});
   gate('storm warning is visibly broad',warningContrast.changedFraction>=bands.warningChanged&&warningContrast.meanDelta>=bands.warningMean&&warningContrast.changedGridFraction>=bands.warningGrid,warningContrast);
@@ -384,7 +419,12 @@ async function main(){
   if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
   else review={ok:false,errors:[`missing committed semantic review: ${REVIEW_PATH}`,`inspect ${CONTACT_PATH}, then copy and complete ${REVIEW_TEMPLATE_PATH}`]};
   gate('fresh semantic comparison receipt',review.ok,review.errors);
+  const expectedReview=reviewTemplate(sheet.sha256),reviewClip=review.receipt&&review.receipt.renderReceipt,
+    localClip=fs.existsSync(CLIP_PATH)?{path:CLIP_PATH,bytes:fs.statSync(CLIP_PATH).size,sha256:sha256(CLIP_PATH)}:null;
+  gate('rendered autoplay clip receipt is complete',!!reviewClip&&reviewClip.bytes>100000&&/^[a-f0-9]{64}$/.test(reviewClip.sha256||'')&&reviewClip.seed===`0x${SEED.toString(16)}`&&reviewClip.command===expectedReview.renderReceipt.command,reviewClip);
+  gate('local rendered clip matches receipt when available',!localClip||reviewClip&&localClip.bytes===reviewClip.bytes&&localClip.sha256===reviewClip.sha256,{localClip,reviewClip});
 
+  const RECEIPT_GATES=['fresh semantic comparison receipt','rendered autoplay clip receipt is complete','local rendered clip matches receipt when available'];
   const report={
     schema:1,game:'pico-cap',seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,
     contactSheet:{path:CONTACT_PATH,sha256:sheet.sha256,width:sheet.width,height:sheet.height},
@@ -392,9 +432,10 @@ async function main(){
     thresholds:{referenceEdgeFloor:refEdge,referenceRichFloor:refRich,bands},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       heroWalk,picoWalk,hunterAnim,roamAnim,heroContrast,picoContrast,gnawerContrast,
-      heroExtent,picoExtent,gnawerExtent,declaredBoxes,bigPico,roamHunt,earlyLater,laterDeep,
-      warningContrast,stormBurst,shrinkDelta,slashDelta,shardDelta,squishBurst,bloomDelta,channelBurst,restoreDelta,restoreBurst,gateDelta,tellDelta,chargeBurst,dodgeDelta,parryDelta,noVisiblePath,plannerHashes},
-    gates,automatedOk:gates.slice(0,-1).every(value=>value.ok),semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}
+      heroExtent,picoExtent,gnawerExtent,shrineExtent,scaleChecks,playfield,liveGnawers,
+      measuredFootprint:+measuredFootprint.toFixed(5),environmentMotion,declaredBoxes,bigPico,roamHunt,earlyLater,laterDeep,
+      warningContrast,stormBurst,shrinkDelta,slashDelta,shardDelta,squishBurst,bloomDelta,channelBurst,restoreDelta,restoreBurst,gateDelta,tellDelta,chargeBurst,dodgeDelta,parryDelta,noVisiblePath,plannerHashes,clip:localClip},
+    gates,automatedOk:gates.filter(value=>!RECEIPT_GATES.includes(value.name)).every(value=>value.ok),semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}
   };
   writeJson(METRICS_PATH,report);
 
