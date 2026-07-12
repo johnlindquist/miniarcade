@@ -245,7 +245,7 @@ function hitHero(kind,x,y){
   if(hero.health<=0){hero.health=3;hero.stun=132;stats.downs++;markProgress();offer('down',2,hero.x,hero.y,'CONVOY COVERS');say('CONVOY COVERS',GOLD,hero.x,hero.y-18,80)}return false
 }
 function collideHazards(){
-  for(const b of barrels){const d=Math.hypot(hero.x-b.x,hero.y-b.y);if(d<7&&showFrame-b.hitAt>70){b.hitAt=showFrame;if(hitHero('barrel',b.x,b.y))b.age+=34}else if(d>=8&&d<15&&showFrame-b.nearAt>120){b.nearAt=showFrame;stats.nearMisses++;markEvent();offer('near',1,b.x,b.y,'CLOSE CALL')}
+  for(const b of barrels){const d=Math.hypot(hero.x-b.x,hero.y-b.y);if(d<7&&showFrame-b.hitAt>70){b.hitAt=showFrame;if(hitHero('barrel',b.x,b.y+8))b.age+=34}else if(d>=8&&d<15&&showFrame-b.nearAt>120){b.nearAt=showFrame;stats.nearMisses++;markEvent();offer('near',1,b.x,b.y+8,'CLOSE CALL')}
     for(const w of workers)if(w.rescued&&w.panicT<=0&&Math.hypot(w.x-b.x,w.y-b.y)<7){w.panicT=55;stats.convoyScares++;markEvent();fxDust(w.x,w.y,5,WORKER_STYLES[w.type].helmet)}}
   for(const f of fires)if(fireActive(f)&&Math.hypot(hero.x-X[f.col],hero.y-(Y[f.floor]-5))<7)if(hitHero('fire',X[f.col],Y[f.floor]-5))f.suppressedUntil=runFrame+150;
   for(const m of machines){const reach=machineReach(m);if(reach>.72&&floorOf(hero.node)===m.floor&&Math.abs(hero.x-X[m.col])<8)hitHero('machine',X[m.col],Y[m.floor]-5)}
@@ -299,8 +299,36 @@ function drawLadders(z){
   for(let f=0;f<5;f++)for(const c of layout.ladders[f]){const x=X[c],top=Y[f+1]+7,bottom=Y[f]-1;rect(x-4,top,2,bottom-top,z.hi);rect(x+2,top,2,bottom-top,z.beam);for(let y=top+4;y<bottom;y+=7)rect(x-3,y,6,2,mix(z.hi,CREAM,.15))}
   for(let f=0;f<5;f++){const c=layout.broken[f],x=X[c],top=Y[f+1]+8,bottom=Y[f]-1,mid=(top+bottom)/2;rect(x-4,top,2,mid-top-5,z.beam);rect(x+2,top,2,mid-top-9,z.hi);for(let y=top+3;y<mid-8;y+=7)rect(x-3,y,6,1,z.hi);rect(x-4,mid+9,2,bottom-mid-9,z.beam);rect(x+2,mid+14,2,bottom-mid-14,z.hi);line([[x-3,mid-2],[x+5,mid+8]],CORAL)}
 }
+function drawDressing(z,zi){
+  // render-only deck dressing (2026-07-11): the reference-scale cast freed
+  // vertical air on every deck, so floors are dressed as a working freight
+  // dock — crate stacks at safe midspans, sagging cable runs with blinking
+  // junction boxes, girder rivets, hazard paint at catwalk gaps, flickering
+  // rail lamps with light pools, and one zone-specific ambient motion beat.
+  // Deterministic from worldSeed/stage/showFrame via hash(); no sim RNG.
+  for(let f=0;f<6;f++){
+    const yd=Y[f]+7,seedF=worldSeed+stage*31+f*7+zi*13,sag=yd+8;
+    for(let x=18;x<144;x+=13)rect(x,yd+4,1,1,mix(z.beam,CREAM,.14));
+    line([[14,yd+6],[52,sag],[104,sag-1],[146,yd+6]],mix(z.beam,INK,.3));
+    const jx=24+Math.floor(hash(seedF,3)*100);
+    rect(jx,sag-3,3,3,'#141c23');rect(jx+1,sag-2,1,1,(Math.floor(showFrame/24)+f)%5?z.accent:CREAM);
+    for(let c=1;c<4;c++){
+      if(hasGap(f,c)||hash(seedF,c*11)<.45)continue;const gx=Math.round((X[c]+X[c+1])/2),tall=hash(seedF,c*17)>.5;
+      rect(gx-3,yd-5,6,5,mix(z.deck,CREAM,.16));rect(gx-3,yd-5,6,1,z.hi);rect(gx-1,yd-5,1,5,mix(z.deck,INK,.3));
+      if(tall){rect(gx-2,yd-8,4,3,mix(z.deck,CREAM,.08));rect(gx-2,yd-8,4,1,z.accent)}
+    }
+    for(let c=0;c<5;c++)if(hasGap(f,c)){const gx=(X[c]+X[c+1])/2;for(let q=0;q<3;q++){rect(gx-13+q*2,yd+1,1,2,q%2?INK:GOLD);rect(gx+8+q*2,yd+1,1,2,q%2?INK:GOLD)}}
+    const lampLeft=(f+zi)%2===0,lx=lampLeft?12:144,px=lampLeft?18:140,on=hash(f*5+zi,showFrame>>4)>.12;
+    rect(lx,yd-7,4,2,'#20282e');rect(lx+1,yd-6,2,1,on?z.accent:'#3a3f42');
+    if(on)alpha(.09+.03*Math.sin(showFrame*.05+f),()=>{ctx.fillStyle=z.accent;ctx.beginPath();ctx.ellipse(px,yd+1,9,2,0,0,TAU);ctx.fill()});
+    if(zi===0){const cx=30+Math.floor(hash(seedF,29)*96),sway=Math.round(Math.sin(showFrame*.03+f));for(let q=0;q<4;q++)rect(cx+(q>1?sway:0),yd+6+q*2,1,1,'#4a545b')}
+    else if(zi===1){const px2=26+Math.floor(hash(seedF,31)*104),rise=(showFrame*.5+f*23)%26;rect(px2,yd-2,2,3,'#4c2b27');alpha(Math.max(0,.3-rise*.012),()=>rect(px2,yd-3-rise,1,2,'#c9b9a6'))}
+    else if(zi===2){const sx=14+((showFrame*2+f*47)%130);if(hash(f,showFrame>>3)>.55)rect(sx,sag-1,1,1,CYAN)}
+    else{const bx=34+Math.floor(hash(seedF,37)*88);rect(bx,yd+6,1,2,'#6d4a34');rect(bx,yd+8,1,1,GOLD)}
+  }
+}
 function drawProps(z,zi){
-  if(zi===0){for(const f of[1,3]){const x=f===1?25:125,y=Y[f]-8;rect(x-9,y-18,18,24,'#35444b');rect(x-7,y-16,14,20,'#61747b');rect(x-5,y-12,10,9,'#2b363d');rect(x-2,y-10,4,4,z.accent);line([[x,y-18],[x,y-27],[x+8,y-27]],z.hi,2)}}
+  if(zi===0){for(const f of[1,3]){const x=f===1?25:125,y=Y[f]-8,scan=y-12+((showFrame>>3)%8);rect(x-9,y-18,18,24,'#35444b');rect(x-7,y-16,14,20,'#61747b');rect(x-8,y-17,1,1,'#8fa0a5');rect(x+6,y-17,1,1,'#8fa0a5');rect(x-8,y+4,1,1,'#28343a');rect(x+6,y+4,1,1,'#28343a');rect(x-5,y-12,10,9,'#2b363d');rect(x-2,y-10,4,4,z.accent);alpha(.16,()=>rect(x-4,scan,8,1,CREAM));for(let q=0;q<3;q++)rect(x-4+q*3,y+2,2,1,(showFrame>>4)%3===q?z.accent:'#26323a');line([[x,y-18],[x,y-27],[x+8,y-27]],z.hi,2)}}
   else if(zi===1){for(const f of[0,2,4]){const x=f%4?132:28,y=Y[f]-5;ctx.fillStyle='#6d352d';ctx.beginPath();ctx.ellipse(x,y-12,9,13,0,0,TAU);ctx.fill();rect(x-7,y-14,14,3,z.hi);rect(x-8,y-3,16,3,'#301b1b');rect(x-2,y-16,4,4,z.glow)}}
   else if(zi===2){for(const f of[0,2,4]){const x=f%4?130:30,y=Y[f]-8;ctx.strokeStyle=z.hi;ctx.beginPath();ctx.arc(x,y-8,8,0,TAU);ctx.stroke();for(let i=0;i<4;i++){const a=showFrame*.05+i*TAU/4;line([[x,y-8],[x+Math.cos(a)*7,y-8+Math.sin(a)*7]],z.accent)}}}
   else{for(const f of[1,3]){const x=f===1?27:130,y=Y[f]-5;rect(x-9,y-20,18,18,'#5c4436');rect(x-7,y-18,14,13,'#b06b3a');line([[x-7,y-18],[x+7,y-5]],GOLD);line([[x+7,y-18],[x-7,y-5]],GOLD)}}
@@ -309,31 +337,72 @@ function drawProps(z,zi){
 function actorAllowed(id){const s=globalThis.__TP_VISUAL_ONLY_ACTOR;return s===undefined||s===null||s==='all'||s===id}
 function workerDrawPos(w){return{x:w.visualX===null?w.x:w.visualX,y:w.visualY===null?w.y:w.visualY}}
 function drawHero(){
-  if(!actorAllowed('hero'))return;const x=Math.round(hero.x),y=Math.round(hero.y),face=hero.face||1,walk=hero.pose==='run'?Math.sin(showFrame*.42):0,climb=hero.pose==='climb'?Math.sin(showFrame*.32):0,hurt=hero.hitFlash>0&&showFrame%6<3;
-  ctx.save();ctx.translate(x,y);alpha(.35,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,8,6,2,0,0,TAU);ctx.fill()});
-  if(hero.pose==='climb'){line([[-3,-1],[-5+climb*2,-5]],'#d49a72',2);line([[3,-1],[5-climb*2,-5]],'#d49a72',2)}else{line([[-2,2],[-3+walk*2,7]],'#25313a',2);line([[2,2],[3-walk*2,7]],'#25313a',2);rect(-5+walk*2,6,4,2,'#111820');rect(1-walk*2,6,4,2,'#111820')}
-  rect(-5,-4,10,7,hurt?CREAM:'#244f58');rect(-4,-3,8,5,'#34717a');rect(-4,1,8,2,MINT);rect(-face*6,-3,3,6,'#26373e');rect(face*4,-2,3,5,hero.pose==='brace'?GOLD:'#3d8990');
-  rect(-4,-9,8,5,'#d89c72');rect(-5,-10,10,3,GOLD);rect(-3,-11,6,2,'#fff0a4');rect(face*2,-7,1,1,INK);rect(face*4,-6,2,1,MINT);rect(-6,-3,2,7,'#6f3d2f');rect(-6,-4,3,2,CORAL);
-  if(hero.pose==='brace'){line([[face*5,-2],[face*8,-6]],CREAM,2);rect(face*7,-8,2,4,GOLD)}
-  if(hero.pose==='hurt'){rect(-7,-12,2,2,CORAL);rect(5,-13,1,3,GOLD)}ctx.restore();
+  // reference-scale rigger (2026-07-11): ~9x13 drawn vs the old 16x21 block.
+  // Construction: 1px crest + 2px hardhat, 2px head, 4-5px jacket with belt and
+  // air pack, 2-frame boot gait / alternating climb reach. Feet stay planted on
+  // the deck surface at y+7 like before; everything above shrank.
+  if(!actorAllowed('hero'))return;const x=Math.round(hero.x),y=Math.round(hero.y),face=hero.face||1,step=hero.pose==='run'?(Math.floor(showFrame/7)%2):0,climb=hero.pose==='climb'?(Math.floor(showFrame/9)%2?1:-1):0,hurt=hero.hitFlash>0&&showFrame%6<3;
+  ctx.save();ctx.translate(x,y);alpha(.3,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,7,4,1,0,0,TAU);ctx.fill()});
+  if(hero.pose==='climb'){rect(-3,-4+climb,1,3,'#d49a72');rect(2,-4-climb,1,3,'#d49a72');rect(-2,5,1,2,'#25313a');rect(1,5,1,2,'#25313a')}
+  else{rect(-2,4,1,2,'#25313a');rect(1,4,1,2,'#25313a');rect(-3+step,6,2,2,'#111820');rect(1-step,6,2,2,'#111820')}
+  rect(-3,-1,6,5,hurt?CREAM:'#244f58');rect(-3,-1,6,2,'#34717a');rect(-3,2,6,1,MINT);
+  rect(-face*4,-1,1,4,'#26373e');rect(-face*4,-1,1,1,CORAL);
+  rect(face*3,0,1,3,hero.pose==='brace'?GOLD:'#3d8990');
+  rect(-2,-4,4,3,'#d89c72');rect(face*1,-3,1,1,INK);
+  rect(-3,-6,6,2,GOLD);rect(-1,-7,2,1,'#fff0a4');
+  if(hero.pose==='brace'){line([[face*3,1],[face*6,-2]],CREAM,1);rect(face*4,-4,2,3,GOLD)}
+  if(hero.pose==='hurt'){rect(-5,-6,1,2,CORAL);rect(4,-7,1,2,GOLD)}ctx.restore();
 }
 function drawWorker(w){
-  if(!actorAllowed(w.id))return;const p=workerDrawPos(w),x=Math.round(p.x),y=Math.round(p.y),s=WORKER_STYLES[w.type],face=w.face||1,walk=w.rescued?Math.sin(showFrame*.36+w.join):0,panic=w.panicT>0;
-  ctx.save();ctx.translate(x,y);alpha(.28,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,7,5,1.6,0,0,TAU);ctx.fill()});line([[-1,2],[-2+walk*1.5,7]],'#29323a',2);line([[2,2],[3-walk*1.5,7]],'#29323a',2);rect(-3,-3,7,6,panic?CORAL:s.body);rect(-2,-2,5,4,mix(s.body,CREAM,.18));rect(-face*5,-2,3,4,s.body);rect(face*3,-2,3,4,panic?CREAM:s.body);rect(-3,-7,6,4,'#c98f69');rect(-4,-8,8,3,s.helmet);rect(face*2,-5,1,1,INK);
-  if(w.type===0){rect(-5,-1,2,5,'#27313a');rect(-5,-2,3,2,CYAN)}else if(w.type===1){rect(face*4,-1,2,4,GOLD)}else if(w.type===2){line([[-4,-4],[-6,1]],CREAM);rect(-6,1,3,2,CORAL)}else{rect(-5,-5,2,4,CYAN);rect(-6,-6,4,2,'#223744')}
-  if(panic){rect(face*5,-10,1,4,CREAM);rect(face*5,-5,1,1,CORAL)}ctx.restore();
+  // reference-scale trades (2026-07-11): ~7x12 drawn vs the old 13x17 chunk.
+  // 1-2px helmet dome as the trade accent, 2px head, 4px overalls, 2-frame gait,
+  // 1px trade tool. Feet on the deck at y+7.
+  if(!actorAllowed(w.id))return;const p=workerDrawPos(w),x=Math.round(p.x),y=Math.round(p.y),s=WORKER_STYLES[w.type],face=w.face||1,step=w.rescued?(Math.floor((showFrame+w.join*3)/8)%2):0,panic=w.panicT>0;
+  ctx.save();ctx.translate(x,y);alpha(.24,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,7,3,1,0,0,TAU);ctx.fill()});
+  rect(-1,4,1,2,'#29323a');rect(1,4,1,2,'#29323a');rect(-2+step,6,2,2,'#141b22');rect(1-step,6,2,2,'#141b22');
+  rect(-2,0,5,4,panic?CORAL:s.body);rect(-2,0,5,1,mix(s.body,CREAM,.18));
+  rect(-face*3,1,1,3,panic?CREAM:mix(s.body,INK,.25));rect(face*3,1,1,3,panic?CREAM:s.body);
+  rect(-2,-2,4,2,'#c98f69');rect(face*1,-2,1,1,INK);
+  rect(-3,-3,6,1,s.helmet);rect(-2,-4,4,1,s.helmet);
+  if(w.type===0){rect(-face*4,2,1,2,'#27313a');rect(-face*4,1,1,1,CYAN)}else if(w.type===1){rect(face*4,1,1,3,GOLD)}else if(w.type===2){rect(-face*4,0,1,3,CREAM);rect(-face*4,3,1,1,CORAL)}else{rect(-face*4,-2,1,3,CYAN);rect(-face*4,-3,1,1,'#223744')}
+  if(panic){rect(face*3,-7,1,2,CREAM);rect(face*3,-4,1,1,CORAL)}ctx.restore();
 }
 function drawBarrel(b){
-  if(!actorAllowed(b.id))return;const x=Math.round(b.x),y=Math.round(b.y),spin=(b.age>>2)%4;ctx.save();ctx.translate(x,y);ctx.rotate(b.falling?b.age*.11:0);alpha(.3,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,5,5,1.5,0,0,TAU);ctx.fill()});ctx.fillStyle='#8c4d2f';ctx.beginPath();ctx.arc(0,0,4,0,TAU);ctx.fill();ctx.strokeStyle='#d9964a';ctx.stroke();line([[-4,-2],[4,-2]],'#4a2924');line([[-4,2],[4,2]],'#4a2924');line([[spin-2,-3],[2-spin,3]],GOLD);rect(-1,-1,2,2,'#361f1c');ctx.restore();
+  // reference-scale barrel (2026-07-11): r3 (~8x9 drawn) vs the old r4 12x12,
+  // drawn +8 below its logical y so it visibly rolls ON the deck surface
+  // instead of floating at head height; render offset only, sim untouched.
+  if(!actorAllowed(b.id))return;const x=Math.round(b.x),y=Math.round(b.y)+8;ctx.save();ctx.translate(x,y);
+  if(!b.falling)alpha(.28,()=>{ctx.fillStyle=INK;ctx.beginPath();ctx.ellipse(0,3.5,4,.9,0,0,TAU);ctx.fill()});
+  ctx.rotate(b.falling?b.age*.11:b.age*.17*b.dir);
+  ctx.fillStyle='#8c4d2f';ctx.beginPath();ctx.arc(0,0,3,0,TAU);ctx.fill();ctx.strokeStyle='#d9964a';ctx.stroke();
+  line([[-2.5,-1],[2.5,-1]],'#4a2924');line([[-2.5,1],[2.5,1]],'#4a2924');rect(1,-1,1,1,GOLD);rect(-1,0,1,1,'#361f1c');ctx.restore();
 }
 function drawFire(f){
-  if(!fireActive(f)||!actorAllowed(f.id))return;const x=X[f.col],y=Y[f.floor]+1,t=Math.sin(showFrame*.31+f.phase);alpha(.23,()=>rect(x-7,y-16,14,17,CORAL));poly([[x-5,y],[x-4,y-8],[x-1,y-5],[x,y-14-Math.abs(t)*3],[x+2,y-7],[x+5,y]],CORAL);poly([[x-3,y],[x-1,y-7],[x+1,y-4],[x+3,y]],GOLD);rect(x-5,y,10,2,'#301a19');
+  // fire hazard rebuilt on the deck surface (base at y+6 instead of floating at
+  // y+1) and trimmed to ~10x14 drawn so flames stay taller than the new rigger
+  // without dwarfing the deck.
+  if(!fireActive(f)||!actorAllowed(f.id))return;const x=X[f.col],y=Y[f.floor]+6,t=Math.sin(showFrame*.31+f.phase),ember=hash(f.col+f.floor*7,showFrame>>3);
+  alpha(.2,()=>rect(x-5,y-11,10,12,CORAL));
+  poly([[x-4,y],[x-3,y-6],[x-1,y-4],[x,y-9-Math.abs(t)*2],[x+2,y-5],[x+4,y]],CORAL);
+  poly([[x-2,y],[x-1,y-5],[x+1,y-3],[x+2,y]],GOLD);
+  if(ember>.45)rect(x-1+(((ember*13)|0)%3),y-11,1,1,GOLD);
+  rect(x-4,y,8,2,'#301a19');
 }
 function drawMachine(m){
-  if(!actorAllowed(m.id))return;const x=X[m.col],y=Y[m.floor]-3,r=machineReach(m),reach=3+r*7;rect(x-9,y-10,18,10,'#1a252d');rect(x-8,y-9,16,8,zone.beam);rect(x-6,y-8,12,4,zone.hi);rect(x-2,y-7,4,3,r>.5?CORAL:zone.accent);rect(x-3,y-1,6,reach,'#6f7d7e');rect(x-6,y-1+reach,12,3,'#28343a');rect(x-5,y+reach,10,1,CREAM);
+  // constructed piston press (2026-07-11) replacing the featureless slab:
+  // riveted 14px housing with vent slats and a status lamp, highlighted shaft,
+  // hazard-ticked strike plate. ~15x23 drawn at full reach (structure cap 24).
+  if(!actorAllowed(m.id))return;const x=X[m.col],y=Y[m.floor]-3,r=machineReach(m),reach=3+r*7,hot=r>.5;
+  rect(x-7,y-10,14,9,'#1a252d');rect(x-6,y-9,12,7,zone.beam);rect(x-6,y-9,12,1,zone.hi);
+  rect(x-7,y-10,1,1,zone.hi);rect(x+6,y-10,1,1,zone.hi);rect(x-7,y-2,1,1,mix(zone.beam,INK,.4));rect(x+6,y-2,1,1,mix(zone.beam,INK,.4));
+  for(let q=0;q<3;q++)rect(x-5,y-8+q*2,4,1,'#10181e');
+  rect(x+2,y-7,3,3,'#141d24');rect(x+3,y-6,1,1,hot?CORAL:zone.accent);
+  rect(x-2,y-1,4,reach,'#6f7d7e');rect(x-2,y-1,1,reach,'#9aa8a8');
+  rect(x-5,y-1+reach,10,3,'#28343a');rect(x-4,y-1+reach,2,1,zone.accent);rect(x+2,y-1+reach,2,1,zone.accent);
+  rect(x-4,y+reach+2,8,1,CREAM);
 }
 function drawCage(){
-  if(!(state==='extract'||visualExtraction)||!actorAllowed('extraction-cage'))return;const x=80,y=state==='extract'?cageY():59;ctx.save();ctx.translate(x,y);line([[0,-12],[0,-9]],CREAM,2);rect(-12,-9,24,19,'#1b2731');rect(-11,-8,22,17,zone.beam);rect(-9,-6,18,12,'#19252e');for(let q=-7;q<=7;q+=7)rect(q,-6,2,12,zone.hi);rect(-12,6,24,3,GOLD);rect(-8,-11,16,3,zone.accent);rect(-2,-9,4,2,CREAM);ctx.restore();
+  if(!(state==='extract'||visualExtraction)||!actorAllowed('extraction-cage'))return;const x=80,y=state==='extract'?cageY():59;ctx.save();ctx.translate(x,y);line([[0,-12],[0,-9]],CREAM,2);rect(-12,-9,24,19,'#1b2731');rect(-11,-8,22,17,zone.beam);rect(-9,-6,18,12,'#19252e');for(let q=-7;q<=7;q+=7)rect(q,-6,2,12,zone.hi);rect(-12,6,24,3,GOLD);rect(-8,-11,16,3,zone.accent);rect(-2,-9,4,2,CREAM);rect(-1,-12,2,2,(showFrame>>4)%2?CORAL:'#5c2320');for(let q=-10;q<=8;q+=6)rect(q,7,2,1,INK);ctx.restore();
 }
 function drawActors(){for(const f of fires)drawFire(f);for(const m of machines)drawMachine(m);for(const b of barrels)drawBarrel(b);for(const w of workers)if(!w.done)drawWorker(w);drawHero();drawCage()}
 function drawAct(){
@@ -351,7 +420,7 @@ function drawHUD(){
   if(pres.cue){const c=pres.cue.tier===3?GOLD:pres.cue.tier===2?MINT:CREAM;rect(25,329,110,18,'rgba(5,8,12,.94)');ctx.strokeStyle=c;ctx.strokeRect(25.5,329.5,109,17);ctx.fillStyle=c;ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.fillText(pres.cue.tag||pres.cue.id,80,341);ctx.textAlign='left'}drawSession();
 }
 function render(){
-  const zi=ZONES.indexOf(zone);drawSky(zone,zi);drawTowerShell(zone,zi);drawDecks(zone);drawLadders(zone);drawProps(zone,zi);preDraw();drawAct();drawActors();drawParts();for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/16);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,28,132),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;postDraw();drawForeground();if(pres.cue&&pres.cue.tier===3){alpha(.09,()=>rect(0,40,W,282,GOLD))}drawHUD();
+  const zi=ZONES.indexOf(zone);drawSky(zone,zi);drawTowerShell(zone,zi);drawDecks(zone);drawDressing(zone,zi);drawLadders(zone);drawProps(zone,zi);preDraw();drawAct();drawActors();drawParts();for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/16);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,28,132),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;postDraw();drawForeground();if(pres.cue&&pres.cue.tier===3){alpha(.09,()=>rect(0,40,W,282,GOLD))}drawHUD();
 }
 
 function finite(){return[showFrame,runFrame,stage,hero.x,hero.y,hero.moveT,hero.moveDur,...barrels.flatMap(b=>[b.age,b.x,b.y]),...workers.flatMap(w=>[w.x,w.y])].every(Number.isFinite)}
@@ -379,14 +448,17 @@ function setVisualBeat(name){
   return true;
 }
 function actorProbe(){
-  const out=[{id:'hero',kind:'rigger',type:hero.pose,box:{x:hero.x-8,y:hero.y-12,width:16,height:22}}];
-  for(const w of workers)if(!w.done){const p=workerDrawPos(w);out.push({id:w.id,kind:'worker',type:WORKER_STYLES[w.type].name,box:{x:p.x-8,y:p.y-10,width:16,height:19}})}
-  for(const b of barrels)out.push({id:b.id,kind:'barrel',type:b.falling?'falling':'rolling',box:{x:b.x-7,y:b.y-7,width:14,height:14}});
-  for(const f of fires)if(fireActive(f))out.push({id:f.id,kind:'hazard',type:'fire',box:{x:X[f.col]-8,y:Y[f.floor]-19,width:16,height:22}});
-  for(const m of machines)out.push({id:m.id,kind:'machine',type:'piston',box:{x:X[m.col]-11,y:Y[m.floor]-15,width:22,height:24}});
+  // probe boxes tightened 2026-07-11 to the reference-scale art: rigger drawn
+  // ~9x13 (was 16x21), workers ~7x12 (was 13x17), barrels ~9x10 at +8 render
+  // offset, fire ~11x15 on the deck, piston ~15x23, cage unchanged.
+  const out=[{id:'hero',kind:'rigger',type:hero.pose,box:{x:hero.x-7,y:hero.y-8,width:14,height:18}}];
+  for(const w of workers)if(!w.done){const p=workerDrawPos(w);out.push({id:w.id,kind:'worker',type:WORKER_STYLES[w.type].name,box:{x:p.x-6,y:p.y-8,width:12,height:17}})}
+  for(const b of barrels)out.push({id:b.id,kind:'barrel',type:b.falling?'falling':'rolling',box:{x:b.x-5,y:b.y+3,width:10,height:11}});
+  for(const f of fires)if(fireActive(f))out.push({id:f.id,kind:'hazard',type:'fire',box:{x:X[f.col]-6,y:Y[f.floor]-7,width:12,height:16}});
+  for(const m of machines)out.push({id:m.id,kind:'machine',type:'piston',box:{x:X[m.col]-8,y:Y[m.floor]-14,width:16,height:25}});
   if(state==='extract'||visualExtraction){const y=state==='extract'?cageY():59;out.push({id:'extraction-cage',kind:'structure',type:'cage',box:{x:68,y:y-13,width:24,height:24}})}return out;
 }
-function visualProbe(){return{fixture:visualFixture,finite:finite(),stage,zone:zone.name,state,act:act.phase,guidelines:0,rescued:workers.filter(w=>w.rescued).length,cue:pres.cue&&pres.cue.id,actors:actorProbe(),layout:{playfield:{...WORLD},approaches:[{id:'barrel-run',axis:'x',visibleSpawn:LEFT,contact:X[4],goal:RIGHT,reported:Math.abs(X[4]-LEFT)/Math.abs(RIGHT-LEFT)}]},heroBox:{x:hero.x-8,y:hero.y-12,width:16,height:22},workerBox:workers[0]?{x:workerDrawPos(workers[0]).x-8,y:workerDrawPos(workers[0]).y-10,width:16,height:19}:null,barrelBox:barrels[0]?{x:barrels[0].x-7,y:barrels[0].y-7,width:14,height:14}:null}}
+function visualProbe(){return{fixture:visualFixture,finite:finite(),stage,zone:zone.name,state,act:act.phase,guidelines:0,rescued:workers.filter(w=>w.rescued).length,cue:pres.cue&&pres.cue.id,actors:actorProbe(),layout:{playfield:{...WORLD},approaches:[{id:'barrel-run',axis:'x',visibleSpawn:LEFT,contact:X[4],goal:RIGHT,reported:Math.abs(X[4]-LEFT)/Math.abs(RIGHT-LEFT)}]},heroBox:{x:hero.x-7,y:hero.y-8,width:14,height:18},workerBox:workers[0]?{x:workerDrawPos(workers[0]).x-6,y:workerDrawPos(workers[0]).y-8,width:12,height:17}:null,barrelBox:barrels[0]?{x:barrels[0].x-5,y:barrels[0].y+3,width:10,height:11}:null}}
 function actFixture(){
   setStageVisual(0);state='climb';setHeroNode(node(0,3));workers.forEach((w,i)=>{w.done=i!==0;w.rescued=false});workers[0].node=node(2,3);const p=nodePos(workers[0].node);workers[0].x=p.x;workers[0].y=p.y;barrels=[];fires.forEach(f=>f.force=false);machines.forEach(m=>m.force=false);route=findPath(hero.node,[workers[0].node],false);act.phase='calm';act.warnAt=showFrame+1;act.landAt=showFrame+241;act.endAt=showFrame+781;act.index=0;act.purgeCol=3;act.notes=[];hero.intent=idleIntent();return physicalSignature();
 }

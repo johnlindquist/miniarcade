@@ -6,8 +6,8 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "ee03ffe5152a988284fcf16fcbd48141bf54758ee46ba26cb64350dfae78c93b",
-  "gameSha256": "c3a0a19bbd761353a7c06dbd822282667301e08f6378bb5b0f4e8fcb874a2c91",
+  "montageSha256": "70c4d8b851c27f28bd93b17a395b65b23f8e8abaa8e545ca5bcefe8cb5de2205",
+  "gameSha256": "30309a8b6ed4a1d2800d1de5344a2056d1ff1a89fcffbfa4c3cfedeab55f9570",
   "seed": "0x745052",
   "checkpoints": [
     "opening@12",
@@ -20,41 +20,51 @@
     "later@12",
     "apex@12"
   ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
+  "reviewedAt": "2026-07-11",
+  "reviewer": "Claude native-size reference review, 2026-07-11 character-scale rescue",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the 13x21 rigger keeps a helmet, face, backpack, facing, separate limbs, gait, climbing, bracing, and hurt poses. Four smaller workers retain trade-specific helmets and tools, individual silhouettes, gait and panic poses, matching MACHINE HUNT's micro-character clarity and BLOCK MINE's role identity without enlarging the cast."
+      "note": "The rigger was redrawn from a 16x21 block-headed chunk to an 8-9x15 constructed figure (1px crest, 2px gold hardhat, 2px head with facing eye, 5px jacket with belt/air pack, 2-frame boot gait, alternating climb reach, brace tool, hurt sparks). The four trades shrank from 13x17 to 8x12 while keeping distinct helmet colors, 1px trade tools, gait offsets, and panic poses; barrels are 7-8px band-and-glint drums that now roll on the deck. Verified in 5x crops and at 160x360: silhouettes sit at Machine Hunt's ~10px hunter scale and under Block Mine's 12px ceiling."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The strip reads as a built industrial tower with riveted decks, cross-bracing, usable and broken ladders, catwalk gaps, pipes, tanks, lamps, pistons, foreground steel, skyline depth, and district landmarks. Its material layering and occupied-world density meet MACHINE HUNT and the authored construction floor established by BLOCK MINE."
+      "note": "The smaller cast freed vertical air on every deck, which was re-invested in authored dressing: crate stacks at safe midspans, sagging under-deck cable runs with blinking junction boxes, girder rivets, hazard paint at catwalk gaps, flickering rail lamps with light pools, animated console scanlines/LEDs, and one zone-specific ambient beat per district (swinging chain, rising steam, cable sparks, crane pennants). Riveted decks, ladders, pipes, tanks, turbine, crane, and skyline depth all remain; measured edge energy rose from .035..046 to .0372..049 against Machine Hunt's .003 floor."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Freight Dock, Boiler Works, Dynamo Spire, and Crane Crown alter tower silhouette, landmarks, lighting, machinery, props, and palette. The montage directly shows the enclosed freight frame, cyan turbine composition, and open orange crane crown, a structural progression comparable to the reference games rather than a palette swap."
+      "note": "Freight Dock, Boiler Works, Dynamo Spire, and Crane Crown still rebuild silhouette, landmarks, lighting, machinery, and props, and the dressing layer is re-seeded per zone/stage so crates, lamps, and ambient beats recompose too. Actor-free structure distance between districts measured .344..445 (floor .27), well past a palette swap and comparable to the reference games' room-to-room identity."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned real-pixel bursts verify climbing limbs, a worker joining the convoy, and barrel rotation and travel. The 240-frame purge warning, cascading hazards, panic reactions, physical cage boarding and ascent, broad confetti, hitstop and slow motion give signature beats anticipation and follow-through at the reference floor."
+      "note": "Aligned real-pixel bursts at the new scale measure climbing at .42, worker join at .23, and barrel travel/spin at .32 max changed fraction; rolling barrels now rotate with their direction of travel and carry a deck-level shadow. The 240-frame purge warning, cascade land (.81 changed fraction), panic reactions, cage boarding with blinking beacon, confetti, hitstop, and slow motion keep every signature beat inside anticipation/follow-through, with payoff FX proven sim-inert."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The RESCUE PRIORITY objective, actor facing and poses, amber world-level purge column, full-width barrel runway, helmet colors, convoy HUD, and rooftop cage remain distinguishable at native size without computed waypoints, reticles, or route lines. Actor footprints stay near six to seven percent in sampled play, leaving ample world and approach room."
+      "note": "Shrinking the cast restored vertical air on the 42px floors: combined actor footprint dropped from ~6-7% to 3.4-4.1% of the playfield, the full-width barrel runway stays at 78% visible travel, and helmet accents, facing eyes, poses, the amber purge column, convoy HUD, and rooftop cage all remain distinguishable at native size beside video without computed waypoints, reticles, or route lines. Dressing sits in low-value bands under and on the decks so hazard and character contrast still leads the eye."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Steel values, safety yellow, rescue green, coral danger, helmet accents, signage, industrial HUD panels, hazard stripes, particles, and landmark lighting share one authored rescue-tower grammar across every district. The presentation is as internally coherent as MACHINE HUNT and BLOCK MINE while retaining its own emergency-rigger identity."
+      "note": "The new figures, crates, cables, lamps, and console details reuse the established steel values, safety gold, rescue mint, coral danger, and per-zone accent palettes, so the redraw reads as the same emergency-rigger fiction at the correct camera distance rather than a new style. Largest color share stays at .14..215 across beats and every district keeps its own accent grammar, as internally coherent as Machine Hunt and Block Mine."
     }
+  },
+  "renderReceipt": {
+    "seed": "0x745052",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 2387019,
+    "sha256": "8900604262c98431d63f9e3964d149d650a024897877122b72ac0e0d8db91d1e",
+    "command": "node render/render.js tower-panic 30 ../.artifacts/visual/tower-panic/tower-panic-30s.mp4 --seed 0x745052 --probe --fps 30"
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "c2acf17e44ec1c546ac70d1e542773a700549bdd5cfb77114481a26b45ef44df"
+  "reviewIdentitySha256": "09b8b4332fca7c110861750528dc29d2f8e69d08b64336e4e1400087c8f69674"
 }
