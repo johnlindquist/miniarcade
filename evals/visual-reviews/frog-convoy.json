@@ -6,9 +6,9 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "97ce01385a42ddccba052b79645bd03c25ec52c296f8940bf6a51132a20f4595",
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review with independent visual gate audit",
+  "montageSha256": "ac1bfd7374bf885003a9e19ef11673be6853e63804365b93dbb948c2170c9474",
+  "reviewedAt": "2026-07-11",
+  "reviewer": "Claude native-size reference review of the 2026-07-11 reference-scale character redesign (drawn-pixel scale gates audited against isolated renders)",
   "seed": "0xf09c0",
   "checkpoints": [
     "opening@12",
@@ -17,41 +17,53 @@
     "danger@12",
     "sacrifice@12",
     "later@12",
-    "apex@120"
+    "apex@120",
+    "scale@4"
   ],
+  "guidelineOverlays": "none: the former dashed route-cue arc and target reticle on the leader's next hop were removed as banned guideline overlays; the family ribbon links only the CURRENT bodies of live convoy members, and the sacrifice streak trails the leaping ghost's already-flown path with the impact ring appearing only on arrival. No path lines, predicted arcs, or future-position reticles are drawn at any sampled beat.",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At native size the lead has a built head, body, haunches, separate forelegs and hind legs, facing eyes, mouth, leaf crown, and two-piece scarf. Crouch, stretched leap, splayed landing, alarm, and backward-glance poses remain legible; five smaller passengers retain individual palettes, markings, accessories, and delayed locomotion rather than reading as tokens."
+      "note": "Redrawn at reference scale from the old 27x28 lead / 19px passengers: the lead now measures 9x11 drawn (Machine Hunt hunter ~10, under the Block Mine 12-13 hero ceiling) with a constructed silhouette — shaded body over dark underlayer, belly, eye bumps with pupils and facing, tucked haunches, gold crown and swaying scarf. Passengers are 7x7..7x9 with per-style palettes and 1px accessories (bow, cap, spots, leaf, tadpole tail); pickups are 8x12 waving kids. Character reads from the hop cycle: crouch anticipation, mid-air leg-kick stretch with shadow separation, landing squash, idle breathing, and alarm-wide eyes."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The HUD-free world has banded sky, clouds, hills, a flower sanctuary, built banks, current lines, bridge piers, material-specific collapsing logs, mill race, covered bridge, crosswalk, drains, bus shelter, detailed cars and trucks, layered reeds, and foreground occlusion. Flood Season adds inundated terrain, refuge islets, skiffs, submerged signs, wakes, drowned buildings, and tilted timber at reference-level density."
+      "note": "As the actors shrank the world was densified, all render-layer: tire-wear dashes, cracks, and blinking reflector posts on the road; pebbles and wildflowers on the shoulders; drifting glints, bow ripples off every log, and hovering dragonflies on the river; butterflies over the meadow; fireflies in the late-season nursery. The banded sky, seasonal landmarks (garden, mill wheel, covered bridge, drowned town), bridge piers, bus shelter, reeds, and foreground occlusion band all remain, and the HUD-free world still reads place and mood."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Same-state season captures prove structural progression: Spring has a garden fence and full three-lane road; Midsummer builds a dock, sluice, and working wheel; Autumn replaces the first river silhouette with a roofed bridge; Flood Season removes the median and upper road lane under water, substitutes refuge islands and skiffs, and leaves only two asphalt lanes. The drowned middle is unmistakable even without color."
+      "note": "Same-state season captures prove structural progression on the new art: measured structure distances .099 spring/summer, .148 spring/autumn, .167 summer/autumn, and .306..316 for every flood pair. Spring keeps the garden fence and three-lane road; Midsummer builds the dock, sluice, and working wheel; Autumn replaces the first river silhouette with a covered bridge; Flood Season drowns the median and upper lane, adds refuge islets, skiffs, and submerged signs."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned real-pixel bursts show lead and passenger hop articulation, log and vehicle motion, a moving flood crest before land, bodily recoil across the remaining family, a forward-leaping sacrifice with guard arc and impact rays, then sequential homecoming. The apex adds exact hitstop and slow stepping, a real bot admire pause, broad gold current sweeps, halo, fireflies, and a persistent six-frog sanctuary tableau."
+      "note": "Aligned real-pixel bursts on the small frogs still measure strongly (lead hop burst max .583, passenger .512): crouch, arc, kick, and squash survive at 160x360. The flood warning transforms the world before landfall (delta .436), the sacrifice leaps bodily with a trailing gold streak and on-arrival impact rays (delta .157, burst .124), and the whole-family apex holds exact hitstop, slow stepping, a real admire pause, and a broad gold homecoming (delta .939)."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Bright cream, lime, cyan, and gold frogs retain contrast against outlined water, bark, and asphalt. The delayed family ribbon, intended hop arc, log cracks, vehicle lights, flood chevrons, refuge beacon, plain tactic verb, family pips, and loss/home totals survive at 160x360; the new skiffs and flood islands remain distinct from logs and frogs."
+      "note": "Bright cream/lime/cyan/gold frogs keep contrast against water, bark, and asphalt at native size, and the smaller actors give hazards visibly more room: threats cross 76% of their wrap track on screen and the sampled actor footprint is 6.6-9.6% of the playfield. Vehicle gaps, log cracks, the flood chevrons, refuge beacon, family pips, tactic verb, and loss/home totals all remain legible; intent reads from the leader's crouch and facing with no drawn route overlay."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Rounded frog anatomy, bark rings and braces, top-down vehicle construction, marsh greens and water cyans, gold reward language, coral danger language, outlined pixel materials, seasonal landmarks, route telemetry, and payoff geometry share one authored storybook-marsh grammar. The flood rebuild and apex effects extend that language instead of reading as pasted-on overlays."
+      "note": "One storybook-marsh grammar at a single consistent scale: rounded shaded frog anatomy, bark rings and end caps on the slimmer logs, top-down cab/window/wheel vehicle construction at the Pocket League 14px reference (car 15, truck/bus 23), the 32x17 croc set-piece, marsh greens against water cyans, gold reward and coral danger language. The density pass extends the existing material triples instead of pasting noise on top."
     }
+  },
+  "renderReceipt": {
+    "seed": "0xf09c0",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 3843648,
+    "sha256": "a34e0e0d5b3ba48e13c960e06f59309cb3aee5843c4311f3a58996169d3c8d7c",
+    "command": "node render/render.js frog-convoy 30 .artifacts/visual/frog-convoy/frog-convoy-30s.mp4 --seed 0xf09c0 --probe --fps 30"
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "6092c3527779c503c2509e3a29409fd82df2a05059c89f8ba8c84da8c5b931e1"
+  "reviewIdentitySha256": "fd43fcf01622ab142ce117f9307e8431da07a610476d9fc98707db1eb54d1e19"
 }
