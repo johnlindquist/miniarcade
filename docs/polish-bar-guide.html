@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The SIDE/QUEST Polish Bar</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b24; --panel2:#1c2330; --ink:#e8edf4; --ink-dim:#9aa7b8;
+    --accent:#63e0f5; --gold:#ffd166; --green:#7ee08a; --red:#ff7b7b; --line:#2a3444;
+    --quote:#b8c7dc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 20px 96px;}
+  header{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:36px}
+  h1{font-size:2.1rem;line-height:1.2;margin:0 0 10px}
+  .kicker{color:var(--accent);text-transform:uppercase;letter-spacing:.14em;font-size:.78rem;font-weight:700;margin-bottom:14px}
+  .sub{color:var(--ink-dim);font-size:1.05rem;max-width:64ch}
+  h2{font-size:1.5rem;margin:56px 0 14px;padding-top:18px;border-top:1px solid var(--line)}
+  h3{font-size:1.12rem;margin:32px 0 8px;color:var(--gold)}
+  h4{font-size:1rem;margin:24px 0 6px}
+  p{margin:0 0 14px;max-width:72ch}
+  li{margin-bottom:8px;max-width:70ch}
+  code{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:.86em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  blockquote{margin:18px 0;padding:14px 18px;background:var(--panel);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;color:var(--quote);font-style:italic}
+  blockquote .who{display:block;margin-top:8px;font-style:normal;font-size:.8rem;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em}
+  .tablewrap{overflow-x:auto;margin:18px 0}
+  table{border-collapse:collapse;width:100%;font-size:.92rem}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-weight:700}
+  td{background:var(--panel)}
+  .num{color:var(--green);font-weight:600;white-space:nowrap}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:.78rem;color:var(--accent);margin:0 6px 6px 0}
+  .principle{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:22px 0}
+  .principle h3{margin-top:0}
+  .rule{color:var(--gold);font-weight:700}
+  .toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 24px;margin:28px 0}
+  .toc ol{margin:8px 0 0;padding-left:22px}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .meta{font-size:.82rem;color:var(--ink-dim)}
+  .lesson{border-left:3px solid var(--gold);padding:2px 0 2px 14px;margin:14px 0;color:var(--ink)}
+  .lesson b{color:var(--gold)}
+  .checklist li{list-style:none;position:relative;padding-left:26px}
+  .checklist li::before{content:"▢";position:absolute;left:0;color:var(--accent)}
+  footer{margin-top:72px;border-top:1px solid var(--line);padding-top:18px;color:var(--ink-dim);font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">SIDE/QUEST · Internal Craft Guide</div>
+  <h1>The Polish Bar: How Pocket League and Block Mine Got Good</h1>
+  <p class="sub">A reconstruction of every owner request, commit, and proven fix across the two most-polished games in the catalog — distilled into the quality standard for momentum, character, watchability, effects, environment, and design, and a playbook for raising every other game to it.</p>
+  <p class="meta">Compiled 2026-07-11 from git history (<code>here-now/rocket.html</code>, <code>here-now/blockmine.html</code>), the AI-AUDIT.md implementation log, and full conversation transcripts across Claude, Codex, and Grok sessions.</p>
+</header>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#why">Why these two games are the bar</a></li>
+    <li><a href="#pl">Case study 1 — Pocket League: momentum, earned in eight rounds</a></li>
+    <li><a href="#bm">Case study 2 — Block Mine: a world that proves itself</a></li>
+    <li><a href="#pillars">The quality bar, distilled: six pillars</a></li>
+    <li><a href="#loop">The iteration method that produced it</a></li>
+    <li><a href="#apply">Applying the bar to the unpolished roster</a></li>
+    <li><a href="#checklist">The ship-gate checklist</a></li>
+  </ol>
+</div>
+
+<h2 id="why">1 · Why these two games are the bar</h2>
+<p>On 2026-07-09 the owner named the standard directly while commissioning the next slate of games: <em>“Pocket League, Small Guys, and Block Mine are currently the most fun games to watch.”</em> A day later, commissioning MOTO BOWL, the instruction was even more explicit: <em>“Push it all the way to the level of polish that we have in our minecraft spin off. Solid ai, level gen, etc.”</em> Block Mine and Machine Hunt are already codified in AGENTS.md as the minimum visual comparison bar. What was never written down — until now — is <b>how</b> that polish was actually produced, and what specifically the owner kept pushing on.</p>
+<p>The answer, visible across ~25 commits and seven-plus rounds of direct owner feedback, is not one big art pass. It is a tight loop: the owner watches real footage, describes what feels wrong <b>in the language of the fiction</b>, the agent translates that perception into a mechanism, fixes it behind an ablation switch, proves the fix with same-seed A/Bs and multi-seed sweeps, wires the proof permanently into the eval, and verifies the live site actually serves it. Every round leaves the game better <b>and</b> leaves the eval suite stronger, so the polish can never silently regress.</p>
+
+<h2 id="pl">2 · Case study 1 — Pocket League: momentum, earned in eight rounds</h2>
+<p>Pocket League (<code>here-now/rocket.html</code>) started the week scored <b>2/5 intelligence, 2/5 creativity</b> in the bot audit: “current-position greedy, no ball prediction… spectacle, not brains.” Three days later it has the most sophisticated physics-honesty contract in the repo. The entire arc is owner-feedback-driven, and each round is a lesson in what the bar means.</p>
+
+<h3>Round 0 — Foundation: prediction, acts, and the show ladder (07-09)</h3>
+<p>Before the polish wave: interception (“intercept where the ball will be, with human aim fuzz”), a telegraphed crosswind act, and kernel-formalized goal slow-mo. Bands set from measurement: goals 10..30 per run, tier budgets asserted exactly.</p>
+
+<h3>Round 1 — The feature wave: drift, personas, demos (07-11)</h3>
+<blockquote>“In pocket league: 1. Add power drifting. 2. Update the ai bots logic to support drifting. For example, drifting hard then boosting out of it. 3. Update the ai bots so they can randomly load profiles that are each a different level of aggression. 4. Implement ‘demos’ if you run into someone fast enough.”<span class="who">Owner /goal, 2026-07-11</span></blockquote>
+<p>Shipped as <code>b383af7</code>: a drift state machine (start → hold → catch → aligned boost-out), four aggression personas (ROTATOR / BALANCED / PRESSER / MANIAC) on private RNG streams, and demo v2 with real impact geometry (speed + closing + facing gates — no side-swipe kills). The proof discipline set the tone for everything after: the combined ablation of all three switches was verified <b>bit-identical to the pre-change simulation</b> before anything else was accepted. Notably, wiring the motion contract immediately exposed <em>legacy</em> stalls nobody had noticed — goalies parked dead-still in the net, wall scrums deadlocked by a velocity-swap collision — and those were fixed as part of the same round.</p>
+
+<h3>Round 2 — “I’m not seeing drifting” → presentation is a feature</h3>
+<blockquote>“I’m not seeing ‘drifting’ in the results. Visually, drifting involves the back of the car swinging around while the front stays steady. Drifting should have its own effect too.”<span class="who">Owner feedback</span></blockquote>
+<p>The sim was drifting; the <b>read</b> wasn’t. A ±2px tail skew on a 10×6px sprite is invisible. The fix (<code>d2b44a4</code>) built a full visual language, all render/FX-layer with sim signatures verified bit-identical: fishtail articulation, <b>skid scorch arcs</b> the rear sweeps onto the field (first attempt was dark rubber — invisible on the navy field; switched to neon cyan matching the TRON lines), dense two-wheel smoke, gold <b>charge sparks</b> telegraphing the loaded boost-out, and a white grip-bite puff on the catch. Every payoff beat the viewer needs to anticipate got its own tell.</p>
+<div class="lesson"><b>Lesson:</b> at 160px wide, a mechanic that isn’t <em>sold</em> visually doesn’t exist. FX must be sim-inert and each beat of a maneuver (enter → hold → loaded → release) needs its own readable cue.</div>
+
+<h3>Round 3 — “I never see the bots use it strategically” → skill means signature moves</h3>
+<blockquote>“A primary use of drifting is to ‘get behind the ball to line up your shot’. I never see the bots use it strategically.”<span class="who">Owner feedback</span></blockquote>
+<p>All the drift triggers were reactive (“my turn error is huge”). The signature move — swinging around the ball onto the shot line — never fired. The fix (<code>9e7abbf</code>) added a <b>line-up drift</b> on the reposition tactic with conversion telemetry: a ball touch within a second of the catch counts as a converted line-up. Sweep: 73–110 line-ups, 16–32 conversions per 6 minutes; eval floors 40/8 plus an A/B where <code>__NO_LINEUP</code> shows exactly zero. Fixing the fallout surfaced two real bot bugs: demo hunters arriving at exactly the no-boost cruise cap (toothless — a committed demolition now spends the whole tank), and the escape reflex ranking a wall above a pushable car.</p>
+<div class="lesson"><b>Lesson:</b> raw competence is the floor. The bar is bots using mechanics the way a skilled human would — recognizable, intentional, forecastable lines — and the eval must count <em>conversions</em>, not just attempts.</div>
+
+<h3>Round 4 — “They appear completely unskilled” → intelligence, and verify the deploy</h3>
+<blockquote>“I’m still seeing the bots drive ‘around’ and missing the ball or crashing into walls without drifting way too often where they appear completely unskilled. Is this the latest version? … It’s a critical skill that should be used in a significant amount of turns to help them turn faster.”<span class="who">Owner feedback, watching miniarcade.dev</span></blockquote>
+<p>Two findings. First: <b>the live site was stale</b> — miniarcade.dev deploys from a separate repo, and none of the drift work had shipped. The deploy path is now saved to memory and every round since ends with a live-route verification (curl for code markers). Second, the cornering pass (<code>5a92eb0</code>) anyway: the old code <em>suppressed</em> drifting near walls, exactly where fast rotation matters most. Wall-save drifts, drift-as-default-fast-turn (hard-turn drift share <span class="num">33% → 52–58%</span>, drift starts <span class="num">~700 → 1100+</span> per 6 min), and arrival braking for goalies who were pounding their own goal wall (fast wall crashes <span class="num">~350 → ~190</span>). Bonus from watching cars in every state: the frozen 260-frame match-over card became a <b>victory celebration — winners rip drift donuts while losers sulk-crawl home</b> — and kickoffs got a rolling start.</p>
+<div class="lesson"><b>Lesson:</b> “looks unskilled” is a bug report. Trace it to specific behaviors (grip arcs into boards, no arrival braking), measure them, fix them, band them. And never assume production matches the repo — verify the live route.</div>
+
+<h3>Round 5 — “The whole car should slide” → physics matches the fiction</h3>
+<blockquote>“The drifting is a bit too easy for the bots to control… they’re able to swing the back end of the car around too quickly between one direction and the other… in real life there’s always an amount of the entire car kind of sliding… you have to adjust with the front wheels on how to control the drift… implement drifting as if it is front-wheel drive and you are controlling the drift with the handbrake… the difference is they have rocket boosters on the back.”<span class="who">Owner feedback</span></blockquote>
+<p>The model gave the body instant yaw authority mid-slide — bots wiggled the tail like a hovercraft. The fix (<code>9adbbb6</code>): yaw becomes a physical state with inertia. A handbrake-bite impulse swings the tail once on entry; after that the front wheels only <em>lever</em> the sliding mass, lazier the deeper the slide. Counter-steer costs real frames. Measured: mid-slide yaw reversals <span class="num">709 → 173</span> per match on the same seed. On screen, skid marks changed from zigzag snakes to <b>long single-curvature arcs</b> — one committed slide per direction. The honest tradeoff was reported, not hidden: bots now occasionally slide wide and must come back around. That’s the point.</p>
+<div class="lesson"><b>Lesson:</b> when the owner explains the fiction’s physics (“handbrake, front wheels, rocket thrust”), implement <em>that model</em>, not a visual approximation. Commitment and recovery are what make momentum legible.</div>
+
+<h3>Round 6 — “Momentum is the key aspect” → mistakes must cost</h3>
+<blockquote>“1. Let’s get rid of the wind. It subtracts from the experience. 2. Let’s punish the ai for running hard straight into a wall. It puts them in a position where they have to ‘recover’ — staying in control while maintaining momentum is the key aspect of rocket league.”<span class="who">Owner feedback</span></blockquote>
+<p>Two directives, both about the same principle. The crosswind act — a clever environmental feature, telegraphed and eval-proven — was <b>removed</b> because it subtracted from the core fantasy. And hard wall hits now <b>crunch</b> (<code>b8d3e8d</code>): the old bounce refunded 40% of momentum, making mistakes nearly free. Now a hard square hit keeps ~12% of speed, staggers the car with an impact spin, and costs a 22-frame recovery with no boost and mushy steering. One deliberate carve-out preserves the fiction: impacts near the ball don’t crunch, because pinning a wall-ball is a legitimate line. The A/B proves it reshapes play, not just looks: <span class="num">18 goals with the punishment vs 28 without</span> on the same seed — momentum preservation now decides games.</p>
+<div class="lesson"><b>Lesson:</b> features are judged by whether they serve the core fantasy, no matter how well-built. And a viewer can only value control if losing it visibly costs something.</div>
+
+<h3>Round 7 — “Impossible movements” → audit the physics to zero</h3>
+<blockquote>“I still see them pull off what looks like impossible movements when drifting. Please audit and fix.”<span class="who">Owner, via /oracle-packx</span></blockquote>
+<p>A frame-level external audit (Oracle, gpt-5.5-pro) confirmed <b>five real cheats</b> in the translation model: the release catch rotated the velocity vector directly (momentum teleportation — 3× tighter than grip physics allows), full-lock holds rotated through sideways into backward travel, the per-frame rear kick was an energy pump (a low-throttle slide <em>gained</em> speed), steering through zero stacked entry impulses, and the rendering hinged only the rear half — literally the wiggle the owner had rejected. The fix (<code>c0efc70</code>): in a slide, world velocity may change only via rocket thrust along the nose, a bounded front-tire force that provably cannot add energy, and isotropic drag. The car renders as one rigid mass. Five run-level invariants became <b>hard-zero eval contracts</b>: the old model logs <span class="num">841 catch-snaps and 2,361 backward frames</span> per match; the honest model logs <span class="num">zero</span>, forever.</p>
+<div class="lesson"><b>Lesson:</b> “looks impossible” is a physics-integrity bug even when every band is green. Judge honesty on the center-of-mass path, not body yaw — heading passed every old fixture while momentum was reassigned underneath it. Encode honesty as hard-zero invariants, not thresholds.</div>
+
+<h3>Round 8 — The last 2%: powerslide semantics and frozen skid marks</h3>
+<blockquote>“Powerslide is not a brake.” · “There’s like random skid marks that appear in places… their positioning seems just really off to me.”<span class="who">Owner, after playing manually and watching goal replays</span></blockquote>
+<p>Two same-day micro-fixes that show where the bar sits. The handbrake latch now holds only while genuinely steering or sliding — powerslide held with centered wheels is <b>bit-identical to normal driving</b>, asserted by fixture as exact speed equality over 120 frames (<code>1899fc1</code>). And the frozen skid marks were traced to a real double bug: skid samples only retired inside the normal driving path (goal-blasted and demoed cars stopped expiring their trails), and the fade math handed canvas a negative alpha, which canvas silently ignores (<code>b2a6f8c</code>). The fix came with a fixture that <em>fails on the pre-fix build</em>.</p>
+<div class="lesson"><b>Lesson:</b> the owner notices misplaced skid marks during a two-second goal replay. Presentation data has a lifecycle too — expire it on the world clock, and prove decay with a fixture that fails on yesterday’s code.</div>
+
+<h3>What the Pocket League arc proves</h3>
+<div class="tablewrap"><table>
+<tr><th>Owner’s words</th><th>Translated to</th><th>Measured result</th></tr>
+<tr><td>“I’m not seeing drifting”</td><td>Presentation layer: fishtail, skids, sparks, catch puffs</td><td>Sim bit-identical; skid deposits asserted in fixture</td></tr>
+<tr><td>“Never see it used strategically”</td><td>Line-up drift + conversion telemetry</td><td class="num">73–110 line-ups, 16–32 conversions / 6 min</td></tr>
+<tr><td>“Appear completely unskilled”</td><td>Wall-saves, drift-first turns, arrival braking</td><td class="num">drift share 33%→52–58%, crashes −46%</td></tr>
+<tr><td>“The entire car kind of sliding”</td><td>Slide-mass yaw inertia</td><td class="num">yaw reversals 709→173</td></tr>
+<tr><td>“Momentum is the key aspect”</td><td>Wall crunch + recovery state</td><td class="num">A/B: 18 vs 28 goals — punishment reshapes play</td></tr>
+<tr><td>“Impossible movements”</td><td>Honest-forces model, energy ledger</td><td class="num">841 catch-snaps → 0 (hard-zero invariant)</td></tr>
+</table></div>
+
+<h2 id="bm">3 · Case study 2 — Block Mine: a world that proves itself</h2>
+<p>Block Mine (<code>here-now/blockmine.html</code>) began 2026-07-08 with one sentence: <em>“Based on the patterns of the current games, build a version of minecraft.”</em> Two days of iteration made it the repo’s reference for authored worlds, legible AI progress, and soak-proven reliability. The owner’s requests trace a different face of the same bar — less physics, more <b>world honesty, character, and observable progress</b>.</p>
+
+<h3>The owner’s requests, in order</h3>
+<blockquote>“Do a ‘feature rich’ pass and significantly improve the ai main character to use better strategy, especially around fighting back against the enemies and setting up traps for them. And reward the main ai character for building cool stuff. And improve the path finding, it’s stuck here: [screenshot]”<span class="who">07-08</span></blockquote>
+<blockquote>“Make the main character ‘cuter’ and give it more expression and ‘emotes’ for when it’s confused, searching, happy, fighting, etc.”<span class="who">07-08</span></blockquote>
+<blockquote>“We need to have lava/water fill the areas they’re discovered in. And we probably need ‘active goals’ for the main ai to work towards so that we can observe that it is making progress.”<span class="who">07-08</span></blockquote>
+<blockquote>“Render a 30 minute video of my minecraft game and somehow run evals to verify that it’s a ‘good’ run where he never gets ‘stuck’.”<span class="who">07-09</span></blockquote>
+<blockquote>“Why is text so ‘clean’? It should look like this: [pixel reference]. Did it not load a font or something?”<span class="who">07-09, reviewing the offline render</span></blockquote>
+<p>Note the shape: strategy and personality first (fight back, set traps, build cool stuff, be cute, emote), then <b>world honesty</b> (fluids must actually flow where discovered), then <b>observable progress</b> (“active goals… so that we can observe that it is making progress”), then <b>duration-scale reliability</b> (30 minutes, never stuck, verified by eval, not vibes), and finally <b>pixel-level fidelity</b> — even font rasterization in the offline renderer gets flagged against the reference aesthetic.</p>
+
+<h3>How the commits answered</h3>
+<ul>
+  <li><b>Honest information:</b> strict line-of-sight fog of war (<code>ddd7649</code>) — every solid block shows only its exposed face; the AI compensates with diagonal staircases, lateral galleries, glance-diverts for gold-or-better, and a rope-catch fall reflex. The bot plays the same hidden world the viewer sees.</li>
+  <li><b>Survival intelligence with a viewer-legible rule:</b> “never dig straight down blindly” (<code>f6821bb</code>) — descent carves diagonal stairs so the sight flood reveals each step before he walks on it. Instrumented fall deaths dropped to <span class="num">zero</span>.</li>
+  <li><b>Economy that drives visible decisions:</b> durability, the surface camp anvil, the daylight-only caravan (“Gold finally has a purpose”), day/night decision pressure, warp totems vs walking (<code>14a211b</code>). Every system exists to change what the character visibly does.</li>
+  <li><b>Kill the stall look-alikes:</b> “stop the miner pogo-jumping in place” (<code>13b5356</code>) — three separate climbing loops that read as jumping on the spot, hunted with a bounce detector and proven gone across <b>six 10-minute runs</b>.</li>
+  <li><b>Tools as solutions the viewer can read:</b> the miner places planks to turn gaps into walkways (<code>ffab214</code>) — problem-solving made visible on the terrain itself.</li>
+  <li><b>An endgame with a silhouette:</b> waygates, the grove, and the Tower of Babel (<code>659e310</code>, <code>6332fbe</code>) — and then the crucial polish commit: <b>“the tower actually gets built, and differently every run”</b> (<code>ef2533b</code>): seeded blueprints (width, story height, window style), seeded meadow rubble so every build starts with different clearing work, death-chain brakes, and an eval requiring <b>three seeds to raise distinct, structurally complete towers</b> with at most one death.</li>
+  <li><b>Acts that are already there:</b> the payoff-ladder adoption (<code>c49d296</code>) deliberately did <em>not</em> bolt on hold/slow-mo tiers, because the 30-minute never-stuck soak is the game’s defining contract — and day/night, depth bands, and Babel already are the acts. Rolling storm fronts (<code>d941dc0</code>) added a telegraphed act that changes surface plans before it lands.</li>
+  <li><b>Pixel discipline:</b> screen shake snapped to whole pixels after fractional translation smeared antialiased grid lines over dark scenes (<code>ffaa9da</code>); the offline renderer got a real pixel font so rendered video matches the in-browser aesthetic.</li>
+</ul>
+
+<h3>What the Block Mine arc proves</h3>
+<p>Block Mine’s bar is: <b>the world tells the truth</b> (fog of war, real fluids, real construction), <b>the character has a visible inner life</b> (emotes for confused/searching/happy/fighting, cuteness as a spec), <b>progress is observable</b> (goal ladder with numeric progress on the HUD; a tower that visibly rises and differs per seed), and <b>reliability is proven at watch-scale</b> (30-minute seed-searched soaks with <code>repaths===0</code>, zero-death criteria, and a render-ready winning seed printed by the eval).</p>
+
+<h2 id="pillars">4 · The quality bar, distilled: six pillars</h2>
+
+<div class="principle">
+  <h3>Pillar 1 — Momentum: honest physics, visible commitment, costly mistakes</h3>
+  <ul>
+    <li><span class="rule">Momentum is never invented, teleported, or refunded.</span> No velocity-vector rotation on release, no energy pumps, no free 40% wall bounces. If the fiction says mass slides, the sim slides a mass.</li>
+    <li><span class="rule">Commitment is the drama.</span> Inertia means a bot that starts a slide must finish it; a late reaction visibly costs something. If the viewer can see the whole future of a move, the move is too cheap.</li>
+    <li><span class="rule">Mistakes buy a recovery state, not a reset.</span> The wall crunch (12% momentum kept, 22 frames of degraded control) turned wall hits from noise into narrative. Punishments respect legitimate lines (wall-ball pins stay cushioned).</li>
+    <li><span class="rule">Physics honesty is enforced with hard-zero invariants,</span> not tuned thresholds: catch-snap frames, reverse-travel frames, positive-tire-work frames — all asserted zero every run, with the old model preserved behind a switch as the failing counter-example.</li>
+  </ul>
+</div>
+
+<div class="principle">
+  <h3>Pillar 2 — Character: intent reads from the actor, skill reads as signature moves</h3>
+  <ul>
+    <li><span class="rule">Every important beat of a maneuver gets a tell on the character itself:</span> fishtail on entry, charge sparks when the boost-out is loaded, a grip puff on the catch. Never guidelines, arrows, or predicted arcs — motion, facing, pose, emotes only.</li>
+    <li><span class="rule">Bots must use mechanics the way a skilled human would</span> — the line-up drift, the wall-save, boosting out through the strike. Attempts and <em>conversions</em> both get counted.</li>
+    <li><span class="rule">Personality is a system, not a palette:</span> seeded aggression personas with paired assignment (team totals stay balanced), private RNG streams so replays never diverge, and forced-profile A/Bs proving MANIAC actually behaves differently from ROTATOR.</li>
+    <li><span class="rule">Characters emote their inner state:</span> confused, searching, celebrating — budgeted authored pauses, never cover for a stalled planner. Cuteness and expressiveness are explicit owner specs, not nice-to-haves.</li>
+    <li><span class="rule">Even dead air is in character:</span> winners rip donuts, losers sulk-crawl home. If a state exists, it is authored.</li>
+  </ul>
+</div>
+
+<div class="principle">
+  <h3>Pillar 3 — Watchability: no stalls, no lies, observable progress</h3>
+  <ul>
+    <li><span class="rule">Nothing stands still &gt;30 frames, in any state</span> — including countdowns, replays, and match-over cards. The motion contract runs on every watched actor and has repeatedly caught real legacy bugs the day it was wired.</li>
+    <li><span class="rule">Stall look-alikes count as stalls:</span> pogo-jumping in place, spin-in-place, idle wiggle at a fixed position. Hunt them with detectors, prove them gone across multiple long runs.</li>
+    <li><span class="rule">Progress must be observable:</span> active goals with numeric progress, towers that visibly rise, conversion counters. “So that we can observe that it is making progress” is a product requirement.</li>
+    <li><span class="rule">Watch-scale reliability is seed-searched and soak-proven:</span> a 30-minute run with zero watchdog rescues is a shippable artifact, and the eval prints the winning seed for the renderer.</li>
+    <li><span class="rule">Bands are contracts on both sides:</span> goals 10..30, demos 2..20. A smarter bot that busts a band gets tempered with human-flavored imperfection; the band doesn’t quietly widen.</li>
+  </ul>
+</div>
+
+<div class="principle">
+  <h3>Pillar 4 — Effects &amp; environment: FX tell the story, the world tells the truth</h3>
+  <ul>
+    <li><span class="rule">Every effect narrates a sim event:</span> skid arcs show where the tail swept, debris shows the crunch, explosion shows the demo. FX that decorate without narrating get cut.</li>
+    <li><span class="rule">All FX live on sim-inert RNG streams</span> — <code>__NO_PAYOFF_FX</code> is a perfect same-seed no-op, asserted forever.</li>
+    <li><span class="rule">Presentation data has a lifecycle:</span> expire it on the world clock (the frozen-skid-marks bug), never hand canvas invalid state, snap shake to whole pixels, use real pixel fonts offline. The pixel grid is part of the art direction.</li>
+    <li><span class="rule">The environment is honest and reactive:</span> fluids flow where discovered, fog hides what’s genuinely unseen, storms telegraph before they land — and the telegraph changes bot behavior <em>before</em> impact, proven by A/B divergence during the warn phase.</li>
+    <li><span class="rule">Readability beats richness:</span> dark-on-dark skid marks became neon cyan; density must survive at native 160×360 beside video.</li>
+  </ul>
+</div>
+
+<div class="principle">
+  <h3>Pillar 5 — Design: the core fantasy is the referee</h3>
+  <ul>
+    <li><span class="rule">Name the core fantasy and protect it.</span> For Pocket League it is “staying in control while maintaining momentum.” Every feature is judged against it — the crosswind act was well-engineered, telegraphed, and eval-proven, and it was deleted because “it subtracts from the experience.”</li>
+    <li><span class="rule">Systems must change visible decisions:</span> gold exists so the caravan matters, daylight matters so rest-until-dawn is a choice, durability matters so the anvil trip is a story beat. A system that doesn’t alter behavior on screen is dead weight.</li>
+    <li><span class="rule">Variety is seeded and provable:</span> blueprints, rubble fields, personas — and an eval that requires distinct outcomes across seeds, because two seeds producing identical footage is a failure.</li>
+    <li><span class="rule">Honor the fiction’s semantics in the details:</span> powerslide is not a brake; side-swipes don’t demo; a fake field goal that crosses grounded is a touchdown. Details like these are what the owner actually checks.</li>
+  </ul>
+</div>
+
+<div class="principle">
+  <h3>Pillar 6 — Proof: evals make polish permanent</h3>
+  <ul>
+    <li><span class="rule">Every change ships behind a <code>__NO_&lt;FEATURE&gt;</code> switch</span> with a same-seed A/B, and the combined ablation is verified bit-identical to the pre-change sim before anything else is accepted.</li>
+    <li><span class="rule">Fixtures must fail on yesterday’s build.</span> The skid fixture, the counter-steer fixture, the crunch fixture — each was run against the old code to confirm it catches the regression it exists for.</li>
+    <li><span class="rule">Numbers come from multi-seed sweeps,</span> then floors/ceilings are set with margin and the sweep is recorded in a comment next to the assert.</li>
+    <li><span class="rule">Intentional sim changes re-record the baseline loudly</span> (wind removal), with the reason logged so future sessions know why it moved.</li>
+    <li><span class="rule">Shipping means verified live:</span> deploy the mirror repo, curl the production route for code markers, and only then report success. Every round ends in AI-AUDIT.md with measured numbers and the lesson learned.</li>
+  </ul>
+</div>
+
+<h2 id="loop">5 · The iteration method that produced it</h2>
+<p>The polish didn’t come from a checklist; it came from running this loop relentlessly — eight times in one day for Pocket League:</p>
+<ol>
+  <li><b>The owner watches the real artifact</b> — the live site, a rendered clip, a goal replay — and reports perception in the fiction’s language: “wiggle the back end,” “impossible movements,” “it’s stuck here [screenshot].”</li>
+  <li><b>Translate perception → mechanism.</b> “Too easy to control” became “instant yaw authority mid-slide.” “Random skid marks” became “expiry only runs in the driving branch, and negative alpha is silently ignored.” The translation is stated back explicitly before fixing.</li>
+  <li><b>Fix behind a switch, prove with an A/B</b> on identical seeds, sweep ≥12 seeds, re-derive every band the sim shift moved.</li>
+  <li><b>Wire the proof into the eval permanently</b> — a fixture that fails on the old build, floors from the sweep, hard-zero invariants for honesty properties.</li>
+  <li><b>Fix what the new instrument reveals.</b> Every round’s new probe exposed pre-existing bugs (parked goalies, toothless demo hunts, frozen match-over cards). They get fixed in the same round, as authored show beats — not probe tricks.</li>
+  <li><b>Ship both repos, verify the live route, log the lesson</b> in AI-AUDIT.md with the numbers.</li>
+</ol>
+<p>Two meta-rules make the loop work. <b>Report tradeoffs honestly</b> — “bots will occasionally slide wide now; here are the two dials” — so the owner steers with full information. And <b>never let green evals overrule the owner’s eyes</b>: three times a fully-passing build was still wrong (“unskilled,” “impossible,” “too easy to control”), and each time the eyes were right and the eval suite grew a new organ to see what the owner saw.</p>
+
+<h2 id="apply">6 · Applying the bar to the unpolished roster</h2>
+<p>The audit scorecard and the in-flight art passes identify where the gap is. The pattern for every game below is the same: pick the game’s <b>core fantasy</b>, find where momentum/character/watchability are dishonest or illegible, run the loop, and leave behind evals that see what the owner would complain about.</p>
+
+<div class="tablewrap"><table>
+<tr><th>Game</th><th>Known gap (from audit/scorecard)</th><th>Pocket League / Block Mine concept to apply</th></tr>
+<tr><td><b>Hex Cascade</b> (2/5)</td><td>Greedy 1-ply bot; variety is only tie-break noise</td><td>Signature-move skill (2-ply cascade lines the viewer can forecast) + personas; conversion telemetry like line-up drifts</td></tr>
+<tr><td><b>Word Fall</b></td><td>Altar solver is omniscient — it cheats, destroying the deduction tension</td><td>Physics-honesty principle applied to information: the bot must play the same hidden world the viewer sees (Block Mine’s fog-of-war rule); assert autonomous solves</td></tr>
+<tr><td><b>Horizon</b></td><td>No lower bound on danger; watchdog firings uncounted</td><td>Both-sided bands + rescue budgets (invisible teleports read as glitches — Block Mine drove repaths to zero instead)</td></tr>
+<tr><td><b>Block Mine itself</b></td><td>Biggest game with zero personality</td><td>Port Pocket League’s persona layer: architect / speedrunner / hoarder, seeded, with cross-seed diversity asserts in the 30m eval</td></tr>
+<tr><td><b>Grave Garden</b> (rejected 07-10)</td><td>24–40px actors choked the lanes — the actor-scale law exists because of it</td><td>Small actors, big worlds: character from motion, not pixel count; visual eval asserts drawn extents, travel-axis room, footprint share</td></tr>
+<tr><td><b>Ghost Shift, Star Salvage, Castle Crasher, Kaiju Control, Tower Panic</b> (mid-art-pass)</td><td>Below the Machine Hunt / Block Mine visual bar; behavioral evals green ≠ shippable</td><td>Authored characters with silhouettes and locomotion, built environments with landmarks and value structure, level identity, payoff presentation — receipts against the reference contact sheet, motion contract wired</td></tr>
+<tr><td><b>Meat Lad</b></td><td>Warp/rocket rescues can masquerade as skill</td><td>Budget the rescues (crunch principle: recovery must be visible and costly, not a teleport)</td></tr>
+</table></div>
+
+<h3>The transferable moves, concretely</h3>
+<ul>
+  <li><b>Momentum pass:</b> find every place velocity is invented, refunded, or teleported (collisions, catches, respawns, rescues). Make mistakes cost a visible recovery state. Add hard-zero honesty invariants with the old model behind a switch.</li>
+  <li><b>Signature-move pass:</b> name the 2–3 moves a skilled human would be known for in this game. Give bots deliberate triggers for them, telemetry for attempts <em>and</em> conversions, floors from a sweep.</li>
+  <li><b>Presentation pass:</b> for each signature move and payoff, author the enter/hold/loaded/release tells on the actor, plus aftermath on the field (skid arcs, debris, scorch) — all sim-inert, all with lifecycle expiry on the world clock.</li>
+  <li><b>Dead-air pass:</b> enumerate every state (countdown, replay, game-over, respawn) and author it. Celebrations, sulks, rolling starts. Then wire the motion contract and fix what it catches.</li>
+  <li><b>World-honesty pass:</b> the bot sees what the viewer sees; the environment reacts to discovery; acts telegraph and change bot plans before landing (proven by warn-phase A/B divergence).</li>
+  <li><b>Proof pass:</b> per-feature switches, same-seed A/Bs, ≥12-seed sweeps with recorded distributions, fixtures that fail on the old build, both-sided bands, live-route verification, AI-AUDIT.md entry.</li>
+</ul>
+
+<h2 id="checklist">7 · The ship-gate checklist</h2>
+<p>A game (or a polish round) meets the Pocket League / Block Mine bar when every box holds:</p>
+<ul class="checklist">
+  <li>The core fantasy is written down, and every feature either serves it or was cut (wind rule).</li>
+  <li>No momentum is created, teleported, or refunded anywhere; honesty properties are hard-zero eval invariants.</li>
+  <li>Mistakes produce visible, costly, in-fiction recovery — never invisible rescues.</li>
+  <li>Bots perform the game’s signature skilled moves deliberately; attempts and conversions are counted and floored.</li>
+  <li>Seeded personas produce provably different behavior on private RNG streams; replays never diverge.</li>
+  <li>Every maneuver beat has an authored tell on the actor; zero guidelines/predicted overlays.</li>
+  <li>Every state is authored — no frozen cards, no dead standing, no stall look-alikes; motion contract green in the strictest analyzer that will judge it.</li>
+  <li>FX are sim-inert (<code>__NO_PAYOFF_FX</code> no-op), narrate real events, and expire on the world clock.</li>
+  <li>The world is honest: bot information = viewer information; acts telegraph and change plans before landing.</li>
+  <li>Watchability bands hold on both sides across a ≥12-seed sweep; distributions recorded next to the asserts.</li>
+  <li>Long-form soak proven at watch scale (≥10 min; 30 min for flagship runs) with rescue counts at or near zero.</li>
+  <li>Visual receipts compare against Machine Hunt and Block Mine at native size; actor-scale caps measured on drawn pixels.</li>
+  <li>Every fixture was run against the old build and failed there.</li>
+  <li>Deployed via the real deploy path and verified on the live route; lessons logged in AI-AUDIT.md with numbers.</li>
+</ul>
+
+<footer>
+  Sources: git history of <code>here-now/rocket.html</code> and <code>here-now/blockmine.html</code>; <code>here-now/evals/AI-AUDIT.md</code> (scorecard, Pocket League 2026-07-11 section, per-game priorities); owner-session transcripts via <code>cs</code> (Claude session 453a1a0f — the eight-round Pocket League loop; Codex 019f3fc8 — Block Mine origin; Grok 019f47f6 — 30-minute soak render; Claude 384e7cae — MOTO BOWL “level of polish” commission; Grok 019f4952 — “most fun to watch” council). All quotes verbatim from the owner’s messages.
+</footer>
+
+</div>
+</body>
+</html>

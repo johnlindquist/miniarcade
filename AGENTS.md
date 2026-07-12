@@ -115,3 +115,16 @@ The simulation remains 60 Hz regardless of output FPS.
 
 Use a plain one-line present-tense message in the form
 `GAME NAME: what actually changed`, without attribution boilerplate.
+
+## Doctrine and history
+
+- `VISION.md` — why SIDE/QUEST / MINI/ARCADE exists; the viewer-first contract.
+- `docs/polish-bar-guide.html` — "The Polish Bar": how Pocket League and Block
+  Mine were iterated to the quality bar (owner feedback rounds, the six pillars,
+  the iteration loop, and the per-game application playbook). Read it before
+  polishing or building a game.
+- `evals/AI-AUDIT.md` — the bot-intelligence audit and the proven-improvement
+  log; every shipped change lands its measured numbers and lessons here.
+
+This repository is the primary home for all game work. The youtube-slides
+repository retains only the slide/video pipeline around the rendered clips.

@@ -31,5 +31,6 @@
   {id:'hotel-haunt',title:'HOTEL HAUNT',label:'hotel haunt',tagline:'sweep · reveal · relight',tone:'hh'},
   {id:'kaiju-control',title:'KAIJU CONTROL',label:'kaiju control',tagline:'evacuate · divert · rebuild',tone:'kc'},
   {id:'moonshine-valley',title:'MOONSHINE VALLEY',label:'moonshine valley',tagline:'plant · harvest · defend',tone:'mv'},
-  {id:'dungeon-express',title:'DUNGEON EXPRESS',label:'dungeon express',tagline:'scout · remember · steal the split',tone:'de'}
+  {id:'dungeon-express',title:'DUNGEON EXPRESS',label:'dungeon express',tagline:'scout · remember · steal the split',tone:'de'},
+  {id:'crystal-mesa',title:'CRYSTAL MESA',label:'crystal mesa',tagline:'grab · hurl · ascend',tone:'cm'}
 ]));

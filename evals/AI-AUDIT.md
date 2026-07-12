@@ -905,6 +905,66 @@ defends the same visible rows through dusk and dawn.
 Permanent switches: `__NO_NIGHT_PLAN`, `__NO_ACTS`, `__NO_ADMIRE`,
 `__NO_LAPSE`, `__NO_PAYOFF_FX`.
 
+## Physics-fantasy addition: CRYSTAL MESA (2026-07-11)
+
+Half-Life spinoff built to the Pocket League / Block Mine polish bar from day one:
+the gravity claw IS the show. A lone custodian climbs a resonance-cracked research
+mesa, yanking crates/canisters/discs to his claw, charging, and hurling them
+through mites, shielded wardens, and tripod walkers; he catches plasma bolts and
+returns them, hurls live mites as ammunition, and opens each zone's blast door by
+throwing its flux cell into the socket (which doubles as the checkpoint heal).
+Zap is a deliberately weak fallback so prop economy stays the fantasy.
+
+- **Core fantasy contract (grav-claw A/B, `__NO_GRAVGUN`)**: 6/6 paired 3-minute
+  seeds, claw 29..43 kills vs zap-only 3..7; ablated runs prove zero
+  throws/grabs/catches and diverging sims. The zap-only bot still fights (the
+  baseline is functional, not strawmanned).
+- **Personas** (`__NO_PERSONAS` -> BALANCED, `__CM_FORCE_PERSONA` fixtures):
+  JUGGLER / HAULER / POACHER on private skill RNG, assignment deferred to the
+  first stepped frame (PL lesson: eval switches land after boot). Proven dials:
+  live-mite hurls 73/34/77 per 4x5min (POACHER and JUGGLER >=1.4x HAULER), hurl
+  cadence JUGGLER > HAULER. Catch counts turned out to track warden proximity,
+  not catch radius — measured, so not asserted.
+- **Acts**: RESONANCE SURGE on a meters schedule — exactly 240 viewer frames of
+  crystals pulsing before the shockwave scatters loose props and stuns the
+  swarm; the bot physically braces at a wall (and pre-grabs) during the warning
+  (A/B divergence at 21..36f into warn vs `__NO_ACTS`).
+- **Ladder**: tier 1 kills >> tier 2 (shield breaks, catch-return kills, bank
+  shots, double hits, cell slots, staggers, surge) >> tier 3 (TRIPOD DOWN,
+  TRIPLE HURL). Budgets exact: hold 6f, slow-mo 12f at 1/3, admire 48f per apex.
+  The slow-mo budget is 12 (not DE's 24) because hold+slow+sampling boundaries
+  must stay under the 30f motion limit for the slowest roamer; at the apex the
+  whole mesa flinches (3px, hash-driven), breaking every analyzer anchor at
+  bullet-time entry.
+- **Motion contract** (hardest part of the build — 20/20 seeds green, 10-minute
+  runs, ~200 actors): every fix was authored behavior, never probe tricks.
+  Lessons that generalize: (1) every decision boundary needs hysteresis or a
+  latch — dodge direction, engagement radius, patrol waypoints, escape windows
+  all chattered before latching (PL's lesson, re-learned four ways); (2) sim-
+  level watchdogs must be STRICTER than the analyzer (3.2px anchor vs 2.0px) or
+  out-and-back darts alias invisibly at 5f sampling; (3) position nudges cannot
+  fix a stuck steering TARGET — the escalating footing watchdog retargets
+  waypoints after 3 failed shuffles; (4) the corpse is an actor: report the dead
+  hero as an authored emote pause and tumble the body at death so the streak
+  anchor breaks before the emote covers it; (5) stale target latches starve
+  runs invisibly — the fetch latch once walked a bot in a 27m circle for ten
+  minutes; latches need zone/distance invalidation, and the eval's 800m
+  metersMax floor now catches that entire class.
+- **Bands** (12-seed 10-minute sweep, shipped sim): kills 89..141, throws
+  90..159, grabs 160..211, catches 28..45, shield breaks 23..38, slots 9..12,
+  deaths 9..18, boss kills 1..3, surges 8..10, metersMax 1056..1412, lapse
+  frames 40..197. Soak: still 0s, quiet 11..19s, progress stall 43..63s (a boss
+  siege legitimately freezes the meters counter).
+- **Visual receipts**: 9-beat contact sheet vs MACHINE HUNT and BLOCK MINE
+  (montage sha in visual-reviews/crystal-mesa.json), actor scale caps measured
+  on drawn pixels (hero 13x15 probe, tripod boss <=34), <=20% footprint, 55%+
+  approach visibility, per-biome ambient-motion and structure-distance floors,
+  apex FX layering proven sim-inert, and a 30-second rendered clip receipt.
+  Frame statistics sit between the two references on every metric (above
+  Machine Hunt, below Block Mine's tile-mosaic entropy — readability over
+  noise); absolute floors are pinned to the shipped art so density regressions
+  fail without reference math.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

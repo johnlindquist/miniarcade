@@ -1,0 +1,71 @@
+{
+ "schema": 1,
+ "game": "crystal-mesa",
+ "verdict": "pass",
+ "references": [
+  "horizon",
+  "blockmine"
+ ],
+ "montageSha256": "3f850a776cb4cdb22b133da1ba2f3c557f1a8a2afc92c2c802c5a07eb735af05",
+ "gameSha256": "08910b5a96c5394d12af9b6b495d7b4d6763325c94d6390a8a80736f1f0235b3",
+ "seed": "0xc3a19b",
+ "checkpoints": [
+  "opening@4",
+  "hurl@4",
+  "catch@4",
+  "shield@6",
+  "slot@4",
+  "zone1@4",
+  "later@4",
+  "boss@6",
+  "apex@10"
+ ],
+ "guidelineOverlays": "zero guideline overlays at every sampled beat: no path lines, route plans, arrows, ghost trails, predicted arcs, or future-position reticles. The cyan grav beam renders only while a grabbed object is physically being pulled (a live force, not a plan); charge glow and claw prongs read intent from the actor's own pose.",
+ "reviewedAt": "2026-07-11",
+ "reviewer": "Claude native-size review of the contact sheet plus native frames (zone1, boss, hurl) against Machine Hunt and Block Mine",
+ "renderReceipt": {
+  "seed": "0xc3a19b",
+  "seconds": 30,
+  "fps": 30,
+  "codec": "h264",
+  "dimensions": "320x720",
+  "bytes": 4315272,
+  "sha256": "5c3501d382a6af71188969f11ad3332e1cdbb1d53ee58c284b4389d8e356beb7",
+  "command": "node render/render.js crystal-mesa 30 .artifacts/visual/crystal-mesa/crystal-mesa-30s.mp4 --seed 12820891 --probe --fps 30"
+ },
+ "categories": {
+  "characterCraft": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "The custodian is a built figure at Machine Hunt scale: visor head, teal suit with orange trim, backpack tank, two-frame gait, facing-oriented claw prongs that glow when loaded, recoil flash on the hurl, centered emote bubbles (?, !, !!, catch-claw, star), corpse tumble and telegraphed respawn. Mites squat-and-tremble before lunging, wardens carry visored helmets, front shields and barrel-glow telegraphs, and the tripod is a three-legged stepping set-piece with hp pips, leg lifts before the stomp, and a dizzy stagger. Personas (JUGGLER/HAULER/POACHER) change how the same body fights."
+  },
+  "environmentCraft": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "The corridor reads as a built facility: three-shade 14px floor tiles with rivets, grates and debris glints, cross-beams with highlight/shadow every 70px, pilastered side walls with lamps that pool light (and dead lamps that flicker), cable runs, prop vents, haloed resonance crystals, hazard stencils on every door approach, and landmark blast doors with strobes, chevrons and a cabled socket console. Six biome dressings (benches/monitors/server racks, specimen vats with rising bubbles and swaying planters, wall-to-wall pipe runs with drips and steaming boilers, cargo stacks and rail gantries, breathing reactor rings and shimmering coolant, daylight shafts with drifting motes). Density sits between Machine Hunt's open fields and Block Mine's tile mosaic by design; readability wins at native size."
+  },
+  "levelVariety": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "Every 880px zone is a new biome with its own palette, wall/floor materials, glow accent, deco set and seeded furnishing; boss zones add the tripod guarding the socket. The measured structure distance between opening/bio-wing/transit frames passes the eval's floors, and the montage rows show the palette identity shift at a glance."
+  },
+  "animationImpact": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "Hurls have charge glow, launch flash, recoil lean and honest knockback; catches pop a spark; shield breaks burst cyan; canisters explode with rings and shake; kills gib; the surge telegraph pulses every crystal hard for exactly 240 frames before the landing scatter; tier-3 apexes hit-stop 6f, slow-mo 12f, shudder every creature and drop a gold flash with banner; stunned creatures reel; the mesa-wide flinch sells the apex."
+  },
+  "readability": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "At native 160x360 the amber crystals, gold cells, red canisters and cyan bolts pop against the dark corridor; actor silhouettes separate from the floor tiles; the HUD carries meters, biome, persona, hearts and a goal line; tier-2 labels land next to their events. Focal hierarchy survives beside video: bright hazards and payoffs over dim architecture."
+  },
+  "artDirectionCohesion": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "One shape language throughout: rectangular facility panels, amber resonance crystal motif in every biome, biome glow accents reused for lamps, deco highlights and door lights; the goal chain (gold cell to gold socket slot to green open door) uses one consistent color grammar."
+  }
+ },
+ "reviewIdentitySha256": "1d3457a7a0f6b971577c6ee45f6d867f75f2fbb2983cc1c3cbbefdc31759a928",
+ "reviewPlatform": "darwin",
+ "allowCrossPlatformRasterization": true
+}
