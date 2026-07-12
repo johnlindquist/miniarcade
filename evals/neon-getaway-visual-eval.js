@@ -13,7 +13,7 @@ const{
 }=require('../render/runtime');
 const{
   sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,analyzeBurst,
-  writeContactSheet,verifyReviewReceipt,writeJson,quantile
+  measureDrawnActorExtent,assertActorScale,writeContactSheet,verifyReviewReceipt,writeJson,quantile
 }=require('./visual-harness');
 
 const ROOT=path.join(__dirname,'..');
@@ -25,8 +25,10 @@ const METRICS_PATH=path.join(ARTIFACT_DIR,'metrics.json');
 const REVIEW_TEMPLATE_PATH=path.join(ARTIFACT_DIR,'review-template.json');
 const REVIEW_PATH=path.join(__dirname,'visual-reviews','neon-getaway.json');
 const PRESERVED_CONTACT_PATH=path.join(__dirname,'visual-receipts','neon-getaway-contact-sheet.png');
+const CLIP_PATH=path.join(ARTIFACT_DIR,'neon-getaway-30s.mp4');
 const SEED=0x4e454f4e,PRE_ROLL=120,RENDER_EVERY=2;
 const WORLD_CROP={x:0,y:38,width:160,height:322};
+const ACTOR_THRESHOLD=8,ACTOR_PADDING=10;
 
 if(!fs.existsSync(GAME_PATH)){
   console.error('NEON GETAWAY VISUAL EVAL FAILED: missing '+GAME_PATH);
@@ -61,6 +63,7 @@ function captureFixture(name,offsets,options){
   const setBeat=runtime.sandbox.__neonGetawaySetVisualBeat;
   if(typeof setBeat!=='function')throw new Error('neon-getaway.html must expose __neonGetawaySetVisualBeat(name)');
   if(setBeat(name)!==true)throw new Error('unknown Neon Getaway visual beat: '+name);
+  if(options.selector!==undefined)runtime.sandbox.__NG_VISUAL_ONLY_SUBJECT=options.selector;
   if(options.afterSet)options.afterSet(runtime);
   const frames=new Map();
   for(const target of [...new Set(offsets)].sort((a,b)=>a-b)){
@@ -120,6 +123,54 @@ function allPairs(values,fn){
   const out=[];
   for(let i=0;i<values.length;i++)for(let j=i+1;j<values.length;j++)out.push(fn(values[i],values[j],i,j));
   return out;
+}
+
+// Drawn-pixel actor-scale gates (owner directive 2026-07-11, crystal-mesa
+// pattern): the game isolates any probe actor through __NG_VISUAL_ONLY_SUBJECT
+// and the caps below encode the small-actors-big-worlds directive with a
+// little margin — NOT the loose 20x32 repo ceiling. Measured on the shipped
+// art (2026-07-11, seed 0x4e454f4e): getaway coupe/taxi 10x18, muscle 11x18,
+// bike w/ damage smoke 8x22, cruiser 11x19, interceptor 11x17, police bike
+// 5x16, police van 13x21, traffic sedan 8x14 / compact 8x13 / delivery 8x17,
+// pedestrian 3x9 (8x9 with alarm arms), helicopter 32x15, abandoned swap
+// decoy (0.35rad pose + open door) 17x19.
+function probeSubjects(probe,fixture){
+  if(!Array.isArray(probe&&probe.actors))throw new Error(`${fixture}: visual probe must expose actors[]`);
+  const ids=new Set();
+  for(const actor of probe.actors){
+    if(!actor||typeof actor.id!=='string'||!actor.id||typeof actor.kind!=='string')throw new Error(`${fixture}: malformed subject`);
+    if(ids.has(actor.id))throw new Error(`${fixture}: duplicate subject ${actor.id}`);
+    ids.add(actor.id);
+    const box=actor.box;
+    if(!box||![box.x,box.y,box.width,box.height].every(Number.isFinite)||!(box.width>0&&box.height>0))
+      throw new Error(`${fixture}: invalid box for ${actor.id}`);
+  }
+  return probe.actors;
+}
+function limitsFor(actor){
+  if(actor.kind==='boss')return{maxWidth:34,maxHeight:24,label:`boss ${actor.type}`};
+  if(actor.kind==='heavy')return{maxWidth:16,maxHeight:24,label:`heavy vehicle ${actor.type}`};
+  if(actor.kind==='decoy')return{maxWidth:20,maxHeight:24,label:`abandoned decoy ${actor.type}`};
+  if(actor.kind==='ped')return{maxWidth:9,maxHeight:12,label:`pedestrian ${actor.type}`};
+  return{maxWidth:14,maxHeight:24,label:`vehicle ${actor.type}`};
+}
+function measureSubjects(fixture,offset){
+  const baseline=captureFixture(fixture,[offset],{selector:'none',id:fixture+'-none'}).get(offset);
+  const actors=probeSubjects(baseline.probe,fixture),measurements=[];
+  for(const actor of actors){
+    const isolated=captureFixture(fixture,[offset],{selector:actor.id,id:`${fixture}-${actor.id}`}).get(offset);
+    const measurement=measureDrawnActorExtent(isolated,baseline,{id:actor.id,kind:actor.kind,type:actor.type,
+      probeBox:actor.box,padding:ACTOR_PADDING,threshold:ACTOR_THRESHOLD});
+    const assertion=assertActorScale(measurement,limitsFor(actor));
+    measurements.push(Object.assign(measurement,{assertion:{ok:assertion.ok,failures:assertion.failures,limits:assertion.limits}}));
+  }
+  return{fixture,offset,probe:baseline.probe,measurements};
+}
+function footprintOf(sample){
+  const playfield=sample.probe.layout&&sample.probe.layout.playfield,area=playfield.width*playfield.height;
+  const actors=sample.measurements.filter(m=>m.kind!=='ped'),sumArea=actors.reduce((n,m)=>n+m.bboxArea,0);
+  return{fixture:sample.fixture,actorCount:actors.length,sumBboxArea:sumArea,
+    sumFraction:+(sumArea/area).toFixed(6),ok:actors.every(m=>m.assertion.ok&&!m.clipped)&&sumArea/area<=.20};
 }
 
 // Ground-plane scroll coherence (2026-07-11): the road paint must flow
@@ -223,9 +274,11 @@ function buildCandidateEvidence(){
 
 function reviewTemplate(montageSha256){
   const pending=note=>({meetsMachineHunt:false,meetsBlockMine:false,note});
+  const command=`node render/render.js neon-getaway 30 .artifacts/visual/neon-getaway/neon-getaway-30s.mp4 --seed 0x${SEED.toString(16)} --probe --fps 30`;
   return{
     schema:1,game:'neon-getaway',verdict:'pending',references:['horizon','blockmine'],montageSha256,
     reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size reference review',
+    renderReceipt:{seed:'0x'+SEED.toString(16),seconds:30,fps:30,codec:'h264',dimensions:'320x720',bytes:0,sha256:'',command},
     categories:{
       characterCraft:pending('Inspect the wheelman, five getaway vehicles, police cruiser/interceptor/bike/van, traffic, pedestrians, swap driver, facing, body roll, sirens, damage, and reaction poses at 160x360.'),
       environmentCraft:pending('Inspect each district with the HUD mentally removed: road material, alleys, roofs, market awnings, canal water and bridges, port rails and crane, civic roundabout, foreground lights, traffic, and depth planes.'),
@@ -325,23 +378,23 @@ async function main(){
     'if(d.ghost)ctx.globalAlpha'].filter(token=>gameSource.includes(token));
 
   // Locked-candidate calibration, seed 0x4e454f4e; re-measured 2026-07-11
-  // after the no-guideline redesign (route overlay, safe-lane chevrons, and
-  // ghost-decoy phantoms removed; dragnet now physically assembled during the
-  // warning; stun sparks + GO! launch beat added). Across the eleven approved
-  // fixture cells the minima moved only in the fourth digit: 133 colors /
-  // 3.526 entropy / .123 luma deviation / .0239 one-pixel edge energy / .956
-  // rich cells, .322 largest-color maximum — the same floors keep their
-  // roughly 12-18% regression margin.
+  // after the actor-scale redraw (vehicles now 10-13px wide constructed
+  // bodies instead of 16-18px slabs; walkers ~5x10; heli airframe 31px) and
+  // the road-furniture pass (lane cats-eyes, manholes + steam, storefront
+  // glow spill, crosswalk wear). Across the eleven approved fixture cells:
+  // colors 131..244, entropy 3.464..3.979, luma deviation .1117...1686,
+  // largest-color max .340, one-pixel edge energy .0230...0432, rich cells
+  // .978..1.0 (the furniture pass RAISED richness as the actors shrank).
+  // Aligned bursts on the smaller sprites: player median .217 / firstLast
+  // .315 / grid .956; police median .227 / .497 / .911; swap median .0709 /
+  // max .0914 / firstLast .206 / grid .667. Floors keep ~12-20% margin under
+  // these fresh measurements.
   const bands={
-    colors:115,entropy:3.10,lumaStdDev:.105,largestColorShare:.38,
-    edgeEnergy:.0205,richEach:.82,richMedian:.88,
-    playerMedian:.12,playerFirstLast:.24,playerGrid:.75,
-    // Police-burst floors re-derived 2026-07-11 after the ground-plane scroll
-    // direction fix: decals now flow with the world, so the cop-aligned crop
-    // carries less background churn (measured median .220, first/last .473,
-    // grid .844). Floors keep ~15% margin under the new measurement.
-    policeMedian:.19,policeFirstLast:.40,policeGrid:.72,
-    swapMedian:.08,swapMax:.09,swapFirstLast:.22,swapGrid:.55,
+    colors:115,entropy:3.10,lumaStdDev:.10,largestColorShare:.38,
+    edgeEnergy:.0205,richEach:.90,richMedian:.95,
+    playerMedian:.18,playerFirstLast:.27,playerGrid:.80,
+    policeMedian:.19,policeFirstLast:.42,policeGrid:.77,
+    swapMedian:.06,swapMax:.078,swapFirstLast:.17,swapGrid:.55,
     districtMedian:.35,districtEach:.28,
     warningChanged:.85,warningMean:.075,warningGrid:.90,warningBounds:.90,
     landChanged:.85,landMean:.08,landGrid:.90,landBounds:.90,
@@ -415,6 +468,28 @@ async function main(){
     {candidate:{edge:median(cm.map(value=>value.edge[1].energy)),rich:median(cm.map(value=>value.richCellFraction)),
       entropy:median(cm.map(value=>value.colorEntropy)),luma:median(cm.map(value=>value.lumaStdDev))},reference:ref});
 
+  // Drawn-pixel actor scale, measured across five beats that span districts,
+  // pursuit escalation, the swap decoy, the damaged bike, and the helicopter.
+  const scaleSamples={};
+  for(const[fixture,offset]of[['street-chase',13],['danger',13],['later-district',12],['escape-apex',6],['opening',12]])
+    scaleSamples[fixture]=measureSubjects(fixture,offset);
+  const allMeasurements=Object.values(scaleSamples).flatMap(sample=>sample.measurements);
+  gate('drawn actors obey the small-actors-big-worlds caps',
+    allMeasurements.length>=40&&allMeasurements.every(m=>m.assertion.ok&&!m.clipped&&!(m.probeOverflow&&m.probeOverflow.any)),
+    Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
+      sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,w:m.width,h:m.height,failures:m.assertion.failures}))])));
+  const casts=Object.entries(scaleSamples).map(([key,sample])=>({fixture:key,
+    peds:sample.measurements.filter(m=>m.kind==='ped').length,
+    vehicles:sample.measurements.filter(m=>m.kind!=='ped'&&m.id!=='driver'&&m.id!=='heli').length}));
+  gate('shrunken actors did not empty the strip: walkers and vehicles stay dense',
+    casts.every(value=>value.peds>=6&&value.vehicles>=2),casts);
+  const footprints=['opening','street-chase','later-district'].map(fixture=>footprintOf(scaleSamples[fixture]));
+  gate('normal-play actor footprint stays under 20% of the playfield',footprints.every(value=>value.ok),footprints);
+  const approach=scaleSamples['street-chase'].probe.layout&&scaleSamples['street-chase'].probe.layout.approach;
+  const approachRatio=approach?approach.visible/approach.travel:0;
+  gate('threats get at least 55% of the travel axis before contact',
+    !!approach&&approach.travel>=300&&approachRatio>=.55,{approach,approachRatio:+approachRatio.toFixed(4)});
+
   writeJson(REVIEW_TEMPLATE_PATH,reviewTemplate(sheet.sha256));
   let review;
   if(fs.existsSync(REVIEW_PATH))review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:PRESERVED_CONTACT_PATH});
@@ -425,16 +500,34 @@ async function main(){
     review.ok=false;review.errors=[...(review.errors||[]),'receipt must confirm guidelineOverlays.confirmedAbsent=true with a review note'];
   }
   const semanticGate={name:'fresh semantic comparison receipt',ok:review.ok,detail:review.errors};
-  const gates=[...automatedGates,semanticGate],automatedOk=automatedGates.every(value=>value.ok);
+  // The receipt must carry a real rendered-clip record (crystal-mesa
+  // convention): exact command, non-trivial bytes, and a sha the reviewer can
+  // reproduce; a local clip, when present, must match those bytes.
+  const expectedReview=reviewTemplate(sheet.sha256),reviewClip=review.receipt&&review.receipt.renderReceipt;
+  const localClip=fs.existsSync(CLIP_PATH)?{path:CLIP_PATH,bytes:fs.statSync(CLIP_PATH).size,sha256:sha256(CLIP_PATH)}:null;
+  const clipGates=[
+    {name:'rendered autoplay clip receipt is complete',ok:!!reviewClip&&reviewClip.bytes>100000&&
+      /^[a-f0-9]{64}$/.test(reviewClip.sha256||'')&&reviewClip.seed===`0x${SEED.toString(16)}`&&
+      reviewClip.command===expectedReview.renderReceipt.command,detail:reviewClip},
+    {name:'local rendered clip matches receipt when available',ok:!localClip||!!reviewClip&&
+      localClip.bytes===reviewClip.bytes&&localClip.sha256===reviewClip.sha256,detail:{localClip,reviewClip}}
+  ];
+  const gates=[...automatedGates,semanticGate,...clipGates],automatedOk=automatedGates.every(value=>value.ok);
   const gameSha256=sha256(GAME_PATH);
   const report={
     schema:1,game:'neon-getaway',gameSha256,seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,
     contactSheet:{path:CONTACT_PATH,sha256:sheet.sha256,width:sheet.width,height:sheet.height},
     checkpoints:Object.fromEntries(beats.map(beat=>[beat.id,{fixture:beat.run,offset:beat.offset,probe:candidate[beat.id].probe}])),
-    thresholds:{referenceMedians:ref,bands},
+    thresholds:{referenceMedians:ref,bands,actorScale:{vehicle:{maxWidth:14,maxHeight:24},heavy:{maxWidth:16,maxHeight:24},
+      decoy:{maxWidth:20,maxHeight:24},ped:{maxWidth:9,maxHeight:12},boss:{maxWidth:34,maxHeight:24},
+      footprint:.20,approach:.55,threshold:ACTOR_THRESHOLD}},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       playerBurst,policeBurst,swapBurst,districtPairs,rampBurst,warningContrast,warningLand,
-      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst,scrollChecks},
+      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst,scrollChecks,
+      actorScale:Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
+        sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,bounds:m.bounds,drawnPixels:m.drawnPixels,
+          clipped:m.clipped,probeOverflow:m.probeOverflow,failures:m.assertion.failures}))])),
+      footprints,approach:{probe:approach,ratio:approachRatio},clip:localClip},
     guidelines:{planPairs,ghostDelta,bannedTokens:['drawRoute','routeDot','setLineDash','predictIntercept',
       'act.safeX+(i-1)','if(d.ghost)ctx.globalAlpha'],bannedHits:bannedOverlaySources},
     gates,automatedOk,semanticReview:{path:REVIEW_PATH,ok:review.ok,errors:review.errors}
@@ -444,12 +537,14 @@ async function main(){
   console.log(`NEON GETAWAY visual evidence · seed 0x${SEED.toString(16)} · game ${gameSha256.slice(0,12)}`);
   for(const value of automatedGates)console.log(`  ${value.ok?'PASS':'FAIL'} ${value.name}`);
   console.log(`  ${review.ok?'PASS':'PENDING'} ${semanticGate.name}`);
+  for(const value of clipGates)console.log(`  ${value.ok?'PASS':'FAIL'} ${value.name}`);
   console.log('  contact:',CONTACT_PATH);
   console.log('  montage sha256:',sheet.sha256);
   console.log('  metrics:',METRICS_PATH);
   console.log('  review template:',REVIEW_TEMPLATE_PATH);
   if(!automatedOk){console.error('\nNEON GETAWAY AUTOMATED VISUAL GATES FAILED');process.exit(1);}
   if(!review.ok){console.error('\nNEON GETAWAY AUTOMATED VISUAL GATES PASSED; SEMANTIC REVIEW PENDING');process.exit(1);}
+  if(!clipGates.every(value=>value.ok)){console.error('\nNEON GETAWAY RENDERED CLIP RECEIPT INCOMPLETE');process.exit(1);}
   console.log('\nNEON GETAWAY VISUAL EVAL PASSED');
 }
 

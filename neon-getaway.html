@@ -497,6 +497,23 @@ function drawRoadBase(p){
   }
   for(const x of[65,95])for(let y=10+mod(Math.floor(player.y),24);y<H;y+=24)rect(x,y,2,9,mix(p.curb,CREAM,.2));
   for(let y=4+mod(Math.floor(player.y),30);y<H;y+=30){ctx.globalAlpha=.14;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
+  // Road furniture (render-only, hash+showFrame; no sim RNG): reflective
+  // cats-eyes stud the lane seams between dashes, and hash-placed manholes
+  // vent slow steam so the widened avenue reads built, not empty.
+  for(const x of[65,95])for(let y=23+mod(Math.floor(player.y),24);y<H;y+=24){ctx.globalAlpha=.55;rect(x,y,2,1,'#ffe9b0');ctx.globalAlpha=1;}
+  const mb0=currentBlock()-1,mb1=currentBlock()+3;
+  for(let b=mb0;b<=mb1;b++){
+    const mx=LANES[mod(b*5+worldSeed,3)]+(((hash(b,worldSeed*11)-.5)*10)|0),
+      my=sy(b*BLOCK+58+((hash(b*3,worldSeed)*90)|0));
+    if(my<34||my>H+6)continue;
+    rect(mx-2,my-1,5,3,mix(p.road,INK,.35));rect(mx-1,my,3,1,mix(p.road,CREAM,.12));
+    if(mod(b+worldSeed,3)===0){
+      for(let k=0;k<3;k++){const ph=(showFrame*.9+k*22+b*37)%66,py2=my-2-ph*.35;
+        ctx.globalAlpha=.16*(1-ph/66);ctx.fillStyle='#cfd8e6';
+        ctx.beginPath();ctx.arc(mx+Math.sin((ph+k*9)*.15)*2,py2,1.5+ph*.045,0,TAU);ctx.fill();}
+      ctx.globalAlpha=1;
+    }
+  }
 }
 function drawDistrictRoadDetails(p){
   const scroll=mod(Math.floor(player.y),BLOCK),cross=CAR_Y+scroll-BLOCK;
@@ -562,20 +579,44 @@ function drawCityBlock(b,p){
     else drawCivicLandmark(x,y,w,hh,p,b,side);
   }
   const cy=sy(b*BLOCK);rect(0,cy-10,W,20,p.road);rect(0,cy-12,W,2,p.curb);rect(0,cy+10,W,2,p.curb);
-  for(let x=8;x<W;x+=22)rect(x,cy-1,10,2,mix(p.curb,CREAM,.22));
+  // crosswalk paint carries authored tire wear where the lanes cross it
+  for(let x=8;x<W;x+=22){const c=mix(p.curb,CREAM,.22);
+    if(hash(x,b*13+worldSeed)>.55){rect(x,cy-1,4,2,c);rect(x+6,cy-1,3,2,c);}else rect(x,cy-1,10,2,c);}
+  // storefront glow pools spill across the sidewalk at the building bases
+  for(const side of[-1,1])for(let k=0;k<2;k++){
+    const gy=y+34+k*88+((hash(b*9+k,worldSeed)*30)|0);if(gy<40||gy>H)continue;
+    const gx=side<0?21:139,gc=k%2?p.accent:p.light;
+    ctx.globalAlpha=.09+.03*Math.sin(showFrame*.05+b+k+side);ctx.fillStyle=gc;
+    ctx.beginPath();ctx.ellipse(gx,gy,7,4,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    rect(side<0?17:141,gy-2,2,4,mix(gc,p.roof,.55));
+  }
   // Sidewalk inhabitants stay in built curb refuges outside the drivable alley.
   // They face the getaway and throw up their arms when it barrels past.
   for(const side of[-1,1])for(let i=0;i<3;i++){
-    const px=side<0?10+hash(b*3+i,worldSeed)*5:145+hash(b*3+i,worldSeed)*5,
-      py=y+28+i*46+Math.sin(showFrame*.025+i+b)*5;if(py<34||py>H-4)continue;
-    const alarm=Math.abs(py-CAR_Y)<42&&Math.abs(player.x-(side<0?ALLEY_L:ALLEY_R))<13,
-      face=alarm?-side:(Math.sin(showFrame*.013+b+i)>0?1:-1),gait=(showFrame>>3+i)&1,
-      coat=[p.accent,p.light,'#d68b6d'][mod(b+i,3)];
-    rect(px-4,py-8,8,14,p.walk);rect(side<0?px+3:px-4,py-8,1,14,p.curb);
-    rect(px-2,py-3,4,6,coat);rect(px-1,py-6,3,3,'#d8a07b');rect(px+face,py-5,1,1,INK);
-    if(alarm){line([[px-2,py-1],[px-5,py-6]],'#d8a07b');line([[px+2,py-1],[px+5,py-6]],'#d8a07b');}
-    rect(px-2+(gait?1:0),py+3,1,3,'#1a1724');rect(px+1-(gait?1:0),py+3,1,3,'#1a1724');
+    const q=pedPose(b,side,i);if(!q)continue;
+    rect(q.px-3,q.py-6,7,10,p.walk);rect(side<0?q.px+3:q.px-3,q.py-6,1,10,p.curb);
+    if(!skipPedsForIsolation)drawPed(b,side,i,p);
   }
+}
+// Walkers at the reference scale (~5x10px constructed: hair/head/face pixel,
+// shaded coat, 2-frame gait, alarm arms). pedPose is pure in (block, side, i,
+// player.y, showFrame) so the visual probe and isolated renders agree exactly.
+function pedPose(b,side,i){
+  const top=sy((b+1)*BLOCK)+16,
+    px=side<0?10+hash(b*3+i,worldSeed)*5:145+hash(b*3+i,worldSeed)*5,
+    py=top+28+i*46+Math.sin(showFrame*.025+i+b)*5;
+  if(py<36||py>H-4)return null;
+  return{px,py};
+}
+function drawPed(b,side,i,p){
+  const q=pedPose(b,side,i);if(!q)return;const px=q.px,py=q.py;
+  const alarm=Math.abs(py-CAR_Y)<42&&Math.abs(player.x-(side<0?ALLEY_L:ALLEY_R))<13,
+    face=alarm?-side:(Math.sin(showFrame*.013+b+i)>0?1:-1),gait=(showFrame>>3+i)&1,
+    coat=[p.accent,p.light,'#d68b6d'][mod(b+i,3)];
+  rect(px-1,py-2,3,4,coat);rect(px-1,py-2,1,4,mix(coat,INK,.3));
+  rect(px-1,py-5,2,1,'#241d30');rect(px-1,py-4,2,2,'#d8a07b');rect(px+(face>0?0:-1),py-4,1,1,INK);
+  rect(px-1+(gait?1:0),py+2,1,2,'#1a1724');rect(px+1-(gait?1:0),py+2,1,2,'#1a1724');
+  if(alarm){line([[px-1,py-1],[px-3,py-4]],'#d8a07b');line([[px+2,py-1],[px+4,py-4]],'#d8a07b');}
 }
 function drawFeature(f,b){const y=sy(f.y);if(y<-40||y>H+40)return;
   if(f.kind==='ramp'){poly([[f.x-12,y+9],[f.x+12,y+9],[f.x+8,y-8],[f.x-8,y-8]],'#a4744e');rect(f.x-10,y+5,20,3,'#e1b77d');
@@ -608,62 +649,85 @@ function drawRoadblockAssembly(){
     else if(i===placed&&u>0&&slide>=1){
       // the next barrier is on an officer's back, walking in from the shoulder
       const side=x<80?-1:1,ox=x-side*(u*xs.length-placed-1)*10;
-      rect(ox,y-1,11,3,'#aeb6c4');rect(ox+4,y-6,3,3,'#d6a07f');rect(ox+3,y-3,5,4,'#2a3850');
+      rect(ox,y-1,11,3,'#aeb6c4');rect(ox+4,y-5,2,2,'#d6a07f');rect(ox+3,y-3,5,4,'#2a3850');
       rect(ox+3+((showFrame>>2)&1),y+2,1,3,INK);rect(ox+6-((showFrame>>2)&1),y+2,1,3,INK);
     }
   }
   if(u>.5)for(const x of[gapX-16,gapX+16])if(x>ROAD_L-10&&x<ROAD_R+10){poly([[x,y+8],[x+4,y+8],[x+2,y]],GOLD);rect(x+1,y+3,2,2,CORAL);}
 }
 function drawParkedVehicle(x,y,kind){const v={x,y:player.y+(CAR_Y-y),kind,angle:0,z:0,damage:0,spinT:0,paintT:0};drawGetawayVehicle(v,false,true,y);}
+// Actor-scale law (owner directive 2026-07-11): Pocket League's 14px car is the
+// vehicle reference. Every getaway body is now <=12px wide including wheels and
+// <=19px long, constructed — nose highlight, cabin glass, visible wheelman,
+// rear deck, per-kind identity — instead of the old 18x24 slabs. Character
+// comes from motion: rotation lean, brake flare, spin tumble, damage smoke.
 function vehicleShape(kind,s){
-  if(kind==='bike')return[[-2,9],[-3,5],[-2,-8],[0,-12],[2,-8],[3,5],[2,9]];
-  if(kind==='muscle')return[[-7,10],[-8,5],[-7,-10],[-4,-13],[4,-13],[7,-10],[8,5],[7,10]];
-  if(kind==='van')return[[-8,11],[-8,-10],[-5,-13],[5,-13],[8,-10],[8,11]];
-  return[[-6,11],[-8,6],[-6,-10],[-3,-13],[3,-13],[6,-10],[8,6],[6,11]];
+  if(kind==='bike')return[[-1,7],[-2,4],[-1,-5],[0,-8],[1,-5],[2,4],[1,7]];
+  if(kind==='muscle')return[[-5,8],[-5,4],[-5,-7],[-2,-9],[2,-9],[5,-7],[5,4],[5,8]];
+  if(kind==='van')return[[-5,8],[-5,-8],[-3,-10],[3,-10],[5,-8],[5,8]];
+  return[[-4,8],[-5,4],[-4,-7],[-2,-9],[2,-9],[4,-7],[5,4],[4,8]];
 }
 function drawGetawayVehicle(v,playerCar,parked,screenY){
   const spec=VEHICLES[v.kind]||VEHICLES.coupe,x=v.x,y=screenY===undefined?sy(v.y)-v.z*2.2:screenY,flash=v.paintT>0&&((showFrame>>2)&1);
-  if(!parked){ctx.globalAlpha=.25;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(x,y+10,8+(v.z||0)*.2,3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  if(!parked){ctx.globalAlpha=.25;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(x,y+8,6+(v.z||0)*.2,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
   ctx.save();ctx.translate(Math.round(x),Math.round(y));ctx.rotate(v.spinT>0?v.angle+Math.sin(showFrame*.42)*.7:v.angle||0);
-  const body=flash?PINK:spec.color,trim=spec.trim;
-  if(v.kind!=='bike'){rect(-9,-8,3,6,'#070811');rect(6,-8,3,6,'#070811');rect(-9,4,3,6,'#070811');rect(6,4,3,6,'#070811');}
-  else{rect(-3,-9,6,4,'#090a11');rect(-3,6,6,4,'#090a11');}
+  const body=flash?PINK:spec.color,trim=spec.trim,nose=v.kind==='van'?-10:-9;
+  if(v.kind!=='bike'){rect(-6,-6,2,4,'#070811');rect(4,-6,2,4,'#070811');rect(-6,3,2,4,'#070811');rect(4,3,2,4,'#070811');}
+  else{rect(-1,-8,2,3,'#090a11');rect(-1,5,2,3,'#090a11');}
   poly(vehicleShape(v.kind),body);
   if(v.kind==='bike'){
-    rect(-2,-5,4,9,mix(body,INK,.25));rect(-3,-1,6,5,'#243044');rect(-2,-3,4,4,'#d9a17c');rect(-1,-3,1,1,INK);
-    line([[-3,3],[-5,6]],trim,2);line([[3,3],[5,6]],trim,2);
+    rect(-1,-4,2,8,mix(body,INK,.25));rect(-1,-1,3,3,'#243044');rect(-1,-3,2,2,'#d9a17c');
+    line([[-2,2],[-3,4]],trim);line([[2,2],[3,4]],trim);
   }else{
-    const wide=v.kind==='van'?6:5;rect(-wide,-6,wide*2,8,'#1a2940');rect(-wide+1,-5,wide*2-2,3,'#6bb6c6');
-    rect(-3,-3,6,4,'#172238');rect(-2,-2,4,3,'#d8a07b');rect(1,-2,1,1,INK); // visible wheelman
-    rect(-5,5,10,3,mix(body,INK,.25));rect(-4,7,8,2,trim);
-    if(v.kind==='taxi'){rect(-4,-10,8,3,GOLD);rect(-3,-9,6,1,INK);for(let i=-5;i<6;i+=3)rect(i,2,2,2,(i/3|0)%2?INK:CREAM);}
-    if(v.kind==='muscle'){rect(-3,-12,6,4,mix(body,CREAM,.2));rect(-1,-13,2,4,INK);}
-    if(v.kind==='van'){rect(-6,1,12,7,mix(body,INK,.18));rect(-5,3,4,3,trim);rect(1,3,4,3,trim);}
+    const wide=v.kind==='van'?4:3;
+    rect(-3,-8,6,1,mix(body,CREAM,.22));                       // nose highlight
+    rect(-wide,-4,wide*2,6,'#1a2940');rect(-wide+1,-3,wide*2-2,2,'#6bb6c6');
+    rect(-2,-1,2,2,'#172238');rect(0,-1,2,2,'#d8a07b');        // visible wheelman
+    rect(-3,3,6,2,mix(body,INK,.25));rect(-2,5,4,1,trim);
+    if(v.kind==='taxi'){rect(-2,-7,4,2,GOLD);rect(-1,-6,2,1,INK);for(let i=-4;i<4;i+=2)rect(i,1,1,1,(i/2|0)%2?INK:CREAM);}
+    if(v.kind==='muscle'){rect(-2,-8,4,3,mix(body,CREAM,.2));rect(-1,-9,2,3,INK);}
+    if(v.kind==='van'){rect(-4,0,8,7,mix(body,INK,.18));rect(-3,2,2,2,trim);rect(1,2,2,2,trim);}
   }
-  rect(-5,-12,3,2,CREAM);rect(2,-12,3,2,CREAM);rect(-5,9,3,2,CORAL);rect(2,9,3,2,CORAL);
-  if(playerCar&&v.boostT>0){poly([[-3,12],[0,18],[3,12]],showFrame%4<2?GOLD:CORAL);}
-  if(v.damage>55){ctx.globalAlpha=.5;for(let i=0;i<3;i++){const ox=(hash(i,showFrame>>3)-.5)*8,oy=10+i*3;ctx.fillStyle='#9ba2b5';ctx.beginPath();ctx.arc(ox,oy,2+i,0,TAU);ctx.fill();}ctx.globalAlpha=1;}
+  rect(-3,nose,2,1,CREAM);rect(1,nose,2,1,CREAM);rect(-3,8,2,1,CORAL);rect(1,8,2,1,CORAL);
+  // brake flare: a committed stop reads off the car itself before the pursuit answers it
+  if(playerCar&&v.intent&&(v.intent.brake||v.intent.handbrake)&&v.kind!=='bike'){
+    ctx.globalAlpha=.55;rect(-4,8,3,2,CORAL);rect(1,8,3,2,CORAL);ctx.globalAlpha=1;}
+  if(playerCar&&v.boostT>0){poly([[-2,8],[0,13],[2,8]],showFrame%4<2?GOLD:CORAL);}
+  if(v.damage>55){ctx.globalAlpha=.5;for(let i=0;i<3;i++){const ox=(hash(i,showFrame>>3)-.5)*6,oy=6+i*2;ctx.fillStyle='#9ba2b5';ctx.beginPath();ctx.arc(ox,oy,1+i*.6,0,TAU);ctx.fill();}ctx.globalAlpha=1;}
   ctx.restore();
 }
+// Civilian traffic at the reference scale: <=10px wide including wheels, with
+// per-kind silhouettes (sedan / boxy delivery / short compact) instead of one
+// interchangeable 12x20 slab.
 function drawTraffic(t){const y=sy(t.y);if(y<-25||y>H+25)return;ctx.save();ctx.translate(t.x,y);if(t.axis==='cross')ctx.rotate(t.vx>0?Math.PI/2:-Math.PI/2);
-  else if(t.spinT>0)ctx.rotate(Math.sin(showFrame*.25)*.6);rect(-5,-10,10,20,t.color);rect(-4,-5,8,8,'#23334a');rect(-3,-4,6,3,'#7192a5');
-  rect(-6,-7,2,5,INK);rect(4,-7,2,5,INK);rect(-6,4,2,5,INK);rect(4,4,2,5,INK);rect(-3,-9,2,2,CREAM);rect(1,-9,2,2,CREAM);ctx.restore();}
+  else if(t.spinT>0)ctx.rotate(Math.sin(showFrame*.25)*.6);
+  const h2=t.kind==='delivery'?8:t.kind==='compact'?6:7;
+  rect(-5,-h2+1,2,3,INK);rect(3,-h2+1,2,3,INK);rect(-5,h2-4,2,3,INK);rect(3,h2-4,2,3,INK);
+  rect(-4,-h2,8,h2*2,t.color);rect(-4,-h2,8,1,mix(t.color,CREAM,.25));
+  if(t.kind==='delivery'){rect(-3,-5,6,3,'#23334a');rect(-4,0,8,7,mix(t.color,INK,.28));rect(-3,2,6,1,CREAM);}
+  else{rect(-3,-3,6,5,'#23334a');rect(-2,-2,4,2,'#7192a5');}
+  rect(-3,-h2,2,1,CREAM);rect(1,-h2,2,1,CREAM);rect(-3,h2-1,2,1,CORAL);rect(1,h2-1,2,1,CORAL);ctx.restore();}
+// Pursuit fleet at the reference scale: cruiser/interceptor 12px wide with
+// wheels, van 14px, bike 5px — constructed with cabins, drivers, push bars,
+// and flashing halves instead of the old 16-18px slabs.
 function drawPoliceVehicle(c){
   const y=sy(c.y);if(y<-30||y>H+30)return;const type=c.type,x=c.x,rot=c.disabled?Math.sin(showFrame*.18+c.id)*.6:c.face||0;
   ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.globalAlpha=c.disabled?.75:1;
   if(type==='bike'){
-    rect(-2,-11,4,21,'#101522');rect(-3,-8,6,4,'#f1f4f8');rect(-3,3,6,4,'#1e2940');
-    rect(-2,-3,4,5,'#d6a07f');rect(-1,-2,2,2,'#182035');rect(-3,-12,3,2,showFrame%8<4?CORAL:BLUE);rect(0,-12,3,2,showFrame%8<4?BLUE:CORAL);
+    rect(-1,-8,2,15,'#101522');rect(-2,-6,4,3,'#f1f4f8');rect(-2,2,4,3,'#1e2940');
+    rect(-1,-3,3,4,'#182035');rect(-1,-4,2,2,'#d6a07f');
+    rect(-2,-9,2,1,showFrame%8<4?CORAL:BLUE);rect(0,-9,2,1,showFrame%8<4?BLUE:CORAL);
   }else{
-    const w=type==='van'?9:type==='interceptor'?7:8,h=type==='van'?26:23;
-    if(type==='interceptor')poly([[-w,h/2],[w,h/2],[w-1,-7],[4,-h/2],[-4,-h/2],[-w+1,-7]],'#233661');
+    const w=type==='van'?6:5,h=type==='van'?20:16;
+    rect(-w-1,-h/2+2,2,4,INK);rect(w-1,-h/2+2,2,4,INK);rect(-w-1,h/2-6,2,4,INK);rect(w-1,h/2-6,2,4,INK);
+    if(type==='interceptor'){poly([[-w,h/2],[w,h/2],[w-1,-5],[3,-h/2],[-3,-h/2],[-w+1,-5]],'#233661');
+      rect(-2,-7,4,1,'#4a679e');rect(-w+1,3,w*2-2,2,'#8fa5cf');}
     else rect(-w,-h/2,w*2,h,type==='van'?'#303b49':'#e5eaf0');
-    if(type==='cruiser'){rect(-w,-3,w*2,9,'#202936');rect(-w+2,-9,w*2-4,6,'#32425a');}
-    if(type==='van'){rect(-w+2,-h/2+3,w*2-4,8,'#192333');rect(-w+2,3,w*2-4,7,'#596678');rect(-5,6,4,4,'#bac4d0');rect(1,6,4,4,'#bac4d0');}
-    else{rect(-5,-8,10,7,'#18263a');rect(-3,-6,6,4,'#d6a07f');rect(1,-5,1,1,INK);}
-    rect(-7,-1,14,3,'#111728');rect(-6,-2,6,2,showFrame%8<4?CORAL:BLUE);rect(0,-2,6,2,showFrame%8<4?BLUE:CORAL);
-    rect(-w-1,-h/2+2,2,5,INK);rect(w-1,-h/2+2,2,5,INK);rect(-w-1,h/2-7,2,5,INK);rect(w-1,h/2-7,2,5,INK);
-    if(type==='cruiser'){rect(-w+1,-h/2-2,w*2-2,3,'#667080');rect(-w+3,-h/2-3,w*2-6,1,CREAM);}
+    if(type==='cruiser'){rect(-w,-2,w*2,6,'#202936');rect(-w+2,-6,w*2-4,4,'#32425a');}
+    if(type==='van'){rect(-w+1,-h/2+2,w*2-2,5,'#192333');rect(-w+1,2,w*2-2,4,'#596678');rect(-4,4,3,3,'#bac4d0');rect(1,4,3,3,'#bac4d0');}
+    else{rect(-3,-5,6,4,'#18263a');rect(-2,-4,3,2,'#d6a07f');rect(0,-4,1,1,INK);}
+    rect(-5,-1,10,2,'#111728');rect(-4,-1,4,2,showFrame%8<4?CORAL:BLUE);rect(0,-1,4,2,showFrame%8<4?BLUE:CORAL);
+    if(type==='cruiser'){rect(-w+1,-h/2-1,w*2-2,2,'#667080');rect(-w+2,-h/2-2,w*2-4,1,CREAM);}
   }
   ctx.globalAlpha=1;ctx.restore();
   // Authored stun emote over a wrecked, limping unit: orbiting dizzy sparks
@@ -671,7 +735,7 @@ function drawPoliceVehicle(c){
   // pauses; a render-only, same-seed sim no-op.
   if(c.disabled>0&&typeof globalThis.__NO_EMOTE==='undefined'){
     for(let i=0;i<3;i++){const a=showFrame*.22+(c.id||0)+i*TAU/3;
-      rect(x+Math.round(Math.cos(a)*6)-1,y-16+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}
+      rect(x+Math.round(Math.cos(a)*5)-1,y-12+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}
   }
 }
 function drawDecoy(d){
@@ -679,18 +743,24 @@ function drawDecoy(d){
   // viewer discovers the fake-out by watching the pursuit overshoot it.
   if(d.ghost)return;
   drawGetawayVehicle({x:d.x,y:d.y,kind:d.kind,angle:.35,z:0,damage:20,spinT:0,paintT:0},false);
-  const y=sy(d.y);if(d.door){line([[d.x+(d.x<80?5:-5),y],[d.x+(d.x<80?11:-11),y+5]],CREAM,2);}}
-function drawHelicopter(){if(!heli.active)return;const x=heli.x,y=sy(heli.y)-25;
-  ctx.globalAlpha=.11*heli.spot;poly([[x,y+9],[x-38,H],[x+38,H]],GOLD);ctx.globalAlpha=1;
-  ctx.save();ctx.translate(x,y);rect(-10,-5,20,12,'#283344');rect(-7,-8,13,5,'#3f5168');rect(-5,-7,8,4,'#6aa4bb');rect(8,-2,14,3,'#2a3444');rect(19,-5,4,8,'#3f4b5d');
-  rect(-7,7,3,3,INK);rect(4,7,3,3,INK);rect(-2,-4,4,4,'#d6a07f');rect(0,-3,1,1,INK);
-  ctx.globalAlpha=.72;line([[-25+Math.sin(showFrame*.8)*6,-10],[25-Math.sin(showFrame*.8)*6,-10]],CREAM,2);line([[0,-15],[0,-8]],'#8390a2',2);ctx.globalAlpha=1;ctx.restore();
+  const y=sy(d.y);if(d.door){line([[d.x+(d.x<80?4:-4),y],[d.x+(d.x<80?8:-8),y+4]],CREAM,2);}}
+// Set-piece airframe <=31px with the rotor; the spotlight cone is world light,
+// drawn separately (drawHeliSpot) so the isolated-actor render measures only
+// the aircraft.
+function drawHeliSpot(){if(!heli.active)return;const x=heli.x,y=sy(heli.y)-19;
+  ctx.globalAlpha=.11*heli.spot;poly([[x,y+7],[x-38,H],[x+38,H]],GOLD);ctx.globalAlpha=1;}
+function drawHelicopter(){if(!heli.active)return;const x=heli.x,y=sy(heli.y)-19;
+  ctx.save();ctx.translate(x,y);rect(-7,-4,14,8,'#283344');rect(-5,-6,9,4,'#3f5168');rect(-4,-5,6,3,'#6aa4bb');rect(6,-2,9,2,'#2a3444');rect(13,-4,3,6,'#3f4b5d');
+  rect(-5,4,3,2,INK);rect(2,4,3,2,INK);rect(-2,-3,3,3,'#d6a07f');rect(0,-2,1,1,INK);
+  const rw=15-Math.abs(Math.sin(showFrame*.8))*4; // spin shimmer stays inside the 31px airframe
+  ctx.globalAlpha=.72;line([[-rw,-7],[rw,-7]],CREAM,2);line([[0,-11],[0,-6]],'#8390a2',2);ctx.globalAlpha=1;ctx.restore();
 }
 function drawSwapChoreography(){if(player.swapT<=0)return;const t=84-player.swapT,y=CAR_Y;
   const old=decoys.filter(d=>!d.ghost).at(-1),oldX=old?old.x:player.x+(player.x<80?-11:11),newX=player.x,
-    side=oldX<newX?1:-1;line([[oldX+side*5,y],[oldX+side*10,y+5]],CREAM,2);line([[newX-side*5,y],[newX-side*10,y-4]],CYAN,2);
-  if(t>14&&t<58){const u=(t-14)/44,dx=oldX+(newX-oldX)*u,dy=y-2+Math.sin(u*Math.PI)*-9;
-    rect(dx-2,dy-2,4,6,'#26394a');rect(dx-1,dy-5,3,3,'#d6a07f');rect(dx+side,dy-4,1,1,INK);rect(dx-2+(t%8<4?1:0),dy+4,1,3,INK);rect(dx+1-(t%8<4?1:0),dy+4,1,3,INK);}
+    side=oldX<newX?1:-1;line([[oldX+side*4,y],[oldX+side*8,y+4]],CREAM,2);line([[newX-side*4,y],[newX-side*8,y-3]],CYAN,2);
+  if(t>14&&t<58){const u=(t-14)/44,dx=oldX+(newX-oldX)*u,dy=y-2+Math.sin(u*Math.PI)*-7;
+    rect(dx-1,dy-2,3,4,'#26394a');rect(dx-1,dy-4,2,2,'#d6a07f');rect(dx+(side>0?0:-1),dy-4,1,1,INK);
+    rect(dx-1+(t%8<4?1:0),dy+2,1,2,INK);rect(dx+1-(t%8<4?1:0),dy+2,1,2,INK);}
 }
 function drawForeground(p){
   const scroll=mod(Math.floor(player.y),96);for(const side of[-1,1])for(let i=0;i<4;i++){
@@ -730,15 +800,42 @@ function drawHud(p){
     ctx.fillStyle=MINT;ctx.fillText(stats.escapes+' ESCAPES · '+stats.swaps+' SWAPS',35,195);}
   drawSession();
 }
-function render(){
-  const p=DISTRICTS[currentDistrict()];drawSkyline(p);drawRoadBase(p);drawDistrictRoadDetails(p);
+// skipPedsForIsolation lets the 'env' isolated render keep the built curb
+// refuges while omitting the walker actors that are measured separately.
+let skipPedsForIsolation=false;
+function drawEnvironment(p){
+  drawSkyline(p);drawRoadBase(p);drawDistrictRoadDetails(p);
   const b0=currentBlock()-2,b1=currentBlock()+3;for(let b=b1;b>=b0;b--)drawCityBlock(b,DISTRICTS[districtForBlock(b)]);
   for(let b=b0;b<=b1;b++){const q=blockInfo(b);for(const f of[q.ramp,q.garage,q.paint])if(f&&!usedFeatures.has(featureKey(b,f.kind)))drawFeature(f,b);drawRoadblock(roadblockForBlock(b));}
   if(act.phase==='warn')drawRoadblockAssembly();
   const ar=actRamp();if(ar)drawFeature(ar,ar.block);if(swapBay)drawFeature({kind:'garage',x:swapBay.x,y:swapBay.y,vehicle:swapBay.vehicle,empty:player.swapT>0},currentBlock());
   for(const f of fixtureFeatures)drawFeature(f,currentBlock());
+}
+// Isolated-subject renders for the visual eval's drawn-pixel actor-scale
+// gates: 'none' -> bare backdrop, 'env' -> world without actors, '<id>' ->
+// exactly that actor. Render-only; never touches sim state or either RNG.
+function renderIsolated(only){
+  rect(0,0,W,H,INK);
+  if(only==='none')return;
+  const p=DISTRICTS[currentDistrict()];
+  if(only==='env'){skipPedsForIsolation=true;drawEnvironment(p);skipPedsForIsolation=false;drawHeliSpot();drawForeground(p);return;}
+  if(only==='driver'){
+    if(player.swapT>0)drawGetawayVehicle({x:player.x,y:player.y,kind:player.swapTo,angle:0,z:0,damage:0,spinT:0,paintT:0},false);
+    else drawGetawayVehicle(player,true);return;}
+  if(only==='heli'){drawHelicopter();return;}
+  if(only.startsWith('cop-')){const c=police.find(q=>'cop-'+q.id===only);if(c)drawPoliceVehicle(c);return;}
+  if(only.startsWith('traffic-')){const t=traffic.find(q=>'traffic-'+q.id===only);if(t)drawTraffic(t);return;}
+  if(only.startsWith('decoy-')){const d=decoys.find(q=>'decoy-'+q.id===only);if(d)drawDecoy(d);return;}
+  const ped=/^ped-(-?\d+)-([lr])-(\d+)$/.exec(only);
+  if(ped)drawPed(+ped[1],ped[2]==='l'?-1:1,+ped[3],p);
+}
+function render(){
+  const only=typeof globalThis.__NG_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__NG_VISUAL_ONLY_SUBJECT:null;
+  if(only!==null){renderIsolated(String(only));return;}
+  const p=DISTRICTS[currentDistrict()];
+  drawEnvironment(p);
   preDraw();for(const d of decoys)drawDecoy(d);for(const t of traffic)drawTraffic(t);for(const c of police)drawPoliceVehicle(c);
-  drawHelicopter();
+  drawHeliSpot();drawHelicopter();
   if(player.swapT>0)drawGetawayVehicle({x:player.x,y:player.y,kind:player.swapTo,angle:0,z:0,damage:0,spinT:0,paintT:0},false);
   else drawGetawayVehicle(player,true);
   drawSwapChoreography();
@@ -746,7 +843,7 @@ function render(){
   // and probe only (settleT is never read by physics); __NO_EMOTE gates it.
   if(state==='run'&&player.swapT<=0&&player.settleT>0&&typeof globalThis.__NO_EMOTE==='undefined'){
     const t=player.settleT;ctx.globalAlpha=.5*t/14;ctx.fillStyle='#9ba2b5';
-    for(let i=0;i<2;i++){ctx.beginPath();ctx.arc(player.x-3+i*6,CAR_Y+13+(14-t)*.8,2,0,TAU);ctx.fill();}
+    for(let i=0;i<2;i++){ctx.beginPath();ctx.arc(player.x-3+i*6,CAR_Y+10+(14-t)*.8,2,0,TAU);ctx.fill();}
     ctx.globalAlpha=1;ctx.fillStyle=GOLD;ctx.font='bold 6px monospace';ctx.fillText('GO!',clamp(player.x+9,4,W-16),CAR_Y-14);
   }drawRings(fxCam());drawParts(fxCam());
   for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
@@ -775,13 +872,41 @@ globalThis.__neonGetawaySignature=()=>JSON.stringify({state,runFrame,worldSeed,s
 globalThis.__neonGetawayPhysical=()=>[round(player.x,7),round(player.y,7),round(player.vx,7),round(player.speed,7),round(player.z,7),
   player.intent&&round(player.intent.steer,7),player.intent&&round(player.intent.throttle,7),player.intent&&player.intent.handbrake].join('|');
 globalThis.__neonGetawayVisualBeats=['opening','street-chase','alley','ramp','swap-anticipation','swap-payoff','later-district','dragnet','dragnet-land','danger','escape-apex'];
+// Actor list for the drawn-pixel scale gates: ids route straight into
+// __NG_VISUAL_ONLY_SUBJECT, boxes are native 160x360 screen px search hints
+// around the authored art (car 12x19, cop 12-14, ped ~5x10, heli 31x18).
+function visualActors(){
+  const out=[{id:'driver',kind:'standard',type:player.kind,
+    box:{x:player.x-8,y:CAR_Y-player.z*2.2-12,width:16,height:27}}];
+  for(const c of police){const yy=sy(c.y);if(yy<46||yy>H-16)continue;
+    out.push({id:'cop-'+c.id,kind:c.type==='van'?'heavy':'standard',type:c.type,
+      box:{x:c.x-8,y:yy-13,width:16,height:26}});}
+  for(const t of traffic){const yy=sy(t.y);if(yy<46||yy>H-16||t.x<12||t.x>148)continue;
+    out.push({id:'traffic-'+t.id,kind:t.kind==='delivery'?'heavy':'standard',type:t.kind,
+      box:{x:t.x-10,y:yy-10,width:20,height:20}});}
+  for(const d of decoys){if(d.ghost)continue;const yy=sy(d.y);if(yy<46||yy>H-16)continue;
+    out.push({id:'decoy-'+d.id,kind:'decoy',type:d.kind,box:{x:d.x-11,y:yy-12,width:22,height:25}});}
+  if(heli.active&&sy(heli.y)-19>44)out.push({id:'heli',kind:'boss',type:'helicopter',
+    box:{x:heli.x-17,y:sy(heli.y)-32,width:35,height:23}});
+  const b=currentBlock();
+  for(let bb=b-1;bb<=b+2;bb++)for(const side of[-1,1])for(let i=0;i<3;i++){
+    const q=pedPose(bb,side,i);if(!q||q.py<48||q.py>H-12)continue;
+    out.push({id:'ped-'+bb+'-'+(side<0?'l':'r')+'-'+i,kind:'ped',type:'walker',
+      box:{x:q.px-5,y:q.py-7,width:11,height:14}});}
+  return out;
+}
 globalThis.__neonGetawayVisualProbe=()=>({frame:showFrame,district:DISTRICTS[currentDistrict()].name,wanted,
   tactic:displayedTactic(),danger:wanted>=4||act.phase!=='calm',policeCount:police.filter(c=>!c.disabled).length,
   airborne:player.z>0,swapT:player.swapT,swapSerial:stats.swaps,escapeSerial:stats.escapes,act:act.phase,finite:allFinite(),
+  layout:{playfield:{x:0,y:38,width:160,height:322},
+    // threats enter the strip at the HUD line (y=38) and contact the driver at
+    // CAR_Y: forward approach room as a share of the playfield's travel axis
+    approach:{enter:38,contact:CAR_Y,visible:CAR_Y-38,travel:322}},
+  actors:visualActors(),
   playerBox:{x:player.x-15,y:CAR_Y-player.z*2.2-19,width:30,height:38},
   policeBox:police.length?{x:police[0].x-15,y:sy(police[0].y)-19,width:30,height:38}:null,
   policeBoxes:police.map(c=>({x:c.x-15,y:sy(c.y)-19,width:30,height:38,type:c.type})),
-  heliBox:heli.active?{x:heli.x-30,y:sy(heli.y)-48,width:60,height:42}:null,
+  heliBox:heli.active?{x:heli.x-30,y:sy(heli.y)-42,width:60,height:42}:null,
   roadblockBox:act.phase!=='calm'?{x:ROAD_L,y:sy(act.targetBlock*BLOCK+178)-16,width:ROAD_R-ROAD_L,height:32}:null,
   rampBox:(actRamp()||fixtureFeatures.find(f=>f.kind==='ramp'))?{x:(actRamp()||fixtureFeatures.find(f=>f.kind==='ramp')).x-16,
     y:sy((actRamp()||fixtureFeatures.find(f=>f.kind==='ramp')).y)-16,width:32,height:32}:null,

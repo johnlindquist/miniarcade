@@ -6,46 +6,56 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "d54b1b658598be29edaa6376ce104b4facb331f30bfd2851014c6bd8743c53b4",
+  "montageSha256": "d219295d65f258f4795e3e47b98cc8f234443b5909f8ec3f2b10b405e5d269f9",
   "reviewedAt": "2026-07-11",
-  "reviewer": "Claude native-size reference review (scroll-direction fix + goal telemetry, montage re-inspected at 160x360)",
+  "reviewer": "Claude native-size reference review (actor-scale redraw: vehicles 10-13px constructed, walkers ~5x10, heli 31px airframe; road-furniture density pass; montage re-inspected at 160x360 against both references)",
+  "renderReceipt": {
+    "seed": "0x4e454f4e",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 4655595,
+    "sha256": "ea34a97d2042e55ab37c998be92bd8f4b497ec5cf99fd8742cd1044785602bbd",
+    "command": "node render/render.js neon-getaway 30 .artifacts/visual/neon-getaway/neon-getaway-30s.mp4 --seed 0x4e454f4e --probe --fps 30"
+  },
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At 160x360 the getaway coupe, bike, taxi, muscle car, and van have distinct constructed silhouettes, wheels, cabins, lights, visible drivers, facing, damage, and action poses. Cruiser, interceptor, police bike, van, helicopter crew, traffic, pedestrians, the running swap driver, barrier-carrying dragnet officers, and dizzy stun sparks over wrecked units remain recognizable and match both references for authored actor identity."
+      "note": "Redrawn to the reference scale and measured on drawn pixels: getaway coupe/taxi 10x18, muscle 11x18, cruiser 11x19, interceptor 11x17, police bike 5x16, police van 13x21, traffic sedan/compact/delivery 8x12-17, pedestrians 3x9, helicopter 31px airframe. Every vehicle keeps constructed identity at the smaller size — nose highlight, cabin glass, visible wheelman head, wheels, rear deck, per-kind signatures (taxi roof sign and checkers, muscle scoop and stripe, van cargo panel, cruiser push bar, interceptor stripe) — plus a new brake-flare motion read. Silhouettes now sit beside Machine Hunt's ~10px hunter and Block Mine's 12px hero instead of dwarfing them."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The wet neon avenue, market tram and awnings, canal water and boardwalks, port rails and freight gantry, civic roundabout, roof materials, intersections, curb refuges, skyline, traffic, and foreground lights form a layered living city without relying on the HUD. Ground decals now flow with the world as the car drives north. Density and material specificity meet the two reference worlds."
+      "note": "With slimmer traffic the avenue gained width, and the furniture pass keeps it built rather than empty: reflective cats-eyes stud the lane seams, hash-placed manholes vent animated steam, storefront glow pools spill across the sidewalks, and crosswalk paint carries tire wear. The wet neon avenue, market tram, canal water and boardwalks, port rails and gantry, civic roundabout, curb refuges, skyline, and foreground lights still form a layered living city; measured richness rose (rich cells .978-1.0) as the actors shrank."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The native sheet shows five structurally distinct districts: Neon Core boulevards, Old Market tram streets, Canal Ward waterways and boardwalks, Iron Port rails and gantries, and Civic Crown roundabouts and monuments. Landmarks, street grammar, side silhouettes, and traversal fixtures change rather than merely swapping palette."
+      "note": "The native sheet shows five structurally distinct districts: Neon Core boulevards, Old Market tram streets, Canal Ward waterways and boardwalks, Iron Port rails and gantries, and Civic Crown roundabouts and monuments. Landmarks, street grammar, side silhouettes, and traversal fixtures change rather than merely swapping palette; structure distances measured .329-.467 across all district pairs."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned crops prove wheel rotation and body motion, police pursuit and siren animation, a takeoff-apex-landing ramp arc, and the old-car to running-driver to new-car swap with its GO! launch beat. The dragnet is physically assembled during the warning — vans arrive, officers carry barriers outward-in — then lands as a full wall. Wrecked units limp to the shoulder under orbiting stun sparks instead of parking. Damage reactions, spotlight, particles, rings, camera response, and the five-star fade provide anticipation, impact, and follow-through."
+      "note": "Aligned crops on the smaller sprites still prove motion (player burst median .217, police .227), the ramp keeps its takeoff-apex-landing arc, and the swap stages old car to running driver to new car with the GO! launch beat. New at this scale: brake-flare taillights on committed stops. The dragnet is physically assembled during the warning — vans arrive, officers carry barriers — then lands as a full wall; wrecked units limp to the shoulder under orbiting stun sparks; damage smoke, spotlight, particles, rings, and the five-star fade provide anticipation, impact, and follow-through."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Intent reads from the driver alone: steering commitment, drift angle, brake lights, the swap duck and GO! beat — no drawn route, target, or prediction anywhere. The cyan player silhouette stays focal against every district while wanted stars, heat/damage bars, run-progress strip, escape pips, tactic text, police formations, and the assembling dragnet remain legible at native size beside video. Rich city detail does not obscure the pursuit state."
+      "note": "Intent reads from the driver alone: steering commitment, drift angle, brake flare, the swap duck and GO! beat — no drawn route, target, or prediction anywhere. The cyan player silhouette stays focal against every district at the new 10px scale because contrast, shadow, and headlight/taillight pixels survived the shrink; wanted stars, heat/damage bars, run-progress strip, escape pips, tactic text, and police formations remain legible at native size beside video. Threats keep 70% of the travel axis ahead of the driver, so pursuit geometry reads earlier than before. Ground decals flow with the world as the car drives north."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road markings, physical warning grammar, and gold payoff effects stay consistent across the full city. The actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
+      "note": "Neon-noir ink, cyan and magenta pursuit lighting, warm district accents, cream pixel construction, authored vehicle language, restrained HUD, road furniture in the same material voice, physical warning grammar, and gold payoff effects stay consistent across the full city. The rescaled actors, architecture, tactics, and celebrations read as one SIDE/QUEST world."
     }
   },
   "guidelineOverlays": {
     "confirmedAbsent": true,
-    "note": "Checked all eleven sampled beats at native size: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers anywhere. The former persona-colored route dots, dragnet safe-lane chevrons, ghost-roadblock pre-draw, and translucent ghost decoys are gone; the dragnet warning is now a physical world telegraph (vans arriving, officers carrying barriers) plus a broadcast tint, and swap/paint fake-outs are discovered by watching the pursuit overshoot. Executable pixel gates (opposite forced plans, injected ghost decoy) render identically at every planning beat."
+    "note": "Checked all eleven sampled beats at native size: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers anywhere. The dragnet warning stays a physical world telegraph (vans arriving, officers carrying barriers) plus a broadcast tint; the helicopter spotlight is world light cast by a visible aircraft; swap/paint fake-outs are discovered by watching the pursuit overshoot. Executable pixel gates (opposite forced plans, injected ghost decoy) render identically at every planning beat."
   },
-  "reviewIdentitySha256": "96ceb23aa09a4eec9c401f5cec21f13d98dbaca58ad3299bceb6b4943d018e14",
+  "reviewIdentitySha256": "8495609c73be621f0b383fecad6ba91c56ce0bd4a6f31c6fd08b8a92cad3fa5f",
   "seed": "0x4e454f4e",
   "checkpoints": [
     "opening@12",
