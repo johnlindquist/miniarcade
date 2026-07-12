@@ -1055,6 +1055,43 @@ screen."
   feedback floors measured as shares dilute under concurrent FX; absolute
   signature-pixel counts are the robust form.
 
+## WINGRUSH: second adoption of the feedback-legibility contract (2026-07-12)
+
+Owner directive: after Neon Getaway, "tackle improving wingrush.html next."
+WingRush was already visually mature (honest velocity-aligned rotation, capped
+actor, committed receipts), so the highest-value gap was the one Neon Getaway
+just closed: good/bad beats had FX but NO executable proof they read on
+screen, and several bad beats (bounces, rough landings, misses, lapses) had
+little or no palette-separated presentation at all.
+
+- **Game**: append-only `feedback[]` ledger + `cue(kind,id,x,y,pulse)` with
+  fire-time screen coordinates, exposed via `__feedbackProbe()`; slim gold /
+  coral edge pulses (`drawPulses`, decay .94/.93) tag every beat even when the
+  payoff is away from the bird; all gated by the engine-level `__NO_PAYOFF_FX`
+  ablation. Twelve categories wired: launch, kiss, high-flight, ring,
+  coin-line (every 8th coin), ram, core, fort-down / bounced, rough-landing,
+  fort-missed, lapse. New on-actor grammar: coral+white feather bursts on
+  bounces and rough landings, gold flick on launch, gold burst on braced rams,
+  mint burst on sky runs, coral wisp when a fort is left standing or a lapse
+  hits. Core cues ledger only when the core is on-camera — chain-triggered
+  cores behind the camera measured 2px and would have forced meaningless
+  floors (first measurement caught this, plus a 7px launch flick that needed
+  9 particles).
+- **Eval**: section 11 reuses `evals/feedback.js` verbatim — lockstep live vs
+  `__NO_PAYOFF_FX` rendered twins on seeds 0x5301/0x5302 (79 sampled beats,
+  union covers all twelve categories), absolute per-category pixel floors
+  ~50% under measured darwin minima (e.g. core 40/38 -> 20/19, bounced 137/15
+  -> 70/7, launch 10/10 -> 5/5), byte-identical `__wingrushSignature` proof.
+  All pre-existing bands (policy pairs, soaks, acts, show budgets) survived
+  untouched because every addition is sim-inert.
+- **Visual suite**: all 21 pixel gates passed unchanged; 17-beat montage
+  re-reviewed at native size with crops of danger/impact/forecast/touchdown/
+  apex (sha d5512caf...), receipt + preserved PNG re-derived.
+- **Lesson**: the ledger must only record beats the camera can actually
+  frame — an honest sim event with no possible crop (off-screen chain
+  reaction) poisons per-category floors, and the fix is scoping the LEDGER,
+  not lowering the gate.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board

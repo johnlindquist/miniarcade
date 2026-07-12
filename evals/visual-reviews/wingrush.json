@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "332857c26a525590d39767e8242c3c5f6031cf714238b95416af268a1935c39e",
+  "montageSha256": "d5512cafbe9754b13ba7fca0f60ab9a7efc55b46e403cbbd89b15a85ed5a61d5",
   "seed": "0x571a6001",
   "naturalSeed": "0x7907",
   "checkpoints": [
@@ -28,8 +28,8 @@
     "landingAftermath@natural",
     "apex@24"
   ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size natural-play review",
+  "reviewedAt": "2026-07-12",
+  "reviewer": "Claude native-size natural-play review (feedback-legibility pass: gold/coral edge pulses, on-actor feather and gold/mint/coral bursts for launches, kisses, rams, cores, topples, bounces, rough landings, misses, and lapses; 17-beat montage re-inspected at 160x360 against both references plus native crops of danger, impact, forecast, touchdown, and apex beats)",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -49,12 +49,12 @@
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The contact sheet includes one uninterrupted autoplay sequence from target lock through climb, braced contact, fort collapse, recovery, forecast, commit, touchdown, and grounded follow-through. Character pose, scarf motion, physical collapse, and landing flare meet the authored motion and impact staging of both references."
+      "note": "The contact sheet includes one uninterrupted autoplay sequence from target lock through climb, braced contact, fort collapse, recovery, forecast, commit, touchdown, and grounded follow-through. Character pose, scarf motion, physical collapse, and landing flare meet the authored motion and impact staging of both references. Impact grammar now distinguishes outcome: braced strikes throw material-plus-gold debris while unbraced bounces shed coral-and-white feathers, and both are proven sim-inert by the same-seed __NO_PAYOFF_FX twin."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The actual fort is materially visible for most of the airborne attack; before that, a right-edge marker and distance preserve the aim. The bottom route ribbon shows terrain, coins, fort, and touchdown gate, and the natural sheet proves the forecast stays within 40px through landing."
+      "note": "The actual fort is materially visible for most of the airborne attack; before that, a right-edge marker and distance preserve the aim. The bottom route ribbon shows terrain, coins, fort, and touchdown gate, and the natural sheet proves the forecast stays within 40px through landing. New in this pass, every good/bad beat is tagged in one glance: gold flick on launch, gold dust on a kissed landing, mint burst on a sky run, gold burst on rams and core pops, coral feathers on bounces, rough landings, misses, and lapses, and a slim gold/coral edge pulse that tags the beat even when the payoff happened away from the bird. Executable feedback-legibility gates (evals/feedback.js) prove all twelve event categories render palette-separated pixels at the event location under a same-seed FX-ablated twin."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
@@ -64,5 +64,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "9da673bc9c14854dcb195ccae26a20c6a888a07827a99a3d65c5fd99fcb37347"
+  "reviewIdentitySha256": "4817d3c4269cdc4c97aa60ee761effeb8221adfb871426ca0d50bc2ec1ad665b"
 }

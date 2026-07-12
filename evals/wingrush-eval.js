@@ -3,6 +3,7 @@
 
 const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+const{runFeedbackVisibility,assertFeedback,feedbackLine}=require('./feedback');
 
 // Eval-only observation and fixture hooks. Natural-play sections do not alter
 // decisions, physics, RNG, or draw traversal. Isolated fixtures call the same
@@ -402,6 +403,35 @@ console.log('10) payoff FX switch is a perfect full-state same-seed no-op');
   const same=a.sandbox.__wrFullSignature()===b.sandbox.__wrFullSignature(),events=a.sandbox.__wingrushProbe().stats.events;
   console.log(`  signatures ${same?'identical':'DIFFERENT'} through ${events} visible events`);
   if(!same)fail('__NO_PAYOFF_FX changed energy, targets, pickups, scarf, or simulation state');
+}
+
+console.log('11) good/bad feedback legibility: every curated beat renders palette-separated pixels');
+{
+  // Lockstep live vs __NO_PAYOFF_FX twins on rendered runtimes (contract in
+  // feedback.js): each sampled ledger beat must differ around its fire-time
+  // screen position AND carry its own palette (gold/mint/cream/core colors for
+  // good, coral for bad). Seeds chosen for coverage: 0x5301 fires all twelve
+  // categories in 90s, 0x5302 backs up everything except the rare lapse.
+  // Floors sit ~50% under the per-category darwin minima measured across both
+  // seeds (bounced 137px changed / 15px coral, core 40/38, fort-down 40/38,
+  // ram 42/42, kiss 60/49, high-flight 60/22, rough-landing 49/10, ring 14/11,
+  // coin-line 22/22, launch 10/10, lapse 18/18, fort-missed 182/20) so an FX
+  // deletion or one-color celebration fails while concurrent-FX dilution and
+  // cross-platform rasterization drift do not.
+  const GOOD_COLORS=['#ffd15c','#61e5bd','#fff2cf','#63e9dc','#a9ef67','#ff8a55','#ffe27a'];
+  const BAD_COLORS=['#ff705f'];
+  const runs=[0x5301,0x5302].map(seed=>runFeedbackVisibility('wingrush',{seed,frames:5400,
+    signatureProbe:'__wingrushSignature',goodPalette:GOOD_COLORS,badPalette:BAD_COLORS}));
+  const report=assertFeedback('wingrush',runs,{
+    required:['good:launch','good:kiss','good:high-flight','good:ring','good:coin-line',
+      'good:ram','good:core','good:fort-down','bad:bounced','bad:rough-landing','bad:fort-missed','bad:lapse'],
+    minChanged:{default:20,'bad:bounced':70,'bad:fort-missed':90,'bad:lapse':9,'bad:rough-landing':24,
+      'good:coin-line':11,'good:high-flight':30,'good:kiss':30,'good:launch':5,'good:ring':7},
+    minSignature:{default:19,'bad:bounced':7,'bad:fort-missed':10,'bad:lapse':9,'bad:rough-landing':5,
+      'good:coin-line':11,'good:high-flight':11,'good:kiss':24,'good:launch':5,'good:ring':5}
+  },fail);
+  for(const run of runs)console.log(`  ${run.seed.toString(16)}: ${feedbackLine([run])}`);
+  console.log(`  categories: ${report.seen.join(', ')}`);
 }
 
 console.log(failed?'\nWINGRUSH EVAL FAILED':'\nWINGRUSH EVAL PASSED');

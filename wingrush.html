@@ -65,6 +65,18 @@ let bird=null,towers=[],airRings=[],groundCoins=[],towerSerial=0,coinSerial=0,pl
 let lockedTarget=-1,scarf=null;
 let texts=[],chapter=1,lastBiome=0,lastDistanceMark=0,lastEventFrame=0,lastProgressFrame=0,eventSerial=0,progressSerial=0;
 let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false},lastOutcome='';
+// ---- good/bad feedback (sim-inert; contract in evals/feedback.js) ----------
+// The ledger records every curated good/bad sim beat with fire-time screen
+// coordinates; the slim edge pulse tags the beat gold (won) or coral (hurt)
+// even when the viewer missed the actor. Nothing here is read by physics.
+let feedback=[],feedbackSerial=0,goodPulse=0,badPulse=0;
+function cue(kind,id,x,y,pulse){
+  feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
+    sx:Math.round(clamp((x===undefined?bird.x:x)-camX,0,W)),sy:Math.round(clamp((y===undefined?bird.y:y)-camY,32,H-24))});
+  if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.45:pulse);
+  else badPulse=Math.max(badPulse,pulse===undefined?.55:pulse);
+}
 const stats={launches:0,landings:0,highFlights:0,perfectLandings:0,roughLandings:0,tumbles:0,
   impacts:0,blocksBroken:0,towersToppled:0,cores:0,boosts:0,rings:0,coins:0,misses:0,lapses:0,
   targets:0,targetHits:0,targetLeadTotal:0,minTargetLead:1e9,firstTargetHit:-1,airControlFrames:0,energySpent:0,
@@ -346,7 +358,7 @@ function buildLandingPlan(previous){
   candidates.sort((a,b)=>a.score-b.score||a.predictedX-b.predictedX);const best=candidates[0],x=best.predictedX;
   return{x,y:terrainY(x)-RADIUS,slope:terrainSlope(x),aimX:best.aimX,aimY:best.aimY,predictedX:x,hard:best.hard,frames:best.frames,error:0,aimError:best.error,madeAt:runFrame};
 }
-function lapseActive(){if(typeof globalThis.__NO_LAPSE!=='undefined')return false;const slot=runFrame%4800,on=530+personaIndex*190,yes=slot>=on&&slot<on+18;if(yes&&slot===on){stats.lapses++;markEvent();}return yes;}
+function lapseActive(){if(typeof globalThis.__NO_LAPSE!=='undefined')return false;const slot=runFrame%4800,on=530+personaIndex*190,yes=slot>=on&&slot<on+18;if(yes&&slot===on){stats.lapses++;markEvent();cue('bad','lapse',bird.x,bird.y,.35);fxBurst(bird.x-4,bird.y-5,6,CORAL,.9,.02);}return yes;}
 function botIntent(){
   const t=activeTower(),core=t&&chooseCore(t);if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined')return{dive:false,vertical:0,brace:false,targetId:t&&t.id,coreId:core&&core.id,tactic:'ADMIRE THE FALL'};
   if(!bird.grounded&&bird.flightMode==='recover'){
@@ -403,6 +415,9 @@ function ensureTargetFracture(t,x,y){
 }
 function triggerCore(t,c,hitByBird){
   if(c.triggered)return;c.triggered=true;c.flash=50;stats.cores++;markEvent(55);markProgress(1);const p=corePos(t,c),near=Math.hypot(bird.x-p.x,bird.y-p.y)<150;
+  // Ledger only the on-camera core pops: chain-triggered cores behind the
+  // camera have no crop to prove, and the fort-down beat covers the payoff.
+  if(p.x-camX>6&&p.x-camX<W+6)cue('good','core',p.x,p.y,.8);
   if(hitByBird)registerTargetHit(t);
   if(c.kind==='gust'&&near){bird.vx+=.55;bird.vy-=.42;bird.energy=clamp(bird.energy+.3,0,1);bird.ram+=.5;bird.boostT=Math.max(bird.boostT,240);stats.boosts++;}
   if(c.kind==='spring'&&near){bird.grounded=false;bird.vx+=.35;bird.vy=Math.min(bird.vy,-2.8);bird.wing=1;bird.energy=clamp(bird.energy+.42,0,1);bird.ram+=.4;bird.boostT=300;stats.boosts++;}
@@ -417,21 +432,21 @@ function collideStructures(){
   if(bird.grounded||bird.hitT>0)return;const speed=Math.hypot(bird.vx,bird.vy)+bird.ram*.55;
   for(const t of towers){if(t.x<bird.x-80||t.x>bird.x+80)continue;
     for(const c of t.cores){if(c.triggered)continue;const p=corePos(t,c);if(segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,p.x,p.y)<RADIUS+c.r){
-      stats.impacts++;markEvent();if(bird.intent&&bird.intent.brace&&speed>1.55){triggerCore(t,c,true);bird.vx*=.94;bird.vy-=.25;bird.hitT=10;}else{bird.vx*=.58;bird.vy=-Math.abs(bird.vy)*.6;bird.hitT=18;stats.tumbles++;}return;}}
+      stats.impacts++;markEvent();if(bird.intent&&bird.intent.brace&&speed>1.55){triggerCore(t,c,true);bird.vx*=.94;bird.vy-=.25;bird.hitT=10;}else{bird.vx*=.58;bird.vy=-Math.abs(bird.vy)*.6;bird.hitT=18;stats.tumbles++;cue('bad','bounced',bird.x,bird.y,.6);fxBurst(bird.x,bird.y,9,CORAL,1.7,.05);fxBurst(bird.x-2,bird.y-2,5,'#eef6ff',1.2,.06);}return;}}
     for(const b of t.blocks){if(b.falling||b.settled)continue;if(segmentBox(bird.lastX,bird.lastY,bird.x,bird.y,b.x,b.y,RADIUS+b.w/2,RADIUS+b.h/2)){
       stats.impacts++;markEvent();const braced=bird.intent&&bird.intent.brace&&speed>2.1,force=.5*speed*speed*(braced?1.65:.75);b.hp-=force;
-      if(b.hp<=0&&braced){registerTargetHit(t);breakBlock(t,b,clamp(speed/2,1,4),0);ensureTargetFracture(t,b.x,b.y);unsupportedCascade(t);bird.vx*=.88;bird.vy=-Math.abs(bird.vy)*.25-.45;fxBurst(b.x,b.y,12,MATERIAL[b.mat].hi,1.8,.05);shake(3);}
-      else{bird.vx*=.52;bird.vy=-Math.abs(bird.vy)*.55;bird.hitT=22;bird.tumbleT=40;stats.tumbles++;say('NOT ENOUGH MOMENTUM',CORAL,bird.x,bird.y-18,55);}return;}}
+      if(b.hp<=0&&braced){registerTargetHit(t);breakBlock(t,b,clamp(speed/2,1,4),0);ensureTargetFracture(t,b.x,b.y);unsupportedCascade(t);bird.vx*=.88;bird.vy=-Math.abs(bird.vy)*.25-.45;cue('good','ram',b.x,b.y,.5);fxBurst(b.x,b.y,12,MATERIAL[b.mat].hi,1.8,.05);fxBurst(b.x,b.y,6,GOLD,1.4,.04);shake(3);}
+      else{bird.vx*=.52;bird.vy=-Math.abs(bird.vy)*.55;bird.hitT=22;bird.tumbleT=40;stats.tumbles++;cue('bad','bounced',bird.x,bird.y,.7);fxBurst(bird.x,bird.y,10,CORAL,1.8,.05);fxBurst(bird.x-2,bird.y-3,5,'#eef6ff',1.3,.06);say('NOT ENOUGH MOMENTUM',CORAL,bird.x,bird.y-18,55);}return;}}
   }
 }
-function collectRings(){for(const r of airRings)if(!r.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,r.x,r.y)<RADIUS+4){r.taken=true;stats.rings++;bird.combo++;bird.vx+=.1;bird.vy-=.08;bird.energy=clamp(bird.energy+.1,0,1);bird.ram+=.08;bird.boostT=Math.max(bird.boostT,60);markEvent(12);offer('ring',1,r.x,r.y,r.id);fxBurst(r.x,r.y,7,GOLD,1.2);}}
-function collectGroundCoins(){for(const c of groundCoins)if(!c.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,c.x,c.y)<RADIUS+5){c.taken=true;stats.coins++;bird.combo++;bird.charge=clamp(bird.charge+.1,0,3.2);if(!bird.grounded)bird.energy=clamp(bird.energy+.04,0,1);markEvent(3);if(stats.coins%8===0)offer('coin-line',1,c.x,c.y,stats.coins);fxBurst(c.x,c.y,4,GOLD,.8);}}
+function collectRings(){for(const r of airRings)if(!r.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,r.x,r.y)<RADIUS+4){r.taken=true;stats.rings++;bird.combo++;bird.vx+=.1;bird.vy-=.08;bird.energy=clamp(bird.energy+.1,0,1);bird.ram+=.08;bird.boostT=Math.max(bird.boostT,60);markEvent(12);offer('ring',1,r.x,r.y,r.id);cue('good','ring',r.x,r.y,.2);fxBurst(r.x,r.y,8,GOLD,1.3);}}
+function collectGroundCoins(){for(const c of groundCoins)if(!c.taken&&segPointDistance(bird.lastX,bird.lastY,bird.x,bird.y,c.x,c.y)<RADIUS+5){c.taken=true;stats.coins++;bird.combo++;bird.charge=clamp(bird.charge+.1,0,3.2);if(!bird.grounded)bird.energy=clamp(bird.energy+.04,0,1);markEvent(3);if(stats.coins%8===0){offer('coin-line',1,c.x,c.y,stats.coins);cue('good','coin-line',c.x,c.y,.2);fxBurst(c.x,c.y-2,7,GOLD,1.1);}fxBurst(c.x,c.y,4,GOLD,.8);}}
 function stepTowers(){
   for(const t of towers){t.collapseT++;
     for(const c of t.cores){if(c.flash>0)c.flash--;const b=t.blocks[c.anchor];if(!c.triggered&&b&&b.falling&&Math.hypot(b.x-(c.x-c.ox),b.y-(c.y-c.oy))>7)triggerCore(t,c,false);}
     for(const b of t.blocks)if(b.broken){if(b.delay>0){b.delay--;continue;}if(!b.falling)b.falling=true;if(!b.settled){b.vy+=.07;b.vx*=.997;b.x+=b.vx;b.y+=b.vy;b.rot+=b.vx*.065;const ground=terrainY(b.x)-b.h/2;if(b.y>=ground){b.y=ground;b.vx*=.62;b.vy*=-.14;if(Math.abs(b.vy)<.07)b.settled=true;}}}
-    const fallen=t.blocks.filter(b=>b.broken||b.falling).length;if(!t.toppled&&fallen>=Math.ceil(t.blocks.length*.3)){t.toppled=true;stats.towersToppled++;markProgress(80);offer(t.type===4?'crown-fall':'tower-fall',t.type===4?3:2,t.x,t.base-35,t.id);fxBurst(t.x,t.base-35,t.type===4?40:24,t.type===4?GOLD:CREAM,2.7,.05);say(t.type===4?'CROWN KEEP SHATTERED':'SKY FORT DOWN',t.type===4?GOLD:MINT,t.x,t.base-78,100);shake(t.type===4?9:5);}
-    if(!t.resolved&&bird.x>t.x+100){t.resolved=true;if(!t.toppled){stats.misses++;markEvent();say('RUIN LEFT STANDING',CORAL,t.x,t.base-65,60);}else markProgress();if(!bird.grounded)bird.flightMode='recover';plan=null;}
+    const fallen=t.blocks.filter(b=>b.broken||b.falling).length;if(!t.toppled&&fallen>=Math.ceil(t.blocks.length*.3)){t.toppled=true;stats.towersToppled++;markProgress(80);cue('good','fort-down',t.x,t.base-35,t.type===4?1:.85);offer(t.type===4?'crown-fall':'tower-fall',t.type===4?3:2,t.x,t.base-35,t.id);fxBurst(t.x,t.base-35,t.type===4?40:24,t.type===4?GOLD:CREAM,2.7,.05);say(t.type===4?'CROWN KEEP SHATTERED':'SKY FORT DOWN',t.type===4?GOLD:MINT,t.x,t.base-78,100);shake(t.type===4?9:5);}
+    if(!t.resolved&&bird.x>t.x+100){t.resolved=true;if(!t.toppled){stats.misses++;markEvent();cue('bad','fort-missed',bird.x-14,bird.y,.5);fxBurst(bird.x-10,bird.y-4,8,CORAL,1.2,.03);say('RUIN LEFT STANDING',CORAL,t.x,t.base-65,60);}else markProgress();if(!bird.grounded)bird.flightMode='recover';plan=null;}
   }
 }
 
@@ -443,10 +458,10 @@ function stepAct(){
   else if(act.phase==='live'&&runFrame>=act.endAt){act.phase='calm';act.index++;act.warnAt=runFrame+6900;}
 }
 
-function finishRun(){if(state!=='run')return;state='ending';resultT=360;stats.endings++;lastOutcome=stats.towersToppled>=18?'SKYLINE FREE':'ONE MORE FLIGHT';markEvent(500);offer('ending',3,bird.x,bird.y,lastOutcome);fxBurst(bird.x,bird.y,48,GOLD,3.3,.02);}
+function finishRun(){if(state!=='run')return;state='ending';resultT=360;stats.endings++;lastOutcome=stats.towersToppled>=18?'SKYLINE FREE':'ONE MORE FLIGHT';markEvent(500);cue('good','skyline',bird.x,bird.y,1);offer('ending',3,bird.x,bird.y,lastOutcome);fxBurst(bird.x,bird.y,48,GOLD,3.3,.02);}
 function resetRun(full){
   worldSeed=RI(1,999999);segmentCache.clear();knotCache.clear();runFrame=0;state='run';resultT=0;camX=0;camY=0;towers=[];airRings=[];groundCoins=[];towerSerial=0;coinSerial=0;
-  plan=null;landingPlan=null;planAt=-1e9;lockedTarget=-1;scarf=null;texts=[];chapter=1;lastBiome=0;lastDistanceMark=0;lastOutcome='';
+  plan=null;landingPlan=null;planAt=-1e9;lockedTarget=-1;scarf=null;texts=[];chapter=1;lastBiome=0;lastDistanceMark=0;lastOutcome='';feedback=[];goodPulse=0;badPulse=0;
   for(const k in stats)stats[k]=0;stats.biomes=1;stats.minTargetLead=1e9;stats.firstTargetHit=-1;
   eventSerial=0;progressSerial=0;lastEventFrame=showFrame;lastProgressFrame=showFrame;personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];bird=makeBird(40);initScarf();
   Object.assign(act,{phase:'calm',type:'gust',warnAt:4200,landAt:4440,endAt:5160,index:0,dir:1,notes:[]});ensureTowers();if(full)SHOW.reset(showFrame);
@@ -460,10 +475,10 @@ function updateBird(){
     landingPlan=buildLandingPlan(landingPlan);if(landingPlan&&!bird.guidanceAttempted){stats.guidedAttempts++;bird.guidanceAttempted=true;}
   }else if(!landingMode||!guidance)landingPlan=null;
   bird.intent=controller();bird.lastX=bird.x;bird.lastY=bird.y;const landingBefore=landingPlan,ev=advanceBody(bird,bird.intent,envAt(0),true);stats.energySpent+=ev.energySpent||0;
-  if(ev.launched){bird.flightMode='raid';bird.guidanceAttempted=false;stats.launches++;markEvent(4);offer('launch',1,bird.x,bird.y,'crest');fxDust(bird.x,bird.y+5,7,BIOMES[biomeIndex(bird.x)].edge);bird.pose='launch';}
-  if(ev.landed){stats.landings++;stats.lastFlightFrames=bird.airFrames;if(bird.airFrames<20)stats.microHops++;stats.maxAir=Math.max(stats.maxAir,bird.airFrames);const rise=bird.launchY-bird.apexY;if(bird.airFrames>=180||rise>=75){stats.highFlights++;offer('high-flight',2,bird.x,bird.y,Math.round(rise));say('SKY KISS',MINT,bird.x,bird.y-24,55);}
+  if(ev.launched){bird.flightMode='raid';bird.guidanceAttempted=false;stats.launches++;markEvent(4);cue('good','launch',bird.x,bird.y,.3);offer('launch',1,bird.x,bird.y,'crest');fxDust(bird.x,bird.y+5,7,BIOMES[biomeIndex(bird.x)].edge);fxBurst(bird.x-4,bird.y+3,9,GOLD,1.3,.02);bird.pose='launch';}
+  if(ev.landed){stats.landings++;stats.lastFlightFrames=bird.airFrames;if(bird.airFrames<20)stats.microHops++;stats.maxAir=Math.max(stats.maxAir,bird.airFrames);const rise=bird.launchY-bird.apexY;if(bird.airFrames>=180||rise>=75){stats.highFlights++;cue('good','high-flight',bird.x,bird.y-8,.5);offer('high-flight',2,bird.x,bird.y,Math.round(rise));fxBurst(bird.x,bird.y-6,9,MINT,1.5,.02);say('SKY KISS',MINT,bird.x,bird.y-24,55);}
     stats.lastLandingError=landingBefore?Math.abs(bird.x-landingBefore.x):0;stats.lastLandingHard=ev.hard;if(landingBefore&&stats.lastLandingError<40)stats.guidedLandings++;bird.flightMode='raid';bird.guidanceAttempted=false;
-    if(ev.kiss){stats.perfectLandings++;bird.combo++;offer('kiss',1,bird.x,bird.y,'perfect');fxDust(bird.x,bird.y+5,8,GOLD);}else if(ev.hard>1.35){stats.roughLandings++;bird.tumbleT=Math.round(clamp(ev.hard*9,16,48));stats.tumbles++;shake(2);}landingPlan=null;markEvent();}
+    if(ev.kiss){stats.perfectLandings++;bird.combo++;cue('good','kiss',bird.x,bird.y,.4);offer('kiss',1,bird.x,bird.y,'perfect');fxDust(bird.x,bird.y+5,8,GOLD);fxBurst(bird.x,bird.y+2,6,GOLD,1.2,.03);}else if(ev.hard>1.35){stats.roughLandings++;bird.tumbleT=Math.round(clamp(ev.hard*9,16,48));stats.tumbles++;cue('bad','rough-landing',bird.x,bird.y,.5);fxBurst(bird.x,bird.y,8,CORAL,1.5,.06);fxBurst(bird.x-2,bird.y-2,4,'#eef6ff',1.1,.07);shake(2);}landingPlan=null;markEvent();}
   if(!bird.grounded){stats.airControlFrames++;collideStructures();}collectRings();collectGroundCoins();if(bird.hitT>0)bird.hitT--;if(bird.tumbleT>0)bird.tumbleT--;if(bird.boostT>0)bird.boostT--;
   const speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy);stats.maxSpeed=Math.max(stats.maxSpeed,speed);
   bird.pose=bird.hitT?'impact':bird.tumbleT?'tumble':bird.grounded?(bird.intent.dive?'dive':'skim'):(bird.intent.brace?'brace':bird.intent.vertical<-.2?'climb':bird.intent.vertical>.28?'descend':'soar');
@@ -479,6 +494,7 @@ function step(){
     if(!pres.holdWorld&&showFrame%pres.physicsEvery===0){runFrame++;stepAct();ensureTowers();updateBird();stepTowers();if(runFrame>=FINAL_FRAME)finishRun();}
   }else if(state==='ending'){resultT--;if(resultT<=0){if(playing())gameOver(lastOutcome);resetRun(true);}}
   stepScarf();stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+  goodPulse=goodPulse>.02?goodPulse*.94:0;badPulse=badPulse>.02?badPulse*.93:0;
 }
 
 function skyBands(b){for(let i=0;i<7;i++)rect(0,i*H/7,W,H/7+1,mix(b.sky0,b.sky1,i/6));}
@@ -650,6 +666,16 @@ function drawBird(){
   poly([[-1,-4],[3,-2],[1,1],[-2,-1]],INK);poly([[-.4,-3.2],[2.2,-2],[.8,.2],[-1.2,-1]],'#f0526b');
   ctx.restore();
 }
+function drawPulses(){
+  // Slim gold/coral edge pulses tag every ledger beat at a glance even when the
+  // payoff happened away from the bird. Presentation only: __NO_PAYOFF_FX kills
+  // them and the feedback eval proves the sim signature never notices.
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined'||goodPulse<.03&&badPulse<.03)return;
+  const y0=30,y1=337;
+  if(goodPulse>=.03){ctx.globalAlpha=Math.min(.5,goodPulse*.55);rect(0,y0,W,2,GOLD);rect(0,y1-2,W,2,GOLD);rect(0,y0,2,y1-y0,GOLD);rect(W-2,y0,2,y1-y0,GOLD);}
+  if(badPulse>=.03){ctx.globalAlpha=Math.min(.6,badPulse*.65);rect(0,y0,W,3,CORAL);rect(0,y1-3,W,3,CORAL);rect(0,y0,3,y1-y0,CORAL);rect(W-3,y0,3,y1-y0,CORAL);}
+  ctx.globalAlpha=1;
+}
 function drawHUD(){
   ctx.globalAlpha=.9;rect(0,0,W,30,INK);ctx.globalAlpha=1;const b=BIOMES[biomeIndex(bird.x)],speed=bird.grounded?bird.speed:Math.hypot(bird.vx,bird.vy),power=bird.grounded?clamp((speed+bird.charge*.75)/7.5,0,1):bird.energy;
   ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('WINGRUSH',4,10);ctx.fillStyle=b.accent;ctx.fillText('C'+chapter,142,10);
@@ -665,7 +691,7 @@ function render(){
   if(typeof globalThis.__HIDE_FORTS==='undefined')for(const t of towers)drawTower(t);drawPickups();drawPlan();if(typeof globalThis.__HIDE_BIRD==='undefined')drawBird();
   ctx.save();ctx.translate(-camX,0);drawParts(camY);drawRings(camY);ctx.restore();
   for(const t of texts){const x=t.x-camX,y=t.y-camY,a=Math.min(1,t.t/16);ctx.globalAlpha=a;ctx.font='bold 7px monospace';ctx.fillStyle=t.c;ctx.fillText(t.s,clamp(x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;
-  drawProps(true);postDraw();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.12;rect(0,30,W,H-30,GOLD);ctx.globalAlpha=1;}drawRouteRibbon();drawHUD();
+  drawProps(true);postDraw();drawPulses();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.12;rect(0,30,W,H-30,GOLD);ctx.globalAlpha=1;}drawRouteRibbon();drawHUD();
 }
 
 function finite(){return[bird.x,bird.y,bird.vx,bird.vy,bird.speed,bird.energy,bird.ram,camX,camY,runFrame].every(Number.isFinite)&&towers.every(t=>t.blocks.every(b=>[b.x,b.y,b.vx,b.vy,b.rot].every(Number.isFinite)))&&!!scarf&&scarf.nodes.every(n=>[n.x,n.y,n.px,n.py].every(Number.isFinite));}
@@ -698,9 +724,10 @@ globalThis.__wingrushSignature=()=>JSON.stringify({state,runFrame,worldSeed,chap
   t:towers.map(t=>[t.id,t.toppled,t.resolved,t.hit,...t.cores.map(c=>c.triggered?1:0),...t.blocks.flatMap(b=>[b.id,b.broken,b.falling,b.settled,round(b.x,3),round(b.y,3),round(b.rot,3)])]),
   c:[coinSerial,...groundCoins.map(c=>c.id)],f:scarf.nodes.flatMap(n=>[round(n.x,3),round(n.y,3),round(n.px,3),round(n.py,3)]),
   a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.dir],s:[stats.launches,stats.landings,stats.highFlights,stats.perfectLandings,stats.roughLandings,stats.impacts,stats.blocksBroken,stats.towersToppled,stats.cores,stats.boosts,stats.rings,stats.coins,stats.targets,stats.targetHits,stats.guidedAttempts,stats.guidedLandings,stats.microHops,stats.misses,stats.lapses]});
+globalThis.__feedbackProbe=()=>({finite:finite(),serial:feedbackSerial,goodPulse:round(goodPulse,4),badPulse:round(badPulse,4),events:feedback.map(e=>Object.assign({},e))});
 globalThis.__wingrushVisualBeats=['opening','momentum','major-flight','tower','impact','later-biome','apex'];
 function primeAt(x,forceType){
-  bird=makeBird(x);initScarf();towers=[];airRings=[];groundCoins=[];landingPlan=null;lockedTarget=-1;
+  bird=makeBird(x);initScarf();towers=[];airRings=[];groundCoins=[];landingPlan=null;lockedTarget=-1;feedback=[];goodPulse=0;badPulse=0;
   const first=Math.max(0,Math.ceil((x+145-FIRST_FORT)/FORT_GAP));towerSerial=first;coinSerial=Math.max(0,Math.floor((x-300-110)/28));
   towers.push(makeTower(towerSerial++,forceType,x+260));ensureTowers();const t=activeTower();if(t){lockedTarget=t.id;t.lockAt=showFrame;}
   plan=buildPlan(t);planAt=showFrame;camX=Math.max(0,bird.x-40);camY=0;
