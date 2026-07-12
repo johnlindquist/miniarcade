@@ -117,9 +117,12 @@ globalThis.__rush=()=>({phase:rushPhase,deaths,dist,
 globalThis.__showP=()=>SHOW.probe();
 globalThis.__sig=()=>Math.round(P.x*31+dist*7)+coinCt*1009+deaths*97+P.tl*17;`;
   // Seed picked so the pre-positioning situation actually arises during the
-  // first warn window (runner off-corridor / loot tempting the unaware twin):
-  // 0x51de4001/02/03/05 first diverge only at live, 0x51de4004 during warn.
-  const SEED=0x51de4004;
+  // first warn window (runner off-corridor / loot tempting the unaware twin).
+  // Re-derived 2026-07-11 after the chase layer + shortened bust/intro beats
+  // shifted run timing: 40-seed sweep, warn-phase divergence on 0x51de4010/11/
+  // 18/1c/1e/20/21/24/27; 0x51de4010 diverges at 2180 during 'warn' with live
+  // trains 0.37 vs 0.01 and 2 deaths.
+  const SEED=0x51de4010;
   const a=bootGame('surfers',{seed:SEED,footer:ACT_FOOTER});
   const b=bootGame('surfers',{seed:SEED,footer:ACT_FOOTER});
   b.sandbox.__NO_ACTS=1;
@@ -158,6 +161,70 @@ globalThis.__sig=()=>Math.round(P.x*31+dist*7)+coinCt*1009+deaths*97+P.tl*17;`;
   c.frames(10800,false);d.frames(10800,false);
   if(c.sandbox.__sig()!==d.sandbox.__sig())fail('__NO_PAYOFF_FX changed the sim: payoff confetti leaked into gameplay');
   else console.log('  __NO_PAYOFF_FX: sim signatures identical over 3 minutes');
+}
+
+// ---- 5. motion contract: runner + inspector never stall, pauses are authored
+console.log('5) motion contract: 2 x 10 minutes, strict per-actor analyzer');
+{
+  const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+  for(const seed of[0x51de5001,0x51de5002]){
+    const report=analyzeMotion(runMotion('surfers',{seed,minutes:10}),
+      {requiredIds:['runner','inspector']});
+    console.log(`  seed 0x${seed.toString(16)}: ${motionLine(report)}`);
+    assertMotion(`motion seed 0x${seed.toString(16)}`,report,fail);
+  }
+}
+
+// ---- 6. chase layer: the inspector surges on stumbles and bends the runner's play
+console.log('6) chase: inspector heat tracks stumbles, safe-play response diverges vs __NO_CHASE');
+{
+  const CHASE_FOOTER=`
+;globalThis.__lapseStarts=[];globalThis.__totDist=0;
+{const __d0=runnerSkill.decide;let __was=false;
+ runnerSkill.decide=(f,c,d,l)=>{const out=__d0(f,c,d,l);
+   const now=runnerSkill.isLapsed(f);if(now&&!__was)globalThis.__lapseStarts.push(frame);__was=now;return out;};}
+{const __s0=startRun;startRun=()=>{globalThis.__totDist+=dist;__s0();};}
+globalThis.__chase=()=>({heat:INS.heat,peak:INS.peak,deaths,
+  dist:globalThis.__totDist+dist,
+  sig:Math.round(P.x*31+dist*7)+coinCt*1009+deaths*97+P.tl*17});`;
+  let totalLapses=0,totalSurges=0;
+  for(let s=1;s<=6;s++){
+    const seed=0x51de6000+s;
+    const a=bootGame('surfers',{seed,footer:CHASE_FOOTER});
+    const b=bootGame('surfers',{seed,footer:CHASE_FOOTER});
+    b.sandbox.__NO_CHASE=1;
+    let firstDiverge=-1,heatAfterSpike=[],maxHeatB=0;
+    const spikes=[];
+    for(let f=0;f<10800;f+=10){
+      a.frames(10,false);b.frames(10,false);
+      const ca=a.sandbox.__chase(),cb=b.sandbox.__chase();
+      maxHeatB=Math.max(maxHeatB,cb.heat);
+      if(firstDiverge<0&&ca.sig!==cb.sig)firstDiverge=f+10;
+      for(const lf of a.sandbox.__lapseStarts){
+        if(!spikes.includes(lf)&&f+10>=lf+40&&f+10<=lf+60){spikes.push(lf);heatAfterSpike.push(ca.heat);}
+      }
+    }
+    const ca=a.sandbox.__chase(),cb=b.sandbox.__chase();
+    const lapses=a.sandbox.__lapseStarts.length;
+    totalLapses+=lapses;
+    const surged=heatAfterSpike.filter(h=>h>=35).length;
+    totalSurges+=surged;
+    console.log(`  seed 0x${seed.toString(16)}: lapses ${lapses}, surges ${surged}/${heatAfterSpike.length}, `+
+      `peak heat ${ca.peak.toFixed(0)}, diverged @${firstDiverge}, dist ${Math.round(ca.dist/10)}m vs ${Math.round(cb.dist/10)}m, `+
+      `deaths ${ca.deaths} vs ${cb.deaths}`);
+    // the ablated twin must truly have no pursuit pressure, yet still play
+    if(cb.heat!==0||maxHeatB!==0)fail(`seed ${s}: __NO_CHASE twin still accumulated heat`);
+    if(cb.dist<30000)fail(`seed ${s}: __NO_CHASE baseline stalled (${Math.round(cb.dist/10)}m total in 3 min)`);
+    if(ca.dist<30000)fail(`seed ${s}: chase runner stalled (${Math.round(ca.dist/10)}m total in 3 min)`);
+    // the live layer must actually change decisions: initial pursuit heat (70)
+    // keeps the runner off loot until ~250f, so divergence lands early
+    if(firstDiverge<0)fail(`seed ${s}: chase policy never diverged from the ablated twin`);
+    else if(firstDiverge>900)fail(`seed ${s}: chase divergence too late (${firstDiverge})`);
+    if(ca.deaths>7)fail(`seed ${s}: chase runner deaths ${ca.deaths} bust the 3-minute half-band`);
+    // every measured stumble must pull the inspector to at least warm pursuit
+    if(heatAfterSpike.some(h=>h<35))fail(`seed ${s}: a stumble failed to surge the inspector (heat ${heatAfterSpike.map(h=>h.toFixed(0)).join(',')})`);
+  }
+  if(totalLapses>=2&&totalSurges<1)fail('no stumble surge observed across six 3-minute runs');
 }
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');

@@ -1,0 +1,70 @@
+{
+ "schema": 1,
+ "game": "surfers",
+ "verdict": "pass",
+ "references": [
+  "horizon",
+  "blockmine"
+ ],
+ "montageSha256": "f774c88d873ebc2e82bf01a2e198b739a92dfabb9045f0fabafcd61f5df88480",
+ "seed": "0x5f5eed",
+ "checkpoints": [
+  "opening@30",
+  "run@4",
+  "stumble@4",
+  "danger@6",
+  "jet@6",
+  "zone2@4",
+  "later@4",
+  "apex@16",
+  "busted@24"
+ ],
+ "guidelineOverlays": "zero guideline overlays at every sampled beat: no path lines, route plans, arrows, ghost trails, predicted arcs, or future-position reticles. The oncoming train's wig-wag headlight pre-glow and the express signal heads are diegetic world/actor telegraphs (the train's own lights, the tunnel's own signals); the runner's intent reads from lane motion, jump/roll poses, and the stumble flail with its '!' bubble; the inspector's threat reads from his screen distance, grab-arm pose, and the K-9 at his flank.",
+ "reviewedAt": "2026-07-11",
+ "reviewer": "Claude native-size review of the contact sheet plus native frames (run, danger, busted, zone2/later themes) and three extracted clip frames against Machine Hunt and Block Mine",
+ "renderReceipt": {
+  "seed": "0x5f5eed",
+  "seconds": 30,
+  "fps": 30,
+  "codec": "h264",
+  "dimensions": "320x720",
+  "bytes": 5721889,
+  "sha256": "dea6ff8601ee6f4a087ccfeab716f265e0010de9a334bf60f44475484ca6cfab",
+  "command": "node render/render.js surfers 30 .artifacts/visual/surfers/surfers-30s.mp4 --seed 6250221 --probe --fps 30"
+ },
+ "categories": {
+  "characterCraft": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "The runner is a built 9x14 figure at Machine Hunt scale (the old runner drew 15x23): backwards red cap with strap and button, skin head, blue jacket with highlight, red backpack, scissoring legs with white sneakers and counter-phase pumping arms, stride bob, jump tuck with arms flung wide, tumbling roll ball with rotating head and motion band, stumble flail with wobble and a '!' bubble, jet flame licking off the pack. The pursuing inspector (10x15) has a navy uniform with belt, service cap with gold badge, scramble legs, and a reaching grab arm when he closes; his K-9 (10x6) lunges with ear, snout, scrambling paws and a wagging tail. Station commuters wave as the runner blasts past."
+  },
+  "environmentCraft": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "The tunnel is an enclosed built vault: converging ceiling/wall planes with seam courses, a dark portal mouth with lit rim and blinking safety lights, streaming arch bays with bracketed beams, sagging power cables, ceiling conduits, wall lamps pooling warm light, hanging line signs that sway, station platforms with lit wall bands, edge stripes and waiting crowds, rival-crew graffiti and service posters on the lower walls, relay cabinets with ticking LEDs, three ballasted track beds with rails, ties, gravel scatter and hazard-dashed service walkways, plus steam bleeds and dead flickering lamps in the WORKS bays. The old game's top half was an empty void; every band of the frame is now furnished."
+  },
+  "levelVariety": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "Four line themes rotate with each 1000m km celebration and rebuild materials and furniture, not just palette: METRO (blue panels, stations with crowds), WORKS (amber pipe runs, hazard tape, scaffold X-braces, steam, dead lamps), UPTOWN (neon spines, pink lamps, stations), DEPOT (brick courses, lantern glow). Measured structure distance across all theme pairs is .36-.44 with hash distance .25-.33, asserted at floors .25/.18 in the visual eval."
+  },
+  "animationImpact": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "Two-frame gait with bob at stride cadence tied to ground speed; jump tuck, roll tumble, stumble flail; oncoming trains announce themselves with wig-wag headlight pre-glow piercing the dark plus rail light pools, then a HONK with shake; near-misses burst white with a sim-inert wind-shear fx layer and WHOOSH text; coins squash-spin with streak sparkles; jetpack adds flame, afterimages, screen blur and rumble; EXPRESS CLEARED holds a slow-mo beat with a gold burst; the bust hits a red impact flash, a framed BUSTED! card, and the inspector lunging onto the runner with the dog. Payoff FX are proven sim-inert by the behavioral eval's __NO_PAYOFF_FX signature check."
+  },
+  "readability": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "At native 160x360 the bright liveried buses, gold coins, and the runner's red cap and blue jacket pop against the dark transit tunnel; the perspective grammar keeps the three lanes and the guaranteed corridor legible; the HUD carries distance, coins, powerup timers and the line-theme tag; danger cues (wig-wag lights, red signal heads, striped hurdles) are the brightest things in their band. Focal hierarchy survives beside video: payoffs and threats over dim architecture."
+  },
+  "artDirectionCohesion": {
+   "meetsMachineHunt": true,
+   "meetsBlockMine": true,
+   "note": "One night-transit shape language throughout: everything converges on the portal mouth, every theme reuses the same arch-bay skeleton with its own material dressing, each theme's glow accent recolors lamps, signs, platform light and the HUD tag; vehicles share one construction (roof ribs, AC units, destination boards, livery stripes, bogies) across four liveries; the chase reads in the same grammar at both ends of the frame (headlights ahead, inspector behind)."
+  }
+ },
+ "reviewIdentitySha256": "ab42c4182cd325f0307b2d29b0a380f5838c70bf5ef761e2da60b8479e83b09d",
+ "reviewPlatform": "darwin",
+ "allowCrossPlatformRasterization": true
+}

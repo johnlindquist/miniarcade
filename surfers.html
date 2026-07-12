@@ -27,7 +27,7 @@ const TR={train:1,mov:1,crawl:1}; // things with a body and a roof
 const obsV=o=>o.kind==='mov'?spd+MOVX:o.kind==='crawl'?spd*0.62:spd;
 
 // ---- chase-cam projection: the camera sits behind and above the runner ----
-const HOR=148,FEET=302,FOC=125,ZMAX=380;
+const HOR=148,FEET=302,FOC=125,ZMAX=380,GLOWZ=840;
 const zof=y=>PY-y;                                  // sim y -> distance ahead
 const pf=z=>FOC/(FOC+Math.max(-84,z));              // perspective factor (looms past 1, slides off frame)
 const py3=f=>HOR+(FEET-HOR)*f;                      // ground row on screen
@@ -39,6 +39,16 @@ const RSX=()=>px3(P.x,1);                           // runner screen x
 let obs=[],coins=[],pows=[],texts=[];
 let dist=0,spd=2.6,coinCt=0,corridor=1,genY=-60,state='intro',stT=0,deaths=0,frame=0;
 let combo=0,lastCoinF=-99;
+
+// CHASE layer: the transit INSPECTOR hounds the runner. His pursuit heat is a
+// pure function of sim events — every stumble surges him closer, clean running
+// shakes him off — no RNG draws, so determinism holds. While he is hot the
+// runner plays it safe (holds the guaranteed corridor instead of chasing
+// loot). __NO_CHASE ablates both the pursuer and the safe-play response.
+const INS={x:80,heat:70,peak:0};
+let hadLapse=false;
+const chaseOn=()=>typeof __NO_CHASE==='undefined';
+const chaseHot=()=>chaseOn()&&INS.heat>=40;
 
 // EXPRESS act: a telegraphed rush-hour wave floods the tunnel with live
 // trains for 15s; the runner commits to a lane from the warning instead of
@@ -131,6 +141,7 @@ function startRun(){
   combo=0;lastCoinF=-99;
   P.x=LX[1];P.tl=1;P.elev=0;P.jumpT=0;P.rollT=0;P.hopT=0;P.magT=0;P.jetT=0;P.lapse=0;P.runT=0;
   botFrame=0;runnerSkill.reset();
+  INS.x=LX[1];INS.heat=chaseOn()?70:0;INS.peak=INS.heat;hadLapse=false; // he chased you off the tag wall
   rushPhase='calm';rushT=0;nextRushD=7000;lastKm=0;SHOW.reset(frame);
   state='intro';stT=0;
 }
@@ -150,9 +161,23 @@ function stepRush(){
     texts.push({x:80,y:186,s:'EXPRESS CLEARED',c:'#2ec4b6',t:70});
   }
 }
+// the inspector's pursuit: event-driven, RNG-free, honest about consequences
+function stepChase(){
+  if(!chaseOn()){INS.heat=0;return;}
+  const lap=P.lapse>0;
+  if(lap&&!hadLapse){ // a stumble is blood in the water
+    INS.heat=Math.min(100,INS.heat+45);
+    texts.push({x:Math.round(RSX()),y:FEET+24,s:'HEY!!',c:'#ff5f6d',t:36});
+  }
+  hadLapse=lap;
+  INS.heat=Math.max(0,INS.heat-0.12);
+  INS.peak=Math.max(INS.peak,INS.heat);
+  INS.x+=(P.x-INS.x)*0.1;
+}
 function catchPlayer(){
   if(state!=='run')return;
   state='busted';stT=0;deaths++;
+  if(chaseOn()){INS.heat=100;INS.x=P.x;} // the inspector makes the grab
   shake(6);burst(RSX(),FEET-12,22,'#e63946',2.4);
   if(playing())gameOver('BUSTED');
 }
@@ -253,7 +278,7 @@ function runnerPolicy(){
         if(t0*spd<30){texts.push({x:RSX(),y:FEET-30,s:'CLOSE!',c:'#ffe66d',t:40});shake(1);}
       }else if(t0*spd<36)jumpNow(); // boxed in: ride the roof
     }else if(t0>90){ // safe
-      if(rushPhase==='calm'){ // chase loot
+      if(rushPhase==='calm'&&!chaseHot()){ // chase loot
         let best=lane,bs=coinScore(lane);
         for(const d of[-1,1]){
           const l2=lane+d;
@@ -263,7 +288,8 @@ function runnerPolicy(){
           if(s>bs+1){bs=s;best=l2;}
         }
         P.tl=best;
-      }else{ // EXPRESS called: work toward the guaranteed corridor and hold it
+      }else{ // EXPRESS called, or the inspector is breathing down his neck:
+             // work toward the guaranteed corridor and hold it
         const d=Math.sign(corridor-lane);
         if(d){
           const l2=lane+d;
@@ -387,13 +413,14 @@ function pickups(){
 function step(){
   frame++;
   sessionStep({reset:startRun});
+  if(!chaseOn()){INS.heat=0;INS.peak=0;} // ablation is total: no pursuit pressure anywhere
   const pres=SHOW.step(frame); // EXPRESS CLEARED: 24f at 1/3 speed
   if(state==='intro'){
     stT++;
-    if(stT<50&&stT%3===0) // spraying the wall
+    if(stT<30&&stT%3===0) // spraying the wall
       spawn({x:20+R(-5,7),y:FEET-46+R(-12,16),vx:R(-0.4,0.2),vy:R(-0.2,0.2),t:RI(10,24),c:'#2de2e6',drag:1});
-    if(stT===58)texts.push({x:46,y:FEET-60,s:'HEY!!',c:'#ff5f6d',t:46});
-    if(stT>80)state='run';
+    if(stT===34)texts.push({x:46,y:FEET-60,s:'HEY!!',c:'#ff5f6d',t:40});
+    if(stT>50)state='run';
   }else if(state==='run'){
     // slow-mo skip frames stay inside this branch: falling through to the
     // busted else would tick stT and eventually startRun() mid-run
@@ -424,6 +451,7 @@ function step(){
           o.nm=1;
           if(o.kind!=='train'||spd>3.6){
             burst(RSX()+(LX[o.lane]>P.x?9:-9),FEET-16,6,'#fff',1.6);
+            fxBurst(RSX()+(LX[o.lane]>P.x?7:-7),FEET-22,8,'#cfe6ff',2.4); // wind shear off the hull
             shake(o.kind==='mov'?3:1);SHOW.offer({id:'whoosh',tier:1,at:frame});
             if(playing())addScore(3);
             if(random()<0.5)texts.push({x:RSX(),y:FEET-34,s:'WHOOSH!',c:'#9fd8ff',t:30});
@@ -435,11 +463,12 @@ function step(){
         }
       }
       pickups();
+      stepChase();
     }
     }
   }else{ // busted
     stT++;
-    if(stT>115&&!playing())startRun();
+    if(stT>60&&!playing())startRun();
   }
   stepParts();stepRings();
   for(const t of texts){t.t--;t.y-=0.3;}
@@ -447,9 +476,262 @@ function step(){
 }
 
 // ---------- drawing: OutRun-style chase cam down the tunnel ----------
+// Line themes rotate every 1000m with the km celebration — render-only, keyed
+// off dist, so the sim never sees them. Each theme rebuilds the tunnel's
+// materials, furniture, lighting, and signage, not just its palette.
+const THEMES=[
+ {name:'METRO',deco:'metro',station:true,
+  ceil:'#0b0e15',floor:'#191d26',wallFace:'#141924',seam:'#232c3c',pipe:'#2a3446',
+  arch:'#262e40',archLit:'#3a4763',lamp:'#ffe9a3',glow:'#2de2e6',sign:'#3f7fd1',sign2:'#dff0ff',
+  plat:'#2a3140',bed:'#20232d',tie:'#2e313d',rail:'#454b59',grit:'#3a4051',dash:'#333a48',box:'#222939',boxLit:'#39445c'},
+ {name:'WORKS',deco:'works',station:false,
+  ceil:'#100c06',floor:'#1d160c',wallFace:'#181106',seam:'#2b2010',pipe:'#4a3b24',
+  arch:'#33270f',archLit:'#4e3d1e',lamp:'#ffb24d',glow:'#ff8a2a',sign:'#c47f2e',sign2:'#ffe9c4',
+  plat:'#3a2f1c',bed:'#241d12',tie:'#332a18',rail:'#55482e',grit:'#46391f',dash:'#3c2f18',box:'#2e2410',boxLit:'#4a3b24'},
+ {name:'UPTOWN',deco:'uptown',station:true,
+  ceil:'#0f0a16',floor:'#1d1526',wallFace:'#170e21',seam:'#2c1c3e',pipe:'#34244a',
+  arch:'#2c1c3e',archLit:'#46305f',lamp:'#ff9adf',glow:'#b45fff',sign:'#ff5fa8',sign2:'#ffe1f2',
+  plat:'#2c2138',bed:'#221a2e',tie:'#31253f',rail:'#4c3d63',grit:'#3c2e50',dash:'#372a49',box:'#251b33',boxLit:'#40305a'},
+ {name:'DEPOT',deco:'depot',station:false,
+  ceil:'#120b08',floor:'#201410',wallFace:'#190f0a',seam:'#2e1c13',pipe:'#3e2a1e',
+  arch:'#35211a',archLit:'#523427',lamp:'#ffd166',glow:'#e07a4a',sign:'#b0703a',sign2:'#ffe9c4',
+  plat:'#3a2418',bed:'#26180f',tie:'#362417',rail:'#573f2b',grit:'#48311e',dash:'#3e2a1c',box:'#2a1a12',boxLit:'#46301f'}];
+const themeIx=()=>Math.floor(dist/10000)%THEMES.length;
+
+function drawTunnel(T){
+  // enclosing vault: ceiling plane, wall faces, floor
+  rect(0,0,W,HOR,T.ceil);
+  rect(0,HOR,W,H-HOR,T.floor);
+  // the mouth: the tunnel keeps going — a dark portal with a lit rim
+  rect(57,120,46,66,'#04060a');
+  ctx.globalAlpha=0.7;
+  rect(56,119,1,67,T.archLit);rect(103,119,1,67,T.archLit);
+  rect(56,119,48,1,T.archLit);
+  ctx.globalAlpha=1;
+  const pOn=Math.floor(frame/26)%2; // portal safety lights
+  rect(58,122,2,2,pOn?'#ff5f6d':'#3a2026');
+  rect(100,122,2,2,pOn?'#3a2026':'#ff5f6d');
+  ctx.globalAlpha=0.1;ctx.fillStyle=T.glow;ctx.fillRect(52,108,56,12);ctx.globalAlpha=1;
+  // wall planes converging on the mouth
+  ctx.fillStyle=T.wallFace;
+  ctx.beginPath();ctx.moveTo(0,49);ctx.lineTo(57,119);ctx.lineTo(57,186);ctx.lineTo(0,279);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(160,49);ctx.lineTo(103,119);ctx.lineTo(103,186);ctx.lineTo(160,279);ctx.closePath();ctx.fill();
+  // wall seam courses
+  ctx.strokeStyle=T.seam;ctx.globalAlpha=0.55;ctx.lineWidth=1;
+  for(const t of[0.3,0.62]){
+    ctx.beginPath();ctx.moveTo(0,49+230*t);ctx.lineTo(57,119+67*t);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(160,49+230*t);ctx.lineTo(103,119+67*t);ctx.stroke();
+  }
+  // ceiling conduits running to the vault mouth
+  ctx.strokeStyle=T.pipe;ctx.globalAlpha=0.6;
+  for(const[cx0,cx1]of[[26,72],[134,88],[8,66],[152,94]]){
+    ctx.beginPath();ctx.moveTo(cx0,0);ctx.lineTo(cx1,117);ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  // streaming arch bays with per-line furniture
+  for(let k=0;k<10;k++){
+    const z=md(k*84-dist,ZMAX+140)-40;
+    if(z<0)continue;
+    const f=pf(z),y=py3(f),a=zfade(z);
+    if(a<=0)continue;
+    const yc=HOR-(HOR-24)*f*0.94;
+    const wy=dist+z,seg=Math.floor(wy/84);
+    const station=T.station&&md(wy,2600)<340;
+    const xl=px3(-4,f),xr=px3(164,f),pw=Math.max(1,3*f);
+    ctx.globalAlpha=a*0.92;
+    // posts with a lit inner edge
+    ctx.fillStyle=station?T.archLit:T.arch;
+    ctx.fillRect(xl-pw/2,yc,pw,y-yc);ctx.fillRect(xr-pw/2,yc,pw,y-yc);
+    ctx.fillStyle=T.archLit;
+    ctx.fillRect(xl+pw/2,yc,Math.max(1,f),y-yc);ctx.fillRect(xr-pw/2-Math.max(1,f),yc,Math.max(1,f),y-yc);
+    // wall lamps pooling warm light down the faces
+    if(seg%2===0){
+      const lampY=yc+(y-yc)*0.32;
+      ctx.fillStyle=T.lamp;
+      ctx.fillRect(xl-pw/2-1.6*f,lampY,Math.max(1,1.8*f),Math.max(1,2.4*f));
+      ctx.fillRect(xr+pw/2,lampY,Math.max(1,1.8*f),Math.max(1,2.4*f));
+      ctx.globalAlpha=a*0.10;
+      ctx.fillRect(xl-12*f,lampY-3*f,12*f,16*f);
+      ctx.fillRect(xr,lampY-3*f,12*f,16*f);
+      ctx.globalAlpha=a*0.05;
+      ctx.fillRect(xl-18*f,lampY,18*f,22*f);
+      ctx.fillRect(xr,lampY,18*f,22*f);
+      ctx.globalAlpha=a*0.92;
+    }
+    // vault beam + brackets
+    ctx.fillStyle=T.arch;ctx.fillRect(xl,yc,xr-xl,Math.max(1,2.2*f));
+    ctx.fillStyle=T.archLit;
+    for(let bx=0.2;bx<0.9;bx+=0.3)ctx.fillRect(xl+(xr-xl)*bx,yc,Math.max(1,1.5*f),Math.max(1,3.6*f));
+    // power cables sagging between bays
+    ctx.strokeStyle=T.pipe;ctx.globalAlpha=a*0.5;
+    ctx.beginPath();ctx.moveTo(xl+(xr-xl)*0.12,yc+2*f);
+    ctx.quadraticCurveTo(80,yc+9*f,xr-(xr-xl)*0.12,yc+2*f);ctx.stroke();
+    ctx.globalAlpha=a*0.92;
+    // rival crew tags + service posters on the lower wall faces
+    if(seg%2===0&&f>0.35&&xl>4){
+      const gc2=['#2de2e6','#ff5fa8','#ffd166','#7ee08a'][seg%4];
+      ctx.fillStyle=gc2;ctx.globalAlpha=a*0.4;
+      ctx.fillRect(xl-9*f,y-16*f,Math.max(1,8*f),Math.max(1,3.6*f));
+      ctx.fillRect(xl-7*f,y-12*f,Math.max(1,4*f),Math.max(1,1.6*f)); // drip line
+      ctx.fillRect(xr+2*f,y-13*f,Math.max(1,6*f),Math.max(1,3*f));
+      ctx.globalAlpha=a*0.92;
+    }else if(seg%3===2&&f>0.3&&xl>4){
+      ctx.fillStyle=T.sign;ctx.fillRect(xl-7*f,y-18*f,Math.max(1,4*f),Math.max(1,5.5*f));
+      ctx.fillStyle=T.sign2;ctx.fillRect(xl-6*f,y-17*f,Math.max(1,2*f),Math.max(1,1.4*f));
+      ctx.fillStyle=T.sign;ctx.fillRect(xr+3*f,y-17*f,Math.max(1,4*f),Math.max(1,5.5*f));
+    }
+    if(T.deco==='works'){ // heavy pipe run + hazard tape + scaffold braces
+      ctx.fillStyle=T.pipe;ctx.fillRect(xl,yc+3.4*f,xr-xl,Math.max(1,1.5*f));
+      if(seg%2){ctx.fillStyle='#ffb24d';
+        for(let bx=0.12;bx<0.9;bx+=0.24)ctx.fillRect(xl+(xr-xl)*bx,yc+3.2*f,Math.max(1,2*f),Math.max(1,1.2*f));}
+      ctx.strokeStyle=T.pipe;
+      ctx.beginPath();ctx.moveTo(xl-2*f,yc+6*f);ctx.lineTo(xl+4*f,yc+16*f);
+      ctx.moveTo(xl+4*f,yc+6*f);ctx.lineTo(xl-2*f,yc+16*f);
+      ctx.moveTo(xr+2*f,yc+6*f);ctx.lineTo(xr-4*f,yc+16*f);
+      ctx.moveTo(xr-4*f,yc+6*f);ctx.lineTo(xr+2*f,yc+16*f);ctx.stroke();
+    }else if(T.deco==='depot'){ // brick courses down the posts
+      ctx.fillStyle='#1c0f0a';
+      for(let by=1;by<5;by++){
+        ctx.fillRect(xl-pw/2,yc+(y-yc)*by/5,pw,Math.max(1,f*0.8));
+        ctx.fillRect(xr-pw/2,yc+(y-yc)*by/5,pw,Math.max(1,f*0.8));
+      }
+    }else if(T.deco==='uptown'&&seg%2===0){ // neon spines
+      const nc=seg%4===0?'#ff5fa8':'#2de2e6';
+      ctx.fillStyle=nc;ctx.globalAlpha=a*(0.5+0.35*Math.sin(frame*0.1+seg));
+      ctx.fillRect(xl+pw/2+f,yc+5*f,Math.max(1,1.2*f),Math.max(1,Math.min(22*f,y-yc-8*f)));
+      ctx.fillRect(xr-pw/2-2*f,yc+5*f,Math.max(1,1.2*f),Math.max(1,Math.min(22*f,y-yc-8*f)));
+      ctx.globalAlpha=a*0.92;
+    }
+    // hanging line sign every third bay
+    if(seg%3===1){
+      const sw=13*f,sh=5.5*f,sx=80-sw/2+Math.sin(frame*0.04+seg)*f,syy=yc+5*f;
+      ctx.fillStyle=T.arch;ctx.fillRect(80-f*0.6,yc+2*f,Math.max(1,1.2*f),3*f); // hanger
+      ctx.fillStyle='#0d1016';ctx.fillRect(sx,syy,sw,sh);
+      ctx.fillStyle=T.sign;ctx.fillRect(sx,syy,sw,Math.max(1,1.1*f));
+      ctx.fillStyle=T.sign2;
+      for(let i=0;i<4;i++)ctx.fillRect(sx+(1.6+i*2.8)*f,syy+2.2*f,Math.max(1,1.7*f),Math.max(1,1.3*f));
+    }
+    if(station){ // a lit platform blurs past: ledge, glow band, waiting commuters
+      const side=(Math.floor(wy/2600)%2)?1:-1;
+      const bx=side<0?xl:xr,dir=side<0?1:-1,pw2=21*f;
+      // warm lit wall band behind the platform
+      ctx.globalAlpha=a*0.25;ctx.fillStyle=T.lamp;
+      ctx.fillRect(side<0?bx-2*f:bx-pw2+2*f,y-13*f,pw2,10*f);
+      ctx.globalAlpha=a*0.92;
+      ctx.fillStyle=T.plat;ctx.fillRect(side<0?bx:bx-pw2,y-4.5*f,pw2,Math.max(1,4.5*f));
+      ctx.fillStyle=T.archLit;ctx.fillRect(side<0?bx:bx-pw2,y-4.5*f,pw2,Math.max(1,1.2*f));
+      ctx.fillStyle='#ffd166';ctx.globalAlpha=a*0.7;
+      ctx.fillRect(side<0?bx+pw2-2*f:bx-pw2,y-4.5*f,Math.max(1,1.8*f),Math.max(1,4.5*f));
+      ctx.globalAlpha=a*0.92;
+      for(let i=0;i<4;i++){ // commuters; one waves as you blast past
+        const hsh=hash(seg,i);
+        if(hsh<0.22)continue;
+        const px=bx+dir*(3.5+i*4.5)*f,ph=5.5*f;
+        const cc=['#5a7a94','#7a5a94','#94745a','#5a9474'][Math.floor(hsh*4)%4];
+        ctx.fillStyle=cc;ctx.fillRect(px,y-4.5*f-ph,Math.max(1,2.4*f),Math.max(1,ph));
+        ctx.fillStyle='#e8b088';ctx.fillRect(px,y-4.5*f-ph-Math.max(1,2*f),Math.max(1,2.4*f),Math.max(1,2*f));
+        if(hsh>0.72){const wv=Math.floor(frame/10+i)%2; // wave at the madman
+          ctx.fillStyle=cc;ctx.fillRect(px+(dir>0?-1.6*f:2.6*f),y-4.5*f-ph-(wv?2.4:1)*f,Math.max(1,1.4*f),Math.max(1,2.4*f));}
+      }
+    }
+    if((T.deco==='works'&&seg%4===2)||seg%9===4){ // steam bleed
+      const pt=(frame*0.6+seg*13)%26;
+      if(pt<16){ctx.globalAlpha=a*(0.3-pt*0.016);ctx.fillStyle='#c9d2dd';
+        ctx.fillRect(xl+3*f,y-3*f-pt*f*0.6,Math.max(2,(3+pt*0.3)*f),Math.max(1,2*f));ctx.globalAlpha=a*0.92;}
+    }
+    ctx.globalAlpha=1;
+  }
+  // ceiling strip lights streaming overhead
+  for(let k=0;k<9;k++){
+    const z=md(k*95-dist,ZMAX+140)-40;
+    if(z<0)continue;
+    const f=pf(z),y=HOR-(HOR-26)*f*0.92,a=zfade(z)*0.9;
+    const dead=T.deco==='works'&&Math.floor((dist+z)/95)%5===3;
+    ctx.globalAlpha=dead?(Math.floor(frame/9)%3?0.12:a*0.7):a;
+    rect(80-3*f,y,6*f,Math.max(1,2*f),T.lamp);
+    ctx.globalAlpha=dead?0.05:a*0.25;
+    rect(80-8*f,y+2*f,16*f,Math.max(1,1.5*f),T.lamp);
+    ctx.globalAlpha=1;
+  }
+}
+function drawTrack(T){
+  const fFar=pf(ZMAX+40),yFar=py3(fFar),fNear=pf(-70),yNear=py3(fNear);
+  for(const l of LX){ // three raised track beds running past the camera plane
+    ctx.fillStyle=T.bed;
+    ctx.beginPath();
+    ctx.moveTo(px3(l-17,fNear),yNear);ctx.lineTo(px3(l+17,fNear),yNear);
+    ctx.lineTo(px3(l+17,fFar),yFar);ctx.lineTo(px3(l-17,fFar),yFar);
+    ctx.closePath();ctx.fill();
+  }
+  // rails converging on the vanishing point
+  ctx.strokeStyle=T.rail;ctx.lineWidth=1;
+  for(const l of LX)for(const s of[-14,14]){
+    ctx.beginPath();
+    ctx.moveTo(px3(l+s,fNear),yNear);ctx.lineTo(px3(l+s,fFar),yFar);
+    ctx.stroke();
+  }
+  // ties + ballast rushing at the camera — raw speed
+  for(let k=0;k<16;k++){
+    const z=md(k*34-dist,ZMAX+60)-20;
+    if(z<-60)continue;
+    const f=pf(z),y=py3(f),a=zfade(z)*0.9;
+    ctx.globalAlpha=a;
+    for(const l of LX){
+      rect(px3(l-13,f),y,px3(l+13,f)-px3(l-13,f),Math.max(1,2.4*f),T.tie);
+      const g1=hash(k,Math.floor((dist+z)/34)); // gravel scatter between ties
+      ctx.globalAlpha=a*0.55;
+      rect(px3(l-9+g1*7,f),y+3*f,Math.max(1,1.2*f),Math.max(1,1.2*f),T.grit);
+      rect(px3(l+3+g1*5,f),y-2.4*f,Math.max(1,1.2*f),Math.max(1,1.2*f),T.grit);
+      ctx.globalAlpha=a;
+    }
+    ctx.globalAlpha=1;
+  }
+  // service-walkway dashes streaming along both walls
+  for(let k=0;k<12;k++){
+    const z=md(k*44-dist,ZMAX+40)-10;
+    if(z<0)continue;
+    const f=pf(z),y=py3(f),a=zfade(z)*0.8;
+    ctx.globalAlpha=a;
+    rect(px3(9,f)-2*f,y,Math.max(1,3.4*f),Math.max(1,1.4*f),(k%3)?T.dash:'#ffd166');
+    rect(px3(151,f)-f,y,Math.max(1,3.4*f),Math.max(1,1.4*f),(k%3)?T.dash:'#ffd166');
+    ctx.globalAlpha=1;
+  }
+  // relay cabinets crouched along the walls, LEDs ticking
+  for(let k=0;k<4;k++){
+    const z=md(k*230-dist,ZMAX+80)-30;
+    if(z<10)continue;
+    const f=pf(z),y=py3(f),a=zfade(z);
+    if(a<=0)continue;
+    const xx=px3(k%2?9:151,f);
+    ctx.globalAlpha=a;
+    rect(xx-3.5*f,y-8*f,7*f,8*f,T.box);
+    rect(xx-3.5*f,y-8*f,7*f,Math.max(1,1.4*f),T.boxLit);
+    const on=Math.floor(frame/14+k)%2;
+    rect(xx+1.2*f,y-6.4*f,Math.max(1,1.4*f),Math.max(1,1.4*f),on?'#7ee08a':'#1c2a1e');
+    ctx.globalAlpha=1;
+  }
+}
 function slab(o){ // a train drawn as a looming 3D block
-  const zN=zof(o.y+o.len),zF=zof(o.y);
-  if(zF<-30||zN>ZMAX+60)return; // alive until the BACK clears the camera
+  const zNr=zof(o.y+o.len),zF=zof(o.y);
+  if(o.kind==='mov'&&zNr>ZMAX-60&&zNr<GLOWZ){
+    // twin headlights pierce the tunnel dark long before the body surfaces
+    const t=1-(zNr-(ZMAX-60))/(GLOWZ-(ZMAX-60));
+    const f=pf(ZMAX-30),gx=px3(LX[o.lane],f),gy=py3(f)-8*f;
+    const wig=frame%18<9;
+    for(let i=0;i<2;i++){
+      const lx=gx+(i?3:-4),on=wig===(i===0);
+      ctx.globalAlpha=(0.25+0.65*t)*(on?1:0.35);
+      rect(lx,gy,2,2,'#ffffff');
+      ctx.globalAlpha=(0.1+0.3*t)*(on?1:0.3);
+      ctx.fillStyle='#fff7ae';
+      ctx.beginPath();ctx.arc(lx+1,gy+1,3+4*t,0,7);ctx.fill();
+    }
+    ctx.globalAlpha=0.08+0.28*t; // light pooling down the rails
+    rect(gx-5,gy+4,2,9,'#fff7ae');rect(gx+3,gy+4,2,9,'#fff7ae');
+    ctx.globalAlpha=1;
+  }
+  if(zF<-30||zNr>ZMAX+60)return; // alive until the BACK clears the camera
+  const zN=zNr;
   const fN=pf(zN),fF=pf(Math.min(zF,ZMAX+40));
   const[b,lt,dk]=TCOL[o.col||0];
   const xN=px3(LX[o.lane],fN),xF=px3(LX[o.lane],fF);
@@ -474,6 +756,7 @@ function slab(o){ // a train drawn as a looming 3D block
     const ax=px3(LX[o.lane],f),ay=py3(f)-27*f;
     rect(ax-7*f,ay-3*f,14*f,4*f,'#aab3bd');
     rect(ax-7*f,ay-3*f,14*f,Math.max(1,1.2*f),'#cdd5dd');
+    rect(ax+2*f,ay-2*f,3*f,Math.max(1,1.4*f),'#7d858e'); // vent grille
   }
   // bright leading edge along the front-top
   rect(xN-wN,yN-hN,wN*2,Math.max(1,2.2*fN),lt);
@@ -483,11 +766,35 @@ function slab(o){ // a train drawn as a looming 3D block
   ctx.moveTo(xN-wN,yN);ctx.lineTo(xN-wN,yN-hN);
   ctx.lineTo(xF-wF,yF-hF);ctx.lineTo(xF-wF,yF);
   ctx.closePath();ctx.fill();
-  // front face
+  // side windows + bogies along the visible skirt
+  const zF2=Math.min(zF,ZMAX+40);
+  for(let t=0.16,i=0;t<0.9;t+=0.15,i++){
+    const z=zN+(zF2-zN)*t,f2=pf(z);
+    const sx=px3(LX[o.lane],f2)-20*f2,y2=py3(f2);
+    const lit=hash(o.len*13+(o.col||0)*5,i)>0.45;
+    ctx.fillStyle=lit?'#ffe9a3':'#131722';
+    ctx.globalAlpha=a*0.85;
+    ctx.fillRect(sx+1.2*f2,y2-19*f2,Math.max(1,2.6*f2),Math.max(1,4.5*f2));
+    ctx.globalAlpha=a;
+    if(i%2===0){ctx.fillStyle='#0c0f16';ctx.fillRect(sx,y2-3*f2,Math.max(1,4*f2),Math.max(1,3*f2));} // bogies
+  }
+  // front face: livery, destination board, doors, bumper
   rect(xN-wN,yN-hN,wN*2,hN,b);
   rect(xN-wN,yN-hN,wN*2,Math.max(1,2.2*fN),lt);
+  rect(xN-wN*0.5,yN-hN*0.99,wN,Math.max(1,hN*0.10),'#101319'); // destination board
+  ctx.fillStyle='#ffd68a';
+  for(let i=0;i<3;i++)ctx.fillRect(xN-wN*0.34+i*wN*0.3,yN-hN*0.965,Math.max(1,1.6*fN),Math.max(1,1.4*fN));
   // windshield
-  rect(xN-wN*0.78,yN-hN*0.92,wN*1.56,hN*0.34,'#161a26');
+  rect(xN-wN*0.78,yN-hN*0.88,wN*1.56,hN*0.32,'#161a26');
+  ctx.globalAlpha=a*0.35; // glass glint
+  rect(xN-wN*0.66,yN-hN*0.85,wN*0.3,Math.max(1,hN*0.2),'#9fb6cf');
+  ctx.globalAlpha=a;
+  rect(xN-wN,yN-hN*0.48,wN*2,Math.max(1,hN*0.10),lt); // livery stripe
+  rect(xN-wN*0.34,yN-hN*0.5,Math.max(1,1.4*fN),hN*0.5,dk); // door seams
+  rect(xN+wN*0.34,yN-hN*0.5,Math.max(1,1.4*fN),hN*0.5,dk);
+  rect(xN-wN,yN-Math.max(1,2.6*fN),wN*2,Math.max(1,2.6*fN),'#171b24'); // bumper
+  rect(xN-wN*0.85,yN-Math.max(1,2.2*fN),Math.max(1,2*fN),Math.max(1,1.4*fN),'#ffb24d'); // reflectors
+  rect(xN+wN*0.85-Math.max(1,2*fN),yN-Math.max(1,2.2*fN),Math.max(1,2*fN),Math.max(1,1.4*fN),'#ffb24d');
   // lights
   const ly=yN-hN*0.3,lw=Math.max(1,3.4*fN);
   if(o.kind==='mov'){ // wig-wag brights: flashing at you = it's MOVING
@@ -506,7 +813,11 @@ function slab(o){ // a train drawn as a looming 3D block
     rect(xN-wN*0.7,ly,lw,lw,o.kind==='crawl'&&frame%30<15?'#ff5f6d':'#3a4356');
     rect(xN+wN*0.7-lw,ly,lw,lw,o.kind==='crawl'&&frame%30<15?'#ff5f6d':'#3a4356');
   }
-  if(o.kind==='crawl'&&frame%4<2)rect(xN+(hash(frame>>2,o.y)*2-1)*wN,yN+1,1,2,'#6b7180'); // wheel dust
+  if(o.kind==='crawl'){
+    if(frame%4<2)rect(xN+(hash(frame>>2,o.len)*2-1)*wN,yN+1,1,2,'#6b7180'); // wheel dust
+    const pk=(frame>>2)%6; // exhaust chuffing off the roof line
+    if(pk<3){ctx.globalAlpha=a*(0.3-pk*0.08);rect(xN+wN*0.55,yN-hN-3-pk*2,3+pk,2,'#9aa2ae');ctx.globalAlpha=a;}
+  }
   ctx.globalAlpha=1;
 }
 function drawObs(){
@@ -549,6 +860,11 @@ function drawObs(){
       rect(x-ww/2,y-hh,ww,hh*2,'#c99a2e'); // rim
       rect(x-ww/2+1,y-hh+1,Math.max(1,ww-2),Math.max(1,hh*2-2),'#ffd166');
       if(ww>3)rect(x-1,y-hh+2,Math.max(1,ww*0.25),Math.max(1,hh*0.7),'#fff3c4');
+      if(hash(Math.round(cn.x*3+cn.lane*7),frame>>3)>0.8){ // streak sparkle
+        ctx.fillStyle='#fff';
+        ctx.fillRect(Math.round(x),Math.round(y-hh-2),1,1);
+        ctx.fillRect(Math.round(x-2),Math.round(y),1,1);
+      }
       ctx.globalAlpha=1;
     }else{
       const p=it.p,f=pf(it.z),x=px3(LX[p.lane],f),y=py3(f)-6*f+Math.sin(frame*0.12+p.y)*2*f;
@@ -560,59 +876,154 @@ function drawObs(){
         rect(x-4*f,y-6*f,8*f,10*f,'#8b91a5');
         rect(x-3*f,y-8*f,6*f,3*f,'#e63946');
         rect(x-3*f,y+3*f,6*f,3*f,'#ff8a2a');
+        if(frame%10<5)rect(x-f,y+6*f,2*f,2*f,'#ffd166'); // pilot flame
       }
+      ctx.globalAlpha=a*(0.25+0.15*Math.sin(frame*0.2+p.y)); // beckoning halo
+      ctx.fillStyle=p.kind==='mag'?'#ff5fa8':'#ffd166';
+      ctx.beginPath();ctx.arc(x,y-2*f,7*f,0,7);ctx.fill();
       ctx.globalAlpha=1;
     }
   }
 }
-function drawRunner(){
-  const x=Math.round(RSX());
+// shared runner pose: drawing and the visual probe must agree on the pixels
+function runnerPose(){
   let h=0;
   if(P.jumpT>0)h=Math.sin(Math.PI*(1-P.jumpT/32))*26;
   else if(P.hopT>0)h=Math.sin(Math.PI*(P.hopT/8))*8;
   if(P.jetT>0)h=24+Math.sin(frame*0.2)*3;
-  const base=P.elev===1&&P.jumpT<=0?FEET-26:FEET; // standing on a roof
-  const y=Math.round(base-h);
-  // shadow
+  const base=P.elev===1&&P.jumpT<=0?FEET-26:FEET;
+  return{x:Math.round(RSX()),base,y:Math.round(base-h)};
+}
+function drawRunner(){
+  const pose=runnerPose(),x=pose.x,y=pose.y,base=pose.base;
+  // ground shadow
   ctx.globalAlpha=0.3;
-  const shw=Math.max(4,11-h*0.18);
-  rect(x-shw/2,base+1,shw,3,'#05060a');
+  const shw=Math.max(4,9-(base-y)*0.14);
+  rect(x-shw/2,base+1,shw,2,'#05060a');
   ctx.globalAlpha=1;
   if(P.magT>0){ctx.globalAlpha=0.3;ctx.strokeStyle='#ff5fa8';
-    ctx.beginPath();ctx.arc(x,y-12,16+Math.sin(frame*0.25)*3,0,7);ctx.stroke();ctx.globalAlpha=1;}
+    ctx.beginPath();ctx.arc(x,y-8,11+Math.sin(frame*0.25)*2,0,7);ctx.stroke();ctx.globalAlpha=1;}
   if(P.jetT>0){ // afterimages trailing the boost
-    for(const g of[[9,0.25],[18,0.12]]){
+    for(const g of[[7,0.22],[13,0.1]]){
       ctx.globalAlpha=g[1];
-      rect(x-5,y-15+g[0],11,10,'#3aa7f0');
-      rect(x-4,y-23+g[0],9,3,'#e63946');
+      rect(x-3,y-10+g[0],7,7,'#3aa7f0');
     }
     ctx.globalAlpha=1;
   }
-  if(P.rollT>0){ // tumbling ball
-    rect(x-6,y-10,13,10,'#3aa7f0');
-    rect(x-3,y-8,7,3,'#e8b088');
+  if(P.rollT>0){ // tuck-and-roll, tumbling
+    const ph=Math.floor(P.rollT/4)%2;
+    rect(x-4,y-7,8,7,'#3aa7f0');
+    rect(x-3,y-6,6,5,'#2b7fc2');
+    rect(x-3+(ph?3:0),y-6,3,2,'#e8b088'); // head tucked, tumbling over
+    rect(x-4,y-(ph?2:5),8,1,'#9fd8ff');   // motion band
     ctx.globalAlpha=0.4;
-    rect(x-9,y-4,3,1,'#fff');rect(x+7,y-8,3,1,'#fff');
+    rect(x-7,y-2,2,1,'#fff');rect(x+5,y-6,2,1,'#fff');
     ctx.globalAlpha=1;
     return;
   }
-  const trip=P.lapse>0?Math.sin(frame*0.9)*2:0; // visible stumble on a lapse
-  const leg=Math.sin(P.legT)*3;
-  // legs
-  rect(x-3+leg+trip,y-6,3,6,'#31518f');rect(x+1-leg+trip,y-6,3,6,'#31518f');
-  rect(x-3+leg+trip,y-2,3,2,'#f2f3f7');rect(x+1-leg+trip,y-2,3,2,'#f2f3f7');
-  // torso + backpack
-  rect(x-5+trip,y-15,11,10,'#3aa7f0');
-  rect(x-6+trip,y-13,2,6,'#2b7fc2');
-  // arms pumping
-  rect(x-7+trip,y-13+Math.round(-leg*0.7),3,5,'#3aa7f0');
-  rect(x+5+trip,y-13+Math.round(leg*0.7),3,5,'#3aa7f0');
-  // head + cap (backwards)
-  rect(x-3+trip,y-21,7,6,'#e8b088');
-  rect(x-4+trip,y-23,9,3,'#e63946');
-  rect(x-4+trip,y-20,2,2,'#fff');
-  if(P.jetT>0){rect(x-8,y-16,3,9,'#8b91a5');rect(x+6,y-16,3,9,'#8b91a5');}
-  if(P.lapse>0&&frame%14<8){ctx.fillStyle='#ffe66d';ctx.font='bold 8px monospace';ctx.fillText('!',x+7,y-22);}
+  const air=P.jumpT>0||P.jetT>0;
+  const stp=Math.sin(P.legT)>0?1:0;                     // 2-frame gait
+  const bob=air?0:(Math.abs(Math.sin(P.legT))>0.7?-1:0); // stride bob
+  const trip=P.lapse>0;
+  const wob=trip?Math.round(Math.sin(frame*0.9)*1.5):0; // stumble wobble
+  const ly=y+bob;
+  if(air&&P.jetT<=0){ // jump: knees tucked, arms flung wide
+    rect(x-2,ly-4,2,3,'#31518f');rect(x+1,ly-4,2,3,'#31518f');
+    rect(x-2,ly-2,2,1,'#f2f3f7');rect(x+1,ly-2,2,1,'#f2f3f7');
+    rect(x-5,ly-9,2,2,'#3aa7f0');rect(x+4,ly-9,2,2,'#3aa7f0'); // arms out
+    rect(x-5,ly-8,1,1,'#e8b088');rect(x+5,ly-8,1,1,'#e8b088');
+  }else{
+    // legs scissoring, sneakers flashing
+    rect(x-2+(stp?1:0),ly-4,2,4,'#31518f');
+    rect(x+1-(stp?1:0),ly-4,2,4,'#31518f');
+    rect(x-2+(stp?1:0),ly-1,2,1,'#f2f3f7');
+    rect(x+1-(stp?1:0),ly-1,2,1,'#f2f3f7');
+    if(trip){ // flailing arms — he's losing it
+      rect(x-5+wob,ly-11,2,3,'#3aa7f0');rect(x+4+wob,ly-12,2,3,'#3aa7f0');
+      rect(x-5+wob,ly-12,1,1,'#e8b088');rect(x+5+wob,ly-13,1,1,'#e8b088');
+    }else{ // arms pumping counter-phase
+      rect(x-4,ly-8+(stp?1:0),2,3,'#3aa7f0');
+      rect(x+3,ly-8+(stp?0:1),2,3,'#3aa7f0');
+      rect(x-4,ly-5+(stp?1:0),2,1,'#e8b088');
+      rect(x+3,ly-5+(stp?0:1),2,1,'#e8b088');
+    }
+  }
+  if(!(P.rollT>0)){
+    // jacket + backpack (seen from behind)
+    rect(x-2+wob,ly-9,5,5,'#3aa7f0');
+    rect(x-2+wob,ly-9,5,1,'#7cc4f5');
+    rect(x-1+wob,ly-8,3,4,'#e63946');   // the pack
+    rect(x-1+wob,ly-8,3,1,'#a3202c');
+    if(P.jetT>0){ // jet flame licking off the pack
+      const fl=2+(frame%6<3?2:0);
+      rect(x-1+wob,ly-4,3,fl,'#ffd166');
+      rect(x+wob,ly-4+fl,1,1,'#ff8a2a');
+    }
+    // head + backwards cap
+    rect(x-1+wob,ly-12,3,3,'#e8b088');
+    rect(x-2+wob,ly-14,5,2,'#e63946');
+    rect(x-1+wob,ly-12,3,1,'#a3202c'); // strap
+    rect(x+wob,ly-14,1,1,'#ffd166');   // button
+  }
+  if(P.lapse>0&&frame%14<8){ // stumble bubble
+    ctx.fillStyle='#10141a';ctx.fillRect(x+5,y-24,5,7);
+    ctx.fillStyle='#ffe66d';ctx.font='bold 6px monospace';ctx.fillText('!',x+6,y-18);
+  }
+}
+// the INSPECTOR: heat maps to how close he rides your heels
+const RIY=()=>FEET+14+Math.round((100-INS.heat)*0.5);
+function inspScreen(){
+  if(state==='intro')return{x:Math.round(RSX()*0.9+8),y:Math.round(H-12-Math.min(24,stT*0.8))};
+  if(state==='busted')return{x:Math.round(RSX())+3,y:Math.round(Math.max(FEET+10,FEET+34-stT*1.6))};
+  return{x:Math.round(px3(INS.x,1.14)),y:RIY()};
+}
+function dogXAt(ix){return ix<26?ix+12:ix-12;}
+function drawInspector(){
+  const p=inspScreen(),x=p.x,y=p.y;
+  if(y>H+16)return;
+  const stp=Math.floor(frame/5)%2;
+  const grab=state==='busted'||INS.heat>82;
+  // shadow
+  ctx.globalAlpha=0.3;rect(x-4,y+1,8,2,'#05060a');ctx.globalAlpha=1;
+  // scrambling legs
+  rect(x-2+(stp?1:0),y-4,2,4,'#16233f');
+  rect(x+1-(stp?1:0),y-4,2,4,'#16233f');
+  rect(x-2+(stp?1:0),y-1,2,1,'#0c1526');
+  rect(x+1-(stp?1:0),y-1,2,1,'#0c1526');
+  // uniform coat + belt
+  rect(x-3,y-10,7,6,'#2c3e66');
+  rect(x-3,y-10,7,1,'#41598c');
+  rect(x-3,y-5,7,1,'#16233f');
+  if(state==='intro'){ // pointing YOU-THERE pose
+    rect(x-5,y-12,2,2,'#2c3e66');rect(x-6,y-14,2,2,'#2c3e66');
+    rect(x-6,y-15,1,1,'#e8b088');
+    rect(x+3,y-9+(stp?1:0),2,3,'#2c3e66');
+  }else if(grab){ // arm out for the collar
+    rect(x+3,y-14,2,5,'#2c3e66');
+    rect(x+3,y-15,2,1,'#e8b088');
+    rect(x-5,y-9+(stp?1:0),2,3,'#2c3e66');
+  }else{ // pumping arms
+    rect(x-5,y-9+(stp?1:0),2,3,'#2c3e66');
+    rect(x+3,y-9+(stp?0:1),2,3,'#2c3e66');
+  }
+  // head + service cap with badge
+  rect(x-1,y-13,3,3,'#e8b088');
+  rect(x-2,y-15,5,2,'#1b2b52');
+  rect(x,y-15,1,1,'#ffd166');
+}
+function drawDog(){
+  const p=inspScreen(),x=dogXAt(p.x),y=p.y+2;
+  if(y>H+10)return;
+  const stp=Math.floor(frame/4)%2;
+  ctx.globalAlpha=0.3;rect(x-3,y+1,7,1,'#05060a');ctx.globalAlpha=1;
+  rect(x-3,y-4,6,3,'#8a5a2e');           // body
+  rect(x-3,y-4,6,1,'#a9743c');
+  rect(x+2,y-6+(stp?1:0),3,3,'#8a5a2e'); // head lunging
+  rect(x+3,y-7+(stp?1:0),1,1,'#5d3a1c'); // ear
+  rect(x+5,y-5+(stp?1:0),1,1,'#5d3a1c'); // snout
+  rect(x-2+(stp?1:0),y-1,1,1,'#5d3a1c'); // scrambling paws
+  rect(x+1-(stp?1:0),y-1,1,1,'#5d3a1c');
+  rect(x-4,y-5+(stp?1:0),1,2,'#5d3a1c'); // tail
 }
 function drawRush(){
   if(rushPhase==='calm')return;
@@ -631,81 +1042,30 @@ function drawRush(){
   const s=live?'EXPRESS SERVICE':'EXPRESS INBOUND';
   ctx.fillText(s,80-s.length*1.8,HOR-20);
 }
-function drawGuard(gy,gx){
-  rect(gx-7,gy-4,15,10,'#2c3e66'); // uniform
-  rect(gx-4,gy-12,9,8,'#e8b088');
-  rect(gx-5,gy-14,11,3,'#1b2b52');rect(gx-2,gy-16,5,2,'#1b2b52'); // cap
-  rect(gx-10,gy-6,3,7,'#2c3e66');rect(gx+8,gy-6,3,7,'#2c3e66'); // grabby arms
-  rect(gx+14,gy+2,10,6,'#8a5a2e');rect(gx+23,gy-1,4,4,'#8a5a2e'); // the dog
-}
 function draw(){
-  // tunnel: ceiling above the vanishing point, track bed below
-  rect(0,0,W,HOR,'#0b0d14');
-  rect(0,HOR,W,H-HOR,'#1b1e27');
-  // ceiling lights streaming overhead
-  for(let k=0;k<9;k++){
-    const z=md(k*95-dist,ZMAX+140)-40;
-    if(z<0)continue;
-    const f=pf(z),y=HOR-(HOR-26)*f*0.92,a=zfade(z)*0.9;
-    ctx.globalAlpha=a;
-    rect(80-3*f,y,6*f,Math.max(1,2*f),'#ffe9a3');
-    ctx.globalAlpha=a*0.25;
-    rect(80-8*f,y+2*f,16*f,Math.max(1,1.5*f),'#ffe9a3');
-    ctx.globalAlpha=1;
-  }
-  // tunnel arches framing the view, streaming past
-  for(let k=0;k<10;k++){
-    const z=md(k*84-dist,ZMAX+140)-40;
-    if(z<0)continue;
-    const f=pf(z),y=py3(f),a=zfade(z);
-    const yc=HOR-(HOR-24)*f*0.94;
-    const wy=dist+z,station=md(wy,2600)<340;
-    const xl=px3(80-84,f),xr=px3(80+84,f);
-    const c=station?'#343b4e':'#20242f';
-    ctx.globalAlpha=a*0.9;
-    rect(xl-f,yc,Math.max(1,2*f),y-yc,c); // posts, floor to ceiling
-    rect(xr-f,yc,Math.max(1,2*f),y-yc,c);
-    rect(xl-f,yc,xr-xl+2*f,Math.max(1,2*f),c); // ceiling beam
-    if(station){
-      rect(xl+2*f,yc+3*f,Math.max(2,4*f),Math.max(1,2.5*f),'#ffd166');
-      rect(xr-6*f,yc+3*f,Math.max(2,4*f),Math.max(1,2.5*f),'#ffd166');
+  const only=typeof globalThis.__SF_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__SF_VISUAL_ONLY_SUBJECT:null;
+  const T=THEMES[themeIx()];
+  if(only!==null){ // isolated renders for the visual eval's pixel diffs
+    rect(0,0,W,H,'#07080c');
+    preDraw();
+    if(only==='env'){drawTunnel(T);drawTrack(T);}
+    else if(only==='runner')drawRunner();
+    else if(only==='inspector')drawInspector();
+    else if(only==='dog')drawDog();
+    else if(only.startsWith('veh-')){
+      const o=obs.find(o=>TR[o.kind]&&'veh-'+o.vid===only);
+      if(o)slab(o);
     }
-    ctx.globalAlpha=1;
+    postDraw();
+    return;
   }
+  drawTunnel(T);
   preDraw();
-  // three raised track beds, running past the camera plane
-  const fFar=pf(ZMAX+40),yFar=py3(fFar),fNear=pf(-70),yNear=py3(fNear);
-  for(const l of LX){
-    ctx.fillStyle='#20232d';
-    ctx.beginPath();
-    ctx.moveTo(px3(l-17,fNear),yNear);ctx.lineTo(px3(l+17,fNear),yNear);
-    ctx.lineTo(px3(l+17,fFar),yFar);ctx.lineTo(px3(l-17,fFar),yFar);
-    ctx.closePath();ctx.fill();
-  }
-  // rails converging on the vanishing point
-  ctx.strokeStyle='#454b59';ctx.lineWidth=1;
-  for(const l of LX)for(const s of[-14,14]){
-    ctx.beginPath();
-    ctx.moveTo(px3(l+s,fNear),yNear);ctx.lineTo(px3(l+s,fFar),yFar);
-    ctx.stroke();
-  }
-  // ties rushing at the camera, one strip per lane — raw speed
-  for(let k=0;k<16;k++){
-    const z=md(k*34-dist,ZMAX+60)-20;
-    if(z<-60)continue;
-    const f=pf(z),y=py3(f),a=zfade(z)*0.9;
-    ctx.globalAlpha=a;
-    for(const l of LX)
-      rect(px3(l-13,f),y,px3(l+13,f)-px3(l-13,f),Math.max(1,2.4*f),'#2e313d');
-    ctx.globalAlpha=1;
-  }
+  drawTrack(T);
   drawRush();
   drawObs();
-  // guard: on your tail early, lunging when you're caught
-  if(state==='intro')drawGuard(H-16-Math.max(0,40-stT*2)*-0+Math.min(40,stT),52);
-  else if(state==='run'&&P.runT<160)drawGuard(H-6+P.runT*0.35,Math.round(RSX()*0.9+8));
-  else if(state==='busted')drawGuard(Math.max(FEET+8,H+30-stT*3.2),Math.round(RSX())+3);
   drawRunner();
+  drawInspector();drawDog();
   // speed streaks past the camera
   if(spd>4){
     ctx.globalAlpha=Math.min(0.14,(spd-4)*0.11);
@@ -742,12 +1102,12 @@ function draw(){
   }
   // intro tag on the wall
   if(state==='intro'){
-    ctx.globalAlpha=Math.min(1,stT/40);
+    ctx.globalAlpha=Math.min(1,stT/30);
     ctx.fillStyle='#2de2e6';ctx.font='bold 10px monospace';
     ctx.save();ctx.translate(14,FEET-34);ctx.rotate(-1.35);ctx.fillText('SIDE!',0,0);ctx.restore();
     ctx.globalAlpha=1;
   }
-  if(state==='busted'&&stT>18){
+  if(state==='busted'&&stT>14){
     ctx.globalAlpha=0.8;rect(16,150,W-32,36,'#0a0d14');ctx.globalAlpha=1;
     ctx.strokeStyle='#e63946';ctx.strokeRect(16.5,150.5,W-33,35);
     ctx.fillStyle='#e63946';ctx.font='bold 12px monospace';
@@ -761,8 +1121,129 @@ function draw(){
   ctx.fillStyle='#ffd166';ctx.fillText(''+coinCt,W-27,10);
   if(P.jetT>0){ctx.fillStyle='#ff8a2a';ctx.fillText('JET '+Math.ceil(P.jetT/60),52,10);}
   else if(P.magT>0){ctx.fillStyle='#ff5fa8';ctx.fillText('MAG '+Math.ceil(P.magT/60),52,10);}
+  ctx.globalAlpha=0.55;ctx.font='bold 6px monospace';
+  ctx.fillStyle=T.glow;ctx.fillText(T.name+' LINE',4,20);
+  ctx.globalAlpha=1;
   drawSession();
 }
+
+// ---------- probes & visual fixtures ----------
+function finiteAll(){return isFinite(P.x+dist+spd+INS.x+INS.heat)&&obs.every(o=>isFinite(o.y));}
+// Motion contract: the runner genuinely travels the tunnel at spd px/frame, so
+// his world position is (P.x, -dist). The bust beat (impact card + inspector
+// grab) and the respawn tag are the two authored pauses; both are reported as
+// emotes and together stay under the 2-second budget (60f bust + 50f intro).
+globalThis.__motionProbe=()=>({actors:[
+  {id:'runner',x:P.x,y:-dist,emote:state!=='run'},
+  {id:'inspector',x:INS.x,y:-dist+(100-INS.heat)*2,emote:state!=='run'}
+],finite:finiteAll()});
+globalThis.__soakProbe=()=>({
+  sig:Math.round(P.x*31+dist*7)+coinCt*1009+deaths*97+P.tl*17,
+  events:coinCt+deaths+Math.round(INS.peak),
+  progress:Math.round(dist),
+  finite:finiteAll()});
+let vidSeq=0;
+function __veh(kind,lane,y,len,col){
+  const o={kind,lane,y,len,col,vid:++vidSeq,z0:PY-y};obs.push(o);return o;
+}
+function vehBox(o){ // projected screen box for a fixture vehicle
+  const zNr=zof(o.y+o.len);
+  if(zNr>ZMAX-40){ // only the piercing headlights are on screen yet
+    const f=pf(ZMAX-30),gx=px3(LX[o.lane],f),gy=py3(f)-8*f;
+    return{x:gx-11,y:gy-9,width:22,height:24};
+  }
+  const zN=Math.max(zNr,-82),zF=Math.min(zof(o.y),ZMAX+40);
+  const fN=pf(zN),fF=pf(zF);
+  const xN=px3(LX[o.lane],fN),xF=px3(LX[o.lane],fF);
+  const x0=Math.min(xN-20*fN,xF-20*fF)-5,x1=Math.max(xN+20*fN,xF+20*fF)+5;
+  const y0=Math.min(py3(fF)-33*fF,py3(fN)-27*fN-8)-3,y1=py3(fN)+4; // exhaust chuffs above the near roofline
+  return{x:x0,y:y0,width:x1-x0,height:y1-y0};
+}
+globalThis.__sfVisualProbe=()=>{
+  const pose=runnerPose(),insp=inspScreen();
+  const trip=P.lapse>0;
+  const actors=[
+    {id:'runner',kind:'standard',type:'runner',
+     box:{x:pose.x-(trip?12:9),y:pose.y-(trip?27:18),width:trip?25:19,height:pose.base-pose.y+(trip?32:23)}},
+    {id:'inspector',kind:'standard',type:'inspector',
+     box:{x:insp.x-9,y:insp.y-18,width:19,height:24}},
+    {id:'dog',kind:'standard',type:'dog',
+     box:{x:dogXAt(insp.x)-7,y:insp.y-9,width:15,height:14}}
+  ];
+  for(const o of obs)if(TR[o.kind]&&o.vid){
+    const zN=zof(o.y+o.len);
+    if(zN>=ZMAX+55&&!(o.kind==='mov'&&zN<GLOWZ))continue; // still swallowed by the dark
+    actors.push({id:'veh-'+o.vid,kind:'vehicle',type:o.kind,box:vehBox(o)});
+  }
+  return{finite:finiteAll(),
+    layout:{playfield:{x:0,y:14,width:W,height:H-14},
+      approach:(()=>{
+        const o=obs.find(o=>o.kind==='mov'&&o.vid);
+        if(!o)return null;
+        return{travel:o.z0,visible:Math.min(o.z0,GLOWZ)};
+      })()},
+    actors};
+};
+function __fixRun(d){ // deterministic mid-run tableau scaffold
+  startRun();
+  state='run';stT=0;dist=d;lastKm=Math.floor(d/10000);
+  genY=-340;obs=[];coins=[];pows=[];texts=[];
+  rushPhase='calm';nextRushD=1e9;
+  P.x=LX[1];P.tl=1;INS.heat=30;INS.x=LX[1];
+  spd=2.6+Math.min(2.2,d/9000*2.2)+Math.min(0.7,Math.max(0,d-9000)/60000*0.7);
+}
+globalThis.__sfVisualBeats=['opening','run','zone1','zone2','later','danger','stumble','jet',
+  'apex','apex-before','express-warn','express-calm','busted','actor-scale','actor-motion','approach'];
+globalThis.__sfSetVisualBeat=(name)=>{
+  if(name==='opening'){startRun();return true;}
+  if(name==='run'){__fixRun(6200);
+    __veh('train',0,-170,150,2);__veh('train',2,-60,120,0);
+    obs.push({kind:'bar',lane:1,y:-118,len:6});
+    coinLine(1,160,6);pows.push({lane:1,y:-30,kind:'mag'});
+    return true;}
+  if(name==='zone1'){__fixRun(16200);
+    __veh('crawl',0,-210,130,1);__veh('train',2,-120,150,3);
+    coinLine(1,150,5);coinLine(2,20,4,true);
+    return true;}
+  if(name==='zone2'){__fixRun(26200);
+    obs.push({kind:'gan',lane:0,y:-140,len:6});
+    __veh('train',1,-260,140,0);__veh('train',0,-40,110,1);
+    coinLine(2,150,6);
+    return true;}
+  if(name==='later'){__fixRun(36200);
+    __veh('train',0,-90,170,3);__veh('train',1,-210,120,2);
+    coinLine(2,140,5);obs.push({kind:'bar',lane:2,y:-150,len:6});
+    return true;}
+  if(name==='danger'){__fixRun(9000);
+    __veh('mov',0,-180,110,1);__veh('train',2,-80,140,2);
+    coinLine(1,130,4);INS.heat=85;
+    return true;}
+  if(name==='stumble'){__fixRun(7400);
+    P.lapse=26;INS.heat=64;
+    __veh('train',0,-120,140,0);coinLine(2,140,5);
+    return true;}
+  if(name==='jet'){__fixRun(12600);
+    P.jetT=240;coinLine(1,120,6);__veh('train',2,-160,150,1);
+    return true;}
+  if(name==='apex'){__fixRun(15400);
+    rushPhase='live';rushT=886;
+    __veh('mov',0,-240,110,1);__veh('crawl',2,-120,140,3);
+    return true;}
+  if(name==='apex-before'){globalThis.__sfSetVisualBeat('apex');rushT=830;return true;}
+  if(name==='express-warn'){__fixRun(9600);rushPhase='warn';rushT=10;return true;}
+  if(name==='express-calm'){__fixRun(9600);return true;}
+  if(name==='busted'){__fixRun(8200);
+    __veh('train',1,150,126,1); // the hull he just clipped, looming at his face
+    state='busted';stT=0;deaths=1;INS.heat=100;INS.x=P.x;
+    return true;}
+  if(name==='actor-scale'){__fixRun(5000);
+    __veh('train',0,2,100,0); // near end parked at the z=180 reference depth
+    INS.heat=92;
+    return true;}
+  if(name==='actor-motion'){__fixRun(5000);INS.heat=88;return true;}
+  if(name==='approach'){__fixRun(9000);__veh('mov',0,-700,110,1);return true;}
+  return false;
+};
 
 // ---------- main ----------
 initSession('surfers',[['ARROWS','LANE · JUMP'],['DOWN','ROLL · DROP']]);
