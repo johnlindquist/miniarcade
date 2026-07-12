@@ -965,6 +965,35 @@ Zap is a deliberately weak fallback so prop economy stays the fantasy.
   noise); absolute floors are pinned to the shipped art so density regressions
   fail without reference math.
 
+## Reference-scale character pass: five games (2026-07-11)
+
+Owner directive: characters in NEON GETAWAY, TOWER PANIC, PICO CAP, SIDE
+SURFERS, and FROG CONVOY were too big and blocky — bring them to the Crystal
+Mesa / Machine Hunt / Small Guys / Meat Lad scale, with Block Mine's ~12px hero
+as the absolute ceiling, and add drawn-pixel character evals where missing.
+Executed as five parallel single-game agents against the polish-bar doctrine;
+verified and committed per game.
+
+- Measured drawn sizes (before -> after): frog-convoy lead frog 27x28 -> 9x11;
+  surfers runner 15x23 -> 9x14; tower-panic rigger 16x21 -> 8-9x15 (body ~10);
+  pico-cap big knight 10x21 -> 9x12; neon-getaway cruiser 18x28 -> 11x19,
+  pedestrians 7x12 -> 3x9. Every game now carries executable isolated-subject
+  scale gates (measureDrawnActorExtent + assertActorScale) with per-actor caps
+  far under the 20x32 repo ceiling, plus footprint (<=20%, measured 0.6-9.6%)
+  and approach-visibility floors.
+- Four of five were proven render-only (same-seed sim signatures byte-identical
+  before/after). SIDE SURFERS intentionally changed sim: a chase layer behind
+  __NO_CHASE (inspector heat driven RNG-free by existing stumble events, policy
+  flip at heat 40; 6 paired seeds, ablated twin still progresses), bust/intro
+  pauses shortened to fit the strict 120f wall-clock emote budget, and the
+  express A/B seed re-derived over a 40-seed sweep.
+- Incidental finds fixed: frog-convoy shipped a banned guideline overlay (dashed
+  route arc + landing reticle) — removed, drama re-expressed through the actor;
+  neon-getaway's helicopter rotor had a signed-sin bug stretching it to 38px.
+- Small-actors/big-worlds held: every game raised environment density as actors
+  shrank (deck dressing, road furniture, biome ground detail, tunnel vaults with
+  four rotating line themes for surfers) and measured frame richness went UP.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board
