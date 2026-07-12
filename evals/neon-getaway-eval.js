@@ -4,6 +4,7 @@
 const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
 const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+const{runFeedbackVisibility,assertFeedback,feedbackLine}=require('./feedback');
 
 // Observation only: copied planner cars are ignored, and none of these hooks
 // make decisions, touch physics values, draw, or consume either RNG stream.
@@ -23,6 +24,47 @@ globalThis.__ngCopKinds={};
 globalThis.__ngReset=()=>resetRun(true);
 globalThis.__ngPoliceKinds=()=>Object.assign({},globalThis.__ngCopKinds);
 globalThis.__ngShowApex=()=>{SHOW.reset(showFrame);SHOW.offer({id:'eval-apex',tier:3,at:showFrame,tag:'fixture',expiresAt:showFrame+120});};
+// Pose-honesty telemetry (owner directive 2026-07-12): the drawn heading must
+// track actual travel. Persistence counters, because honest yaw inertia is
+// ALLOWED to lag a few frames through a lateral flip or a spin recovery — the
+// old cosmetic model (angle = -vx - steer, wrong-signed) leaned the nose AWAY
+// from travel for entire transits, which no persistence window forgives.
+globalThis.__ngPose={frames:0,wrongWayRun:0,wrongWayMax:0,wrongWayViolations:0,
+  freeSlipRun:0,freeSlipMax:0,freeSlipViolations:0,straightRun:0,crabViolations:0,
+  slideFrames:0,maxHeldSlip:0,fishtails:0,lastSlideT:0,settle:0};
+{const P=globalThis.__ngPose,old=stepPlayer;stepPlayer=function(){const out=old();
+  if(player.spinT>0||player.swapT>0){P.settle=20;return out;} // tumble/duck poses are judged by their own states
+  if(P.settle>0){P.settle--;return out;}
+  P.frames++;
+  const va=Math.atan2(player.vx,Math.max(.5,player.speed)),angle=player.angle,
+    slideT=player.slideT||0,slip=player.slip||0;
+  const wrongWay=Math.abs(player.vx)>.3&&Math.sign(angle)!==Math.sign(va)&&Math.abs(angle)>.06;
+  P.wrongWayRun=wrongWay?P.wrongWayRun+1:0;P.wrongWayMax=Math.max(P.wrongWayMax,P.wrongWayRun);
+  if(P.wrongWayRun>8)P.wrongWayViolations++;
+  const freeSlip=slideT===0&&Math.abs(slip)>.30;
+  P.freeSlipRun=freeSlip?P.freeSlipRun+1:0;P.freeSlipMax=Math.max(P.freeSlipMax,P.freeSlipRun);
+  if(P.freeSlipRun>10)P.freeSlipViolations++;
+  const straight=Math.abs(player.vx)<.06&&Math.abs((player.intent&&player.intent.steer)||0)<.1;
+  P.straightRun=straight?P.straightRun+1:0;
+  if(P.straightRun>20&&Math.abs(angle)>.03)P.crabViolations++;
+  if(slideT>0){P.slideFrames++;if(Math.abs(slip)>P.maxHeldSlip)P.maxHeldSlip=Math.abs(slip);}
+  if(slideT>0&&P.lastSlideT===0)P.fishtails++;
+  P.lastSlideT=slideT;return out;};}
+// Scripted pose fixtures through the SHARED integrator: each one fails the
+// pre-2026-07-12 cosmetic-angle build (steadyRight leaned the WRONG way,
+// slip/slideT did not exist).
+globalThis.__ngPoseFixture=()=>{
+  const drive=(b,intent,frames)=>{for(let i=0;i<frames;i++)
+    advanceCar(b,Object.assign({steer:0,throttle:1,brake:false,handbrake:false,action:false,targetX:80,tactic:'FIXTURE'},intent),{alley:false,wet:false});
+    return{angle:b.angle,vx:b.vx,slip:b.slip,slideT:b.slideT,va:Math.atan2(b.vx,Math.max(.5,b.speed))};};
+  const fresh=()=>{const b=makePlayer(80,900,'coupe');b.speed=2;return b;};
+  const straightenBody=fresh();drive(straightenBody,{steer:1},30);
+  return{
+    steadyRight:drive(fresh(),{steer:1},40),
+    straighten:drive(straightenBody,{steer:0},50),
+    fishtail:drive(fresh(),{steer:1,handbrake:true},30),
+    freeRoll:drive(fresh(),{handbrake:true},30)
+  };};
 `;
 
 let failed=false;
@@ -287,6 +329,61 @@ console.log('7) payoff FX is a perfect same-seed simulation no-op');
   console.log(`  signatures ${same?'identical':'DIFFERENT'} through ${p.stats.events} events / ${p.stats.escapes} escapes`);
   if(!same)fail('__NO_PAYOFF_FX changed simulation state');
   if(p.stats.escapes<1)fail('FX no-op window did not exercise an escape payoff');
+}
+
+console.log('8) drawn heading is honest: body tracks travel, fishtail only when earned');
+{
+  const fixture=bootGame('neon-getaway',{seed:0x6001,footer:FOOTER}).sandbox.__ngPoseFixture();
+  console.log(`  steadyRight angle ${fixture.steadyRight.angle.toFixed(3)} (vx ${fixture.steadyRight.vx.toFixed(3)}); `+
+    `straighten angle ${fixture.straighten.angle.toFixed(4)}; fishtail slip ${fixture.fishtail.slip.toFixed(3)} slideT ${fixture.fishtail.slideT}; `+
+    `freeRoll slip ${(fixture.freeRoll.slip||0).toFixed(4)} slideT ${fixture.freeRoll.slideT}`);
+  if(!(fixture.steadyRight.vx>.2&&fixture.steadyRight.angle>.08))
+    fail(`steady right steer must lean the nose INTO the travel direction: ${JSON.stringify(fixture.steadyRight)}`);
+  if(!(Math.abs(fixture.straighten.angle)<.02&&Math.abs(fixture.straighten.vx)<.05))
+    fail(`released steering must straighten the body: ${JSON.stringify(fixture.straighten)}`);
+  if(!(fixture.fishtail.slideT>0&&fixture.fishtail.slip>.12&&fixture.fishtail.angle>fixture.fishtail.va))
+    fail(`committed handbrake slide must swing the tail out past travel: ${JSON.stringify(fixture.fishtail)}`);
+  if(!(fixture.freeRoll.slideT===0&&Math.abs(fixture.freeRoll.slip||0)<.02&&Math.abs(fixture.freeRoll.angle)<.02))
+    fail(`handbrake with centered wheels is a free roll, never a pose: ${JSON.stringify(fixture.freeRoll)}`);
+  for(const seed of[0x6100,0x613d]){
+    const game=bootGame('neon-getaway',{seed,footer:FOOTER});game.frames(10800,false);
+    const p=game.sandbox.__ngPose;
+    console.log(`  ${seed.toString(16)}: ${p.frames}f driving · wrong-way runs max ${p.wrongWayMax} (viol ${p.wrongWayViolations}) · `+
+      `free-slip runs max ${p.freeSlipMax} (viol ${p.freeSlipViolations}) · crab viol ${p.crabViolations} · `+
+      `${p.fishtails} fishtails over ${p.slideFrames}f held slip max ${p.maxHeldSlip.toFixed(3)}`);
+    if(p.frames<8000)fail(`${seed.toString(16)}: pose telemetry lost the driver (${p.frames} frames)`);
+    if(p.wrongWayViolations>0)fail(`${seed.toString(16)}: nose leaned AWAY from travel for >8 consecutive frames x${p.wrongWayViolations}`);
+    if(p.freeSlipViolations>0)fail(`${seed.toString(16)}: tail-out pose held without a latched slide x${p.freeSlipViolations}`);
+    if(p.crabViolations>0)fail(`${seed.toString(16)}: phantom crab while cruising straight x${p.crabViolations}`);
+    if(p.fishtails<4||p.slideFrames<200)fail(`${seed.toString(16)}: committed slides stopped happening (${p.fishtails} fishtails, ${p.slideFrames} frames)`);
+    if(p.maxHeldSlip<.15)fail(`${seed.toString(16)}: held slides never reached a readable fishtail (max slip ${p.maxHeldSlip.toFixed(3)})`);
+  }
+}
+
+console.log('9) feedback legibility: every good/bad sim event is visibly represented on screen');
+{
+  const config={frames:9000,poll:5,radius:26,perCategory:3,
+    goodPalette:['#ffd166','#62e6b4','#55e7ff','#ff4fa7'],badPalette:['#ff695e','#ffffff'],
+    signatureProbe:'__neonGetawaySignature'};
+  const runs=[runFeedbackVisibility('neon-getaway',Object.assign({seed:0x5300},config)),
+    runFeedbackVisibility('neon-getaway',Object.assign({seed:0x52d4},config))];
+  for(const run of runs){
+    const byKey={};for(const s of run.samples)byKey[s.key]=(byKey[s.key]||[]).concat(
+      [`${s.changed}px sig${s.kind==='good'?s.goodPixels:s.badPixels}`]);
+    console.log(`  ${run.seed.toString(16)}: ${Object.entries(run.counts).map(([k,v])=>`${k} x${v}`).join(', ')}`);
+    console.log(`    samples: ${Object.entries(byKey).map(([k,v])=>`${k}[${v.join(' ')}]`).join(' ')}`);
+  }
+  console.log(`  ${feedbackLine(runs)}; signatures ${runs.every(r=>r.signaturesMatch)?'identical':'DIFFERENT'}`);
+  // Floors measured 2026-07-12 on seeds 0x5300/0x52d4 (shipped FX): thinnest
+  // sampled beat 10px changed; weakest signature counts by category with the
+  // strengthened palette-true FX. Floors keep ~40%+ margin under the minima.
+  assertFeedback('feedback',runs,{
+    required:['good:escape','good:swap','good:paint','good:ramp','good:ramp-clear','good:thread','good:near-miss','good:land',
+      'bad:wanted-up','bad:roadblock-hit','bad:traffic-hit','bad:cop-hit','bad:bust'],
+    minChanged:{default:12,'good:near-miss':6,'good:thread':6,'good:land':6,'bad:lapse':6},
+    minSignature:{default:8,'good:near-miss':4,'good:thread':4,'good:land':4,'bad:lapse':4},
+    maxInvisible:0
+  },fail);
 }
 
 console.log(failed?'\nNEON GETAWAY EVAL FAILED':'\nNEON GETAWAY EVAL PASSED');

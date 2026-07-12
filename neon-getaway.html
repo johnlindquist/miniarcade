@@ -74,6 +74,23 @@ let lastPoliceCrash=-1e9;
 let usedFeatures=new Set(),hitBlocks=new Set(),nearPairs=new Set(),fixtureFeatures=[];
 let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLapsed=false;
+// ---- good/bad feedback presentation (all sim-inert) ------------------------
+// skids: world-space rubber the rear wheels lay during committed slides; they
+// expire on the WORLD clock in every state (pocket-league round-8 lesson) so
+// no frozen mark ever outlives its slide. pulses: slim screen-edge glow that
+// tags a beat good (gold) or bad (coral) at a glance. feedback: the append-
+// only good/bad ledger evals/feedback.js renders a same-seed __NO_PAYOFF_FX
+// twin against — every entry must be visibly represented on screen. Nothing
+// here is read by physics or either RNG stream.
+let skids=[],goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,wrecks=[];
+function cue(kind,id,x,y,pulse){
+  const wy=y===undefined?player.y:y;
+  feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
+    sx:Math.round(clamp(x===undefined?player.x:x,0,W)),sy:Math.round(clamp(CAR_Y-(wy-player.y),34,H-6))});
+  if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.45:pulse);
+  else badPulse=Math.max(badPulse,pulse===undefined?.55:pulse);
+}
 let heli={active:false,x:80,y:0,vx:0,spot:0};
 const stats={distance:0,intersections:0,districts:1,maxWanted:2,escapes:0,swaps:0,disguises:0,
   alleyUses:0,alleyEscapes:0,rampLaunches:0,rampClears:0,roadblocksAvoided:0,roadblockHits:0,
@@ -134,6 +151,7 @@ function blockInfo(b){
 
 function makePlayer(x,y,kind){return{x,y,vx:0,speed:1.15,z:0,vz:0,angle:0,kind:kind||'coupe',damage:0,
   spinT:0,impactCd:0,boostT:0,swapT:0,settleT:0,swapFrom:null,swapTo:null,paintT:0,airFrames:0,
+  yaw:0,slideT:0,slip:0,hitFlashT:0,gloryT:0,
   inAlley:false,alleyT:0,alleyBlock:-1,intent:null,lastX:x,lastY:y,lastZ:0,routeX:80};}
 function makeTraffic(b,j){
   const axis=hash(b*11+j,worldSeed*5)>0.78?'cross':'north',lane=LANES[mod(Math.floor(hash(b,j+worldSeed)*9),3)],
@@ -181,7 +199,20 @@ function advanceCar(body,intent,env){
     if(body.z<=0){body.z=0;body.vz=0;}}
   const lo=14+spec.width,hi=146-spec.width;if(body.x<lo){body.x=lo;body.vx=Math.abs(body.vx)*.35;}
   if(body.x>hi){body.x=hi;body.vx=-Math.abs(body.vx)*.35;}
-  body.angle=clamp(-body.vx*.11-steer*.055,-.25,.25);
+  // Honest heading (pocket-league doctrine, owner directive 2026-07-12): the
+  // body points where it actually TRAVELS — atan2(lateral, forward) with yaw
+  // inertia — never a cosmetic intent lean. The old model was wrong-signed
+  // (-vx) so the car visibly crabbed nose-away from its own motion for whole
+  // transits. A committed handbrake slide swings the tail out PAST the travel
+  // direction (fishtail) and catching it costs visible counter-steer frames.
+  // yaw/slideT/slip are pose state only: physics never reads them and none of
+  // them enter the replay signature.
+  const va=Math.atan2(body.vx,Math.max(.5,body.speed));
+  const sliding=!!intent.handbrake&&Math.abs(steer)>.4&&body.speed>1.05;
+  body.slideT=sliding?Math.min(24,(body.slideT||0)+3):Math.max(0,(body.slideT||0)-2);
+  const tail=(body.slideT/24)*.32*(Math.sign(steer)||Math.sign(body.vx)||1);
+  body.yaw=(body.yaw||0)+(clamp(va+tail,-.62,.62)-(body.yaw||0))*(sliding?.30:.22);
+  body.angle=body.yaw;body.slip=body.yaw-va;
   return body;
 }
 
@@ -274,7 +305,8 @@ function lapseIntent(context,last){const base=last||rawBotIntent();return Object
 function botIntent(){
   if(typeof globalThis.__NO_LAPSE!=='undefined'){lastLapsed=false;return rawBotIntent();}
   const before=skill.isLapsed(runFrame),intent=skill.decide(runFrame,null,rawBotIntent,lapseIntent),after=skill.isLapsed(runFrame);
-  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();say('WRONG TURN!',CORAL,player.y+54,42);}
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();cue('bad','lapse',player.x,player.y,.3);
+    fxAt(player.x,player.y-4,7,CORAL,1.2);say('WRONG TURN!',CORAL,player.y+54,42);}
   lastLapsed=after;return intent||rawBotIntent();
 }
 function humanIntent(){const steer=(keys.right?1:0)-(keys.left?1:0),targetX=clamp(player.x+steer*30,14,146);
@@ -285,6 +317,7 @@ const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playin
 function setWanted(next){next=clamp(next,1,5);if(next===wanted)return;
   const before=wanted;wanted=next;maxWanted=Math.max(maxWanted,wanted);stats.maxWanted=maxWanted;
   if(wanted>before){stats.wantedUps++;markProgress(20);offer('wanted-up',2,player.x,player.y,wanted);
+    cue('bad','wanted-up',player.x,player.y,wanted>=4?.6:.4);fxAt(player.x,player.y,10,CORAL,1.8);
     say(wanted===5?'CITYWIDE DRAGNET':wanted+' STAR HEAT',wanted===5?CORAL:GOLD,player.y+68,90);}
 }
 function updateHeat(){
@@ -295,7 +328,9 @@ function updateHeat(){
 function completeEscape(kind,fromWanted){
   const was=fromWanted===undefined?wanted:fromWanted;heat=.85;setWanted(1);stats.escapes++;if(kind==='paint')stats.paintEscapes++;if(kind==='swap')stats.swapEscapes++;
   markProgress(120);markEvent(120);const apex=was>=4&&act.phase!=='warn';offer(kind+'-escape',apex?3:2,player.x,player.y,was);
-  fxAt(player.x,player.y,apex?38:22,kind==='paint'?PINK:kind==='alley'?MINT:CYAN,apex?3.1:2.1,.01);ringAt(player.x,player.y,GOLD,2.3,34);
+  player.gloryT=48;cue('good','escape',player.x,player.y,1);
+  fxAt(player.x,player.y,apex?38:22,kind==='paint'?PINK:kind==='alley'?MINT:CYAN,apex?3.1:2.1,.01);
+  fxAt(player.x,player.y,apex?16:10,GOLD,1.7,.006);ringAt(player.x,player.y,GOLD,2.3,34);
   say(was>=5?'FIVE STAR FADE':'PURSUIT BROKEN',GOLD,player.y+72,120);shake(apex?7:3);
   for(const c of police)if(!c.disabled)c.decoy=decoys.length?decoys.at(-1).id:0;
 }
@@ -306,7 +341,8 @@ function startSwap(kind,b,y){
   decoys.push({id,x:oldX,y,kind:old,t:720,door:1,ghost:false});swapBay={x:player.x,y,vehicle:kind,t:300};
   stats.swaps++;markEvent(45);markProgress(2);
   heat=Math.max(.35,heat-(before>=4?2.65:.55));setWanted(Math.ceil(heat));offer('swap',2,player.x,y,kind);
-  fxAt(player.x,y,18,CYAN,2);say('SWAP · '+VEHICLES[kind].name,CYAN,y+45,105);
+  player.gloryT=Math.max(player.gloryT,36);cue('good','swap',player.x,y,.6);
+  fxAt(player.x,y,18,CYAN,2);fxAt(player.x,y,6,GOLD,1.4);say('SWAP · '+VEHICLES[kind].name,CYAN,y+45,105);
   for(const c of police)if(!c.disabled)c.decoy=id;
   if(before>=4&&wanted<=3)completeEscape('swap',before);
 }
@@ -315,13 +351,16 @@ function paintCar(y){
   decoys.push({id,x:player.x,y:y-8,kind:player.kind,t:210,door:0,ghost:true});
   for(const c of police)if(!c.disabled)c.decoy=id;
   heat=Math.max(.35,heat-(before>=4?2.85:.65));setWanted(Math.ceil(heat));offer('paint',2,player.x,y,'plates');
-  fxAt(player.x,y,20,PINK,2.2);say('NEW COLOR · NEW PLATES',PINK,y+48,100);
+  player.gloryT=Math.max(player.gloryT,36);cue('good','paint',player.x,y,.6);
+  fxAt(player.x,y,20,PINK,2.2);fxAt(player.x,y,6,GOLD,1.4);say('NEW COLOR · NEW PLATES',PINK,y+48,100);
   if(before>=4&&wanted<=3)completeEscape('paint',before);
 }
 function triggerBust(reason){
   if(player.spinT>0)return;player.spinT=105;player.damage=36;player.speed*=.36;stats.busts++;markEvent(60);
+  player.hitFlashT=14;cue('bad','bust',player.x,player.y,1);
   heat=Math.max(.9,heat-.75);setWanted(Math.ceil(heat));offer('boxed',2,player.x,player.y,reason);
-  fxAt(player.x,player.y,28,CORAL,2.8);ringAt(player.x,player.y,CYAN,2.5,36);say('JAMMER BURN · MOVE!',CORAL,player.y+60,100);shake(7);
+  fxAt(player.x,player.y,28,CORAL,2.8);fxAt(player.x,player.y,10,'#ffffff',2.2);
+  ringAt(player.x,player.y,CYAN,2.5,36);say('JAMMER BURN · MOVE!',CORAL,player.y+60,100);shake(7);
   for(const c of police)if(Math.hypot(c.x-player.x,c.y-player.y)<42)c.disabled=100;
 }
 function featureStep(){
@@ -331,7 +370,8 @@ function featureStep(){
     for(const ramp of ramps)if(ramp){const rk=featureKey(bb,ramp.actRamp?'act-ramp-'+act.index:'ramp');
       if(!usedFeatures.has(rk)&&Math.abs(player.y-ramp.y)<5&&Math.abs(player.x-ramp.x)<11&&player.z===0){
         usedFeatures.add(rk);player.vz=2.25;player.z=.1;player.airFrames=0;stats.rampLaunches++;
-        markEvent(18);offer('ramp',1,player.x,player.y,bb);dustAt(player.x,player.y,10,GOLD);say('AIRBORNE!',GOLD,player.y+45,52);}}
+        markEvent(18);offer('ramp',1,player.x,player.y,bb);cue('good','ramp',player.x,player.y,.35);
+        dustAt(player.x,player.y,10,GOLD);fxAt(player.x,player.y,6,GOLD,1.6);say('AIRBORNE!',GOLD,player.y+45,52);}}
     if(q.garage&&!usedFeatures.has(featureKey(bb,'garage'))&&Math.abs(player.y-q.garage.y)<7&&Math.abs(player.x-q.garage.x)<12){
       usedFeatures.add(featureKey(bb,'garage'));startSwap(q.garage.vehicle,bb,q.garage.y);}
     if(q.paint&&!usedFeatures.has(featureKey(bb,'paint'))&&Math.abs(player.y-q.paint.y)<7&&Math.abs(player.x-q.paint.x)<12){
@@ -339,9 +379,16 @@ function featureStep(){
     const rb=roadblockForBlock(bb);if(rb&&!hitBlocks.has(rb.id)&&player.y>=rb.y-3&&player.y<=rb.y+player.speed+5){
       if(player.z>3){hitBlocks.add(rb.id);stats.rampClears++;stats.roadblocksAvoided++;
         if(rb.id.startsWith('act')&&act.type==='transit')stats.transitRampClears++;
+        player.gloryT=Math.max(player.gloryT,30);cue('good','ramp-clear',player.x,player.y,.7);
+        fxAt(player.x,player.y,14,GOLD,2.2,.008);
         markEvent(28);offer('clear',2,player.x,player.y,rb.id);say('OVER THE LINE!',GOLD,player.y+46,58);}
-      else if(Math.abs(player.x-rb.gapX)<=14){hitBlocks.add(rb.id);stats.roadblocksAvoided++;markEvent(16);offer('thread',1,player.x,player.y,rb.id);}
-      else{hitBlocks.add(rb.id);stats.roadblockHits++;player.damage+=28;player.speed*=.42;markEvent(18);fxAt(player.x,player.y,18,CORAL,2.3);shake(5);if(player.damage>=100)triggerBust('ROADBLOCK');}
+      else if(Math.abs(player.x-rb.gapX)<=14){hitBlocks.add(rb.id);stats.roadblocksAvoided++;markEvent(16);offer('thread',1,player.x,player.y,rb.id);
+        cue('good','thread',player.x,player.y,.3);fxAt(player.x,player.y,8,MINT,1.4);}
+      else{hitBlocks.add(rb.id);stats.roadblockHits++;player.damage+=28;player.speed*=.42;markEvent(18);
+        player.hitFlashT=12;cue('bad','roadblock-hit',player.x,player.y,1);
+        wrecks.push({y:rb.y,gapX:rb.gapX,px:player.x,f:runFrame});if(wrecks.length>6)wrecks.shift();
+        fxAt(player.x,player.y,18,CORAL,2.3);fxAt(player.x,player.y+6,10,'#d7dce6',2.6,.02);
+        shake(5);if(player.damage>=100)triggerBust('ROADBLOCK');}
     }
   }
 }
@@ -351,7 +398,9 @@ function stepTraffic(){
     if(t.axis==='north')t.y+=t.speed;else t.x+=t.vx;
     const d=Math.hypot((t.x-player.x)*1.25,t.y-player.y);
     if(d<5+VEHICLES[player.kind].width*.35&&player.z<2&&!t.hit){t.hit=true;t.spinT=70;t.vx+=(t.x<player.x?-1:1)*.7;
-      player.damage+=6;player.speed*=.88;stats.trafficHits++;markEvent(8);fxAt(player.x,player.y,10,t.color,1.5);shake(2);}
+      player.damage+=6;player.speed*=.88;stats.trafficHits++;markEvent(8);
+      player.hitFlashT=8;cue('bad','traffic-hit',player.x,player.y,.6);
+      fxAt(player.x,player.y,10,t.color,1.5);fxAt(player.x,player.y,6,CORAL,1.8);shake(2);}
   }
 }
 function desiredPoliceCount(){return clamp(wanted+(wanted>=4?1:0)+(act.phase==='live'&&act.type==='dragnet'?1:0),1,7);}
@@ -375,10 +424,12 @@ function stepPolice(){
     const d=Math.hypot(c.x-player.x,(c.y-player.y)*.8);
     if(d<10+VEHICLES[player.kind].width*.45&&player.z<2&&c.hitCd<=0&&player.impactCd<=0){
       c.hitCd=32;player.impactCd=24;player.damage+=c.type==='van'?13:8;player.speed*=.92;player.vx+=(player.x-c.x)*.035;
-      markEvent(8);fxAt(player.x,player.y,12,c.type==='interceptor'?BLUE:CREAM,1.7);shake(3);
+      markEvent(8);player.hitFlashT=8;cue('bad','cop-hit',player.x,player.y,.6);
+      fxAt(player.x,player.y,12,c.type==='interceptor'?BLUE:CREAM,1.7);fxAt(player.x,player.y,6,CORAL,1.9);shake(3);
       if(player.damage>=100)triggerBust('BOXED IN');
     }else if(d<16&&!nearPairs.has(c.id)){nearPairs.add(c.id);stats.nearMisses++;
-      markEvent(4);offer('near',1,player.x,player.y,c.id);}
+      markEvent(4);offer('near',1,player.x,player.y,c.id);
+      cue('good','near-miss',player.x,player.y,.22);fxAt(player.x+(c.x<player.x?6:-6),player.y,6,MINT,1.2);}
     for(const t of traffic)if(c.trafficCd<=0&&runFrame-lastPoliceCrash>900&&!t.hit&&t.spinT<=0&&Math.hypot(c.x-t.x,c.y-t.y)<6&&Math.abs(c.speed-t.speed)>.9){
       c.disabled=120;c.trafficCd=3600;lastPoliceCrash=runFrame;t.spinT=80;t.hit=true;t.vx+=(t.x<c.x?-1:1)*.7;stats.policeCrashes++;markEvent(12);
       offer('cop-crash',1,c.x,c.y,c.id);fxAt(c.x,c.y,14,BLUE,2);break;}
@@ -424,13 +475,31 @@ function stepSwap(){
 function stepPlayer(){
   player.lastX=player.x;player.lastY=player.y;player.lastZ=player.z;if(player.paintT>0)player.paintT--;
   if(player.settleT>0)player.settleT--; // presentation-only launch beat; physics never reads it
+  if(player.hitFlashT>0)player.hitFlashT--;if(player.gloryT>0)player.gloryT--; // feedback pose timers; physics never reads them
   if(player.swapT>0){stepSwap();return;}
-  if(player.spinT>0){player.spinT--;player.angle+=.28;player.y+=player.speed*.35;player.speed=Math.max(.45,player.speed*.985);return;}
+  if(player.spinT>0){player.spinT--;player.angle+=.28;player.y+=player.speed*.35;player.speed=Math.max(.45,player.speed*.985);
+    player.yaw=((player.angle+Math.PI)%TAU+TAU)%TAU-Math.PI;player.slideT=0;player.slip=0; // pose eases OUT of the tumble, no snap
+    return;}
   const intent=controller();player.intent=intent;stats.appliedIntents++;
+  const slideWas=player.slideT||0;
   advanceCar(player,intent,{alley:inAlleyX(player.x),wet:act.phase==='live'&&act.type==='transit'});
+  // Slide aftermath (render-only): rubber pours off both rear wheels while the
+  // tail is out, smoke off the outer wheel, and paired grip puffs mark the
+  // catch. Skid points are written here — never inside advanceCar — so the
+  // planner's copied-state rollouts can't lay phantom rubber.
+  if(player.slideT>8&&Math.abs(player.vx)>.18&&player.z<=0){
+    const ca=Math.cos(player.angle),sa=Math.sin(player.angle);
+    for(const s of[-3,3])skids.push({x:player.x+s*ca-6*sa,y:player.y-(s*sa+6*ca),f:runFrame});
+    if(runFrame%2===0)dustAt(player.x-Math.sign(player.vx)*4,player.y-5,player.slideT>18?3:2,'#aab4c2');
+  }
+  if(slideWas>=12&&player.slideT<12){dustAt(player.x-3,player.y-5,2,'#e8ecf2');dustAt(player.x+3,player.y-5,2,'#e8ecf2');}
+  if(player.gloryT>0&&showFrame%3===0)dustAt(player.x,player.y-7,1,GOLD);
   if(player.boostT>0)player.boostT--;if(player.impactCd>0)player.impactCd--;
   const step=Math.hypot(player.x-player.lastX,player.y-player.lastY);stats.maxStep=Math.max(stats.maxStep,step);
-  if(player.z>0)player.airFrames++;else if(player.lastZ>0){markEvent(4);offer('land',1,player.x,player.y,player.airFrames);player.airFrames=0;}
+  if(player.z>0)player.airFrames++;else if(player.lastZ>0){markEvent(4);offer('land',1,player.x,player.y,player.airFrames);
+    cue('good','land',player.x,player.y,.3);fxAt(player.x,player.y-2,8,GOLD,1.5,.012);
+    dustAt(player.x-4,player.y-3,3,'#cbb89a');dustAt(player.x+4,player.y-3,3,'#cbb89a');
+    player.airFrames=0;}
 }
 function districtProgress(){
   const b=currentBlock();if(b!==lastBlock){const delta=Math.max(1,b-lastBlock);stats.intersections+=delta;lastBlock=b;
@@ -442,6 +511,7 @@ function districtProgress(){
 function stepDecoys(){for(const d of decoys){d.t--;if(d.t>640)d.y+=.15;}decoys=decoys.filter(d=>d.t>0);
   if(swapBay&&--swapBay.t<=0)swapBay=null;}
 function finishRun(){if(state!=='run')return;state='ending';resultT=360;outcome=stats.escapes>=5?'CITY LIMITS · CLEAN':'CITY LIMITS · HOT';
+  player.gloryT=90;cue('good','city-limits',player.x,player.y,1);
   markEvent(500);markProgress(10);offer('city-limits',3,player.x,player.y,outcome);fxAt(player.x,player.y,52,GOLD,3.4,.01);say(outcome,GOLD,player.y+70,260);}
 function resetRun(full){
   worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;state='run';resultT=0;outcome='';
@@ -449,6 +519,7 @@ function resetRun(full){
   heat=.85;wanted=1;lastWanted=1;maxWanted=1;lastBlock=0;lastDistrict=0;generatedTo=-1;trafficSerial=0;copSerial=0;decoySerial=0;
   lastPoliceCrash=-1e9;
   usedFeatures=new Set();hitBlocks=new Set();nearPairs=new Set();fixtureFeatures=[];eventSerial=0;progressSerial=0;
+  skids.length=0;feedback.length=0;goodPulse=0;badPulse=0;wrecks.length=0;
   lastEventFrame=showFrame;lastProgressFrame=showFrame;heli={active:false,x:80,y:player.y+105,vx:0,spot:0};lastLapsed=false;
   for(const k in stats)stats[k]=k==='districts'?1:k==='maxWanted'?1:0;wantedFrames.fill(0);
   personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];
@@ -468,6 +539,13 @@ function step(){
   if(state==='run'){
     if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
   }else if(state==='ending'){resultT--;if(resultT<=0){if(playing())gameOver(outcome);resetRun(true);}}
+  // Feedback presentation lifecycle runs in EVERY state (pocket-league round-8
+  // lesson): rubber retires on the world clock — frozen worlds keep frozen
+  // marks — and the edge pulses decay on the show clock.
+  while(skids.length&&runFrame-skids[0].f>80)skids.shift();
+  if(skids.length>260)skids.splice(0,skids.length-260);
+  while(wrecks.length&&runFrame-wrecks[0].f>720)wrecks.shift();
+  goodPulse=goodPulse>.02?goodPulse*.94:0;badPulse=badPulse>.02?badPulse*.93:0;
   stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
 }
 
@@ -693,7 +771,23 @@ function drawGetawayVehicle(v,playerCar,parked,screenY){
   if(playerCar&&v.intent&&(v.intent.brake||v.intent.handbrake)&&v.kind!=='bike'){
     ctx.globalAlpha=.55;rect(-4,8,3,2,CORAL);rect(1,8,3,2,CORAL);ctx.globalAlpha=1;}
   if(playerCar&&v.boostT>0){poly([[-2,8],[0,13],[2,8]],showFrame%4<2?GOLD:CORAL);}
-  if(v.damage>55){ctx.globalAlpha=.5;for(let i=0;i<3;i++){const ox=(hash(i,showFrame>>3)-.5)*6,oy=6+i*2;ctx.fillStyle='#9ba2b5';ctx.beginPath();ctx.arc(ox,oy,1+i*.6,0,TAU);ctx.fill();}ctx.globalAlpha=1;}
+  // Good/bad reads off the car body itself (owner directive 2026-07-12):
+  // damage blinks the whole silhouette coral/white, a fresh escape sweeps a
+  // gold rim light. Render-only; __NO_PAYOFF_FX strips both.
+  if(playerCar&&typeof globalThis.__NO_PAYOFF_FX==='undefined'){
+    if(v.hitFlashT>0){ctx.globalAlpha=.45+.3*((showFrame>>1)&1);
+      poly(vehicleShape(v.kind),((showFrame>>1)&1)?'#ffffff':CORAL);ctx.globalAlpha=1;}
+    else if(v.gloryT>0){ctx.globalAlpha=.5+.3*Math.sin(showFrame*.55);
+      const k=(showFrame>>2)%4,gp=[[-5,-7],[4,-4],[-4,3],[3,7]][k];
+      rect(gp[0],gp[1],2,2,GOLD);rect(-2,nose-1,4,1,GOLD);ctx.globalAlpha=1;}
+  }
+  // damage smoke tiers: a hurting car is ALWAYS visibly hurting — light wisps
+  // past 30, heavy black smoke with embers past 70 (state read, not payoff FX)
+  if(v.damage>30){const heavy=v.damage>70;ctx.globalAlpha=heavy?.6:.35;
+    for(let i=0;i<(heavy?3:2);i++){const ox=(hash(i,showFrame>>3)-.5)*6,oy=6+i*2;
+      ctx.fillStyle=heavy?'#5d6474':'#9ba2b5';ctx.beginPath();ctx.arc(ox,oy,1+i*.6,0,TAU);ctx.fill();}
+    if(heavy&&(showFrame>>2)%3===0)rect((hash(9,showFrame>>2)-.5)*5,8,1,1,GOLD);
+    ctx.globalAlpha=1;}
   ctx.restore();
 }
 // Civilian traffic at the reference scale: <=10px wide including wheels, with
@@ -737,6 +831,41 @@ function drawPoliceVehicle(c){
     for(let i=0;i<3;i++){const a=showFrame*.22+(c.id||0)+i*TAU/3;
       rect(x+Math.round(Math.cos(a)*5)-1,y-12+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}
   }
+}
+// Slide aftermath on the road: paired rubber scorch arcs, teal-lit so they
+// read on night asphalt at native size, fading with age and expiring on the
+// world clock in every state. __NO_PAYOFF_FX strips them (render-only).
+function drawSkids(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined'||(!skids.length&&!wrecks.length))return;
+  for(const s of skids){const y=sy(s.y);if(y<36||y>H+4)continue;
+    const age=clamp((runFrame-s.f)/80,0,1);ctx.globalAlpha=.52*(1-age);
+    rect(s.x-1,y,2,2,'#0c2833');rect(s.x-1,y,2,1,'#1f93ac');}
+  ctx.globalAlpha=1;
+  // A smashed roadblock leaves knocked-flat barriers where the car punched
+  // through — the consequence stays on the road instead of evaporating.
+  for(const w of wrecks){
+    const y=sy(w.y);if(y<36||y>H+14)continue;
+    const age=clamp((runFrame-w.f)/720,0,1);ctx.globalAlpha=.9-age*.5;
+    let i=0;
+    for(let x=ROAD_L+3;x<ROAD_R-4;x+=13,i++){
+      if(Math.abs(x-w.gapX)<15)continue;
+      const punch=Math.abs(x-w.px)<14?2:1;
+      const kx=x+(hash(i,w.y)-.5)*8*punch,ky=y+2+(hash(i*7,w.y)-.5)*9*punch;
+      rect(kx,ky,9,3,'#aeb6c4');rect(kx+2,ky,5,1,CORAL);
+      if(i%2)rect(kx+9,ky+2,2,3,'#656b77');
+    }
+    ctx.globalAlpha=1;
+  }
+}
+// Screen-edge pulse: one glance says the last beat was good (gold) or bad
+// (coral) even if the viewer missed the car itself. Slim frames, decaying on
+// the show clock; __NO_PAYOFF_FX strips them.
+function drawPulses(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;
+  if(badPulse>.04){ctx.globalAlpha=.4*badPulse;
+    rect(0,31,W,3,CORAL);rect(0,H-3,W,3,CORAL);rect(0,31,3,H-31,CORAL);rect(W-3,31,3,H-31,CORAL);ctx.globalAlpha=1;}
+  if(goodPulse>.04){ctx.globalAlpha=.36*goodPulse;
+    rect(3,34,W-6,2,GOLD);rect(3,H-6,W-6,2,GOLD);rect(3,34,2,H-40,GOLD);rect(W-5,34,2,H-40,GOLD);ctx.globalAlpha=1;}
 }
 function drawDecoy(d){
   // Ghost decoys are police BELIEF, not world objects: never draw them. The
@@ -833,7 +962,7 @@ function render(){
   const only=typeof globalThis.__NG_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__NG_VISUAL_ONLY_SUBJECT:null;
   if(only!==null){renderIsolated(String(only));return;}
   const p=DISTRICTS[currentDistrict()];
-  drawEnvironment(p);
+  drawEnvironment(p);drawSkids();
   preDraw();for(const d of decoys)drawDecoy(d);for(const t of traffic)drawTraffic(t);for(const c of police)drawPoliceVehicle(c);
   drawHeliSpot();drawHelicopter();
   if(player.swapT>0)drawGetawayVehicle({x:player.x,y:player.y,kind:player.swapTo,angle:0,z:0,damage:0,spinT:0,paintT:0},false);
@@ -848,7 +977,7 @@ function render(){
   }drawRings(fxCam());drawParts(fxCam());
   for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
     ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;postDraw();
-  drawForeground(p);drawActs(p);if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.055;rect(0,31,W,H-31,GOLD);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,33.5,W-5,H-37);
+  drawForeground(p);drawActs(p);drawPulses();if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.055;rect(0,31,W,H-31,GOLD);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,33.5,W-5,H-37);
     for(let i=0;i<5;i++){ctx.globalAlpha=.42-i*.07;rect(8+i*5,52+i*52,24+i*3,1,GOLD);rect(W-35-i*4,76+i*48,26+i*2,1,GOLD);}ctx.globalAlpha=1;}
   drawHud(p);
 }
@@ -871,7 +1000,14 @@ globalThis.__neonGetawaySignature=()=>JSON.stringify({state,runFrame,worldSeed,s
     stats.rampLaunches,stats.rampClears,stats.transitRampClears,stats.roadblocksAvoided,stats.roadblockHits,stats.policeCrashes,stats.trafficHits,stats.nearMisses,stats.busts,stats.wantedUps,stats.lapses,stats.acts,stats.events,stats.progress]});
 globalThis.__neonGetawayPhysical=()=>[round(player.x,7),round(player.y,7),round(player.vx,7),round(player.speed,7),round(player.z,7),
   player.intent&&round(player.intent.steer,7),player.intent&&round(player.intent.throttle,7),player.intent&&player.intent.handbrake].join('|');
-globalThis.__neonGetawayVisualBeats=['opening','street-chase','alley','ramp','swap-anticipation','swap-payoff','later-district','dragnet','dragnet-land','danger','escape-apex'];
+globalThis.__neonGetawayVisualBeats=['opening','street-chase','drift','alley','ramp','swap-anticipation','swap-payoff','later-district','dragnet','dragnet-land','danger','wreck','escape-apex'];
+// The good/bad feedback ledger for evals/feedback.js: every entry is a sim
+// event the viewer must be able to SEE. sx/sy are the screen coordinates at
+// fire time so the eval can crop the exact payoff location later.
+globalThis.__feedbackProbe=()=>({finite:allFinite(),serial:feedbackSerial,events:feedback.slice(),
+  pulses:{good:round(goodPulse,4),bad:round(badPulse,4)},skids:skids.length,
+  car:{angle:round(player.angle,5),yaw:round(player.yaw||0,5),slip:round(player.slip||0,5),slideT:player.slideT||0,
+    hitFlashT:player.hitFlashT,gloryT:player.gloryT,vx:round(player.vx,5),speed:round(player.speed,5),damage:player.damage}});
 // Actor list for the drawn-pixel scale gates: ids route straight into
 // __NG_VISUAL_ONLY_SUBJECT, boxes are native 160x360 screen px search hints
 // around the authored art (car 12x19, cop 12-14, ped ~5x10, heli 31x18).
@@ -898,6 +1034,9 @@ function visualActors(){
 globalThis.__neonGetawayVisualProbe=()=>({frame:showFrame,district:DISTRICTS[currentDistrict()].name,wanted,
   tactic:displayedTactic(),danger:wanted>=4||act.phase!=='calm',policeCount:police.filter(c=>!c.disabled).length,
   airborne:player.z>0,swapT:player.swapT,swapSerial:stats.swaps,escapeSerial:stats.escapes,act:act.phase,finite:allFinite(),
+  pose:{angle:round(player.angle,5),slip:round(player.slip||0,5),slideT:player.slideT||0,vx:round(player.vx,5)},
+  feedback:{hitFlashT:player.hitFlashT,gloryT:player.gloryT,skids:skids.length,goodPulse:round(goodPulse,4),
+    badPulse:round(badPulse,4),damage:player.damage,speed:round(player.speed,4)},
   layout:{playfield:{x:0,y:38,width:160,height:322},
     // threats enter the strip at the HUD line (y=38) and contact the driver at
     // CAR_Y: forward approach room as a share of the playfield's travel axis
@@ -914,6 +1053,7 @@ globalThis.__neonGetawayVisualProbe=()=>({frame:showFrame,district:DISTRICTS[cur
 function visualPrime(district){
   worldSeed=42437;player=makePlayer(80,(district*DISTRICT_BLOCKS+5)*BLOCK+60,'coupe');lastBlock=currentBlock();lastDistrict=district;
   traffic=[];police=[];decoys=[];texts=[];fixtureFeatures=[];swapBay=null;visualIntent=null;generatedTo=currentBlock()-1;usedFeatures=new Set();hitBlocks=new Set();nearPairs=new Set();
+  skids.length=0;feedback.length=0;goodPulse=0;badPulse=0;wrecks.length=0;
   heat=.85;wanted=1;maxWanted=Math.max(maxWanted,1);plan=null;planAt=-1e9;ensureTraffic();heli={active:false,x:80,y:player.y+105,vx:0,spot:0};
   player.intent={steer:0,throttle:1,brake:false,handbrake:false,action:false,targetX:80,tactic:'THREAD THE TRAFFIC'};
 }
@@ -929,6 +1069,20 @@ globalThis.__neonGetawaySetVisualBeat=name=>{
   else if(name==='dragnet-land'){visualPrime(4);heat=5;wanted=5;Object.assign(act,{phase:'live',type:'dragnet',targetBlock:currentBlock(),safeX:ALLEY_L,endAt:runFrame+700});visualIntent={steer:-1,throttle:.9,brake:false,handbrake:true,action:false,targetX:ALLEY_L,tactic:'BEAT THE DRAGNET'};police=[makeCop('van',52,player.y+55),makeCop('cruiser',105,player.y+6),makeCop('bike',82,player.y-42)];}
   else if(name==='danger'){visualPrime(4);heat=5;wanted=5;maxWanted=5;player.damage=72;player.kind='bike';visualIntent={steer:-.3,throttle:1,brake:false,handbrake:false,action:false,targetX:51,tactic:'BREAK THE SPOTLIGHT'};police=[makeCop('interceptor',55,player.y+74),makeCop('bike',91,player.y+26),makeCop('van',112,player.y-24),makeCop('cruiser',47,player.y-70)];heli.active=true;heli.x=player.x;heli.y=player.y+105;heli.spot=1;}
   else if(name==='escape-apex'){visualPrime(4);heat=5;wanted=5;maxWanted=5;police=[makeCop('van',54,player.y+74),makeCop('interceptor',103,player.y+28),makeCop('bike',79,player.y-36)];decoys.push({id:++decoySerial,x:109,y:player.y+12,kind:'muscle',t:700,door:1,ghost:false});completeEscape('swap');player.kind='taxi';visualIntent={steer:-.5,throttle:.72,brake:false,handbrake:false,action:false,targetX:ALLEY_L,tactic:'WATCH THEM OVERSHOOT'};}
+  else if(name==='drift'){
+    // Committed handbrake slide: tail out past the travel direction, rubber
+    // and smoke pouring off the rear wheels while the pursuit closes.
+    visualPrime(0);heat=2.7;wanted=3;player.x=109;player.speed=2.1;
+    visualIntent={steer:-1,throttle:.9,brake:false,handbrake:true,action:false,targetX:ALLEY_L,tactic:'CUT THROUGH THE ALLEY'};
+    police=[makeCop('interceptor',96,player.y+58),makeCop('cruiser',62,player.y+8)];}
+  else if(name==='wreck'){
+    // A real roadblock hit through featureStep: the block ahead carries a
+    // seeded barrier line whose gap is two lanes away — the fixture drives
+    // straight into it and the flash/debris/smoke feedback must read.
+    visualPrime(1);player.y=25*BLOCK+166;lastBlock=currentBlock();generatedTo=currentBlock()-1;traffic=[];ensureTraffic();
+    heat=2.6;wanted=3;maxWanted=3;player.x=51;player.speed=2.2;
+    visualIntent={steer:0,throttle:1,brake:false,handbrake:false,action:false,targetX:51,tactic:'THREAD THE TRAFFIC'};
+    police=[makeCop('cruiser',80,player.y+62)];}
   else return false;
   return true;
 };

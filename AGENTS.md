@@ -96,6 +96,14 @@ contract in `evals/entertainment.js`; movement alone never satisfies that gate.
 Register every active exploration game in `evals/entertainment-eval.js`, which
 also rejects route renderers, route-plan copy, and visual route-point probes.
 
+Games with discrete good/bad beats must also prove feedback legibility with
+`evals/feedback.js`: the game keeps a curated `__feedbackProbe` ledger of
+good/bad sim events, a same-seed payoff-FX-ablated twin must stay byte-identical
+in simulation, every sampled event must change real pixels near its on-screen
+location, and the changed pixels must carry palette-separated signature colors
+so good reads differently from bad. An event the viewer cannot see did not
+happen.
+
 Render a deterministic review clip with
 `node render/render.js <game> <seconds> [out.mp4] --seed N --probe --fps 30`.
 The simulation remains 60 Hz regardless of output FPS.

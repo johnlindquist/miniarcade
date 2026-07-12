@@ -221,6 +221,10 @@ function buildCandidateEvidence(){
   const specs={
     opening:{fixture:'opening',offsets:[1,6,12,24]},
     street:{fixture:'street-chase',offsets:[1,3,5,7,9,13,24]},
+    drift:{fixture:'drift',offsets:[1,6,12,18,24]},
+    driftNoFx:{fixture:'drift',offsets:[18],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}},
+    wreck:{fixture:'wreck',offsets:[1,8,16,24]},
+    wreckNoFx:{fixture:'wreck',offsets:[8],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}},
     alley:{fixture:'alley',offsets:[1,6,12,24]},
     ramp:{fixture:'ramp',offsets:[1,6,12,24,36,48]},
     swapAnticipation:{fixture:'swap-anticipation',offsets:[1,6,12,24]},
@@ -256,6 +260,7 @@ function buildCandidateEvidence(){
   const beats=[
     {id:'opening',label:'opening',run:'opening',offset:12},
     {id:'street',label:'street chase',run:'street',offset:13},
+    {id:'drift',label:'handbrake slide',run:'drift',offset:18},
     {id:'alley',label:'market alley',run:'alley',offset:12},
     {id:'ramp',label:'port ramp',run:'ramp',offset:12},
     {id:'swapReady',label:'swap ready',run:'swapAnticipation',offset:12},
@@ -264,6 +269,7 @@ function buildCandidateEvidence(){
     {id:'warning',label:'dragnet warning',run:'warning',offset:12},
     {id:'land',label:'dragnet land',run:'dragnetLand',offset:12},
     {id:'danger',label:'five star',run:'danger',offset:13},
+    {id:'wreck',label:'roadblock crunch',run:'wreck',offset:8},
     {id:'apex',label:'five star fade',run:'apex',offset:6}
   ];
   const frames=Object.fromEntries(beats.map(beat=>[beat.id,runs[beat.run].get(beat.offset)]));
@@ -283,8 +289,8 @@ function reviewTemplate(montageSha256){
       characterCraft:pending('Inspect the wheelman, five getaway vehicles, police cruiser/interceptor/bike/van, traffic, pedestrians, swap driver, facing, body roll, sirens, damage, and reaction poses at 160x360.'),
       environmentCraft:pending('Inspect each district with the HUD mentally removed: road material, alleys, roofs, market awnings, canal water and bridges, port rails and crane, civic roundabout, foreground lights, traffic, and depth planes.'),
       levelVariety:pending('Confirm the five districts change spatial landmarks, road grammar, material silhouette, hazards, and composition rather than only palette and facade texture.'),
-      animationImpact:pending('Confirm aligned vehicle and police crops animate, the ramp has takeoff/apex/landing, the swap stages old car to driver to new car, the dragnet warning lands physically, and the five-star fade has visible pursuit redirection plus FX.'),
-      readability:pending('Confirm intent reads from the driver alone — steering commitment, drift angle, brake lights, swap-duck choreography, GO! launch beat, stun sparks on wrecked units — and that wanted escalation, visible police count, player silhouette, and apex stay legible beside video at native size with ZERO drawn guidelines. Confirm the road and every ground decal flow down-screen with travel (no counter-scroll) and the goal telemetry (escape pips, city-limits strip) reads at native size.'),
+      animationImpact:pending('Confirm aligned vehicle and police crops animate, the ramp has takeoff/apex/landing, the swap stages old car to driver to new car, the dragnet warning lands physically, the handbrake slide fishtails with rubber and smoke pouring off the rear wheels, the roadblock crunch flashes the body and throws debris, and the five-star fade has visible pursuit redirection plus FX.'),
+      readability:pending('Confirm intent reads from the driver alone — an HONEST heading that tracks actual travel (no permanent crab), committed fishtail slides, brake lights, swap-duck choreography, GO! launch beat, stun sparks on wrecked units — and that every good/bad beat is visibly tagged: coral/white damage flash and coral edge pulse on hits, gold glory shimmer and gold edge pulse on escapes, skid rubber aftermath that fades on the world clock. Confirm wanted escalation, visible police count, player silhouette, and apex stay legible beside video at native size with ZERO drawn guidelines, the road and every ground decal flow down-screen with travel (no counter-scroll), and the goal telemetry (escape pips, city-limits strip) reads at native size.'),
       artDirectionCohesion:pending('Confirm neon-noir palette, pixel construction, HUD, district materials, vehicle lighting, pursuit grammar, and payoff language feel like one authored city.')
     },
     guidelineOverlays:{confirmedAbsent:false,note:'Confirm every sampled beat pre-draws NOTHING about actor intent or trajectory: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers. The assembling dragnet (vans arriving, officers carrying barriers) and the warning tint are world telegraphs and stay.'}
@@ -302,7 +308,7 @@ async function main(){
   });
   const deterministic=determinism.every(value=>value.ok),{beats,frames:candidate,runs}=evidence;
 
-  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,12000,15000,18000];
+  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,10800,12600,15000,16800,18000];
   const horizon=captureTimeline('horizon',0xa1020401,referenceTargets);
   const blockmine=captureTimeline('blockmine',0xb10c0050,referenceTargets);
   const horizonByBeat={},blockmineByBeat={};
@@ -361,6 +367,20 @@ async function main(){
   const apexStructure=structureDistance(runs.danger.get(13),runs.apexNoFx.get(12),{crop:WORLD_CROP});
   const apexBurst=analyzeBurst([1,6,12,24,48].map(offset=>runs.apex.get(offset)),{native:false,crop:WORLD_CROP});
 
+  // Good/bad feedback beats (owner directive 2026-07-12). Both compare the
+  // live frame against a same-sim __NO_PAYOFF_FX twin, so every measured
+  // pixel is feedback presentation by construction: the slide's rubber/smoke
+  // trail behind the car, and the crunch's body flash + debris around it.
+  const trailCropOf=frame=>{const box=frame.probe.playerBox;return{
+    x:Math.max(0,box.x-26),y:Math.max(WORLD_CROP.y,box.y-12),
+    width:Math.min(160,box.x+box.width+26)-Math.max(0,box.x-26),
+    height:Math.min(360,box.y+box.height+52)-Math.max(WORLD_CROP.y,box.y-12)};};
+  const driftFx=frameDifference(runs.driftNoFx.get(18),runs.drift.get(18),
+    {native:false,crop:trailCropOf(runs.drift.get(18)),threshold:1});
+  const wreckFx=frameDifference(runs.wreckNoFx.get(8),runs.wreck.get(8),
+    {native:false,crop:trailCropOf(runs.wreck.get(8)),threshold:1});
+  const driftBurst=analyzeBurst([1,6,12,18,24].map(offset=>runs.drift.get(offset)),{native:false,crop:WORLD_CROP});
+
   // Two districts cover both scroll paths: drawRoadBase/neon decals (opening)
   // and the cross-anchored civic decals (later). The helicopter is parked for
   // the later check so its static spotlight cannot bias the shift search.
@@ -400,7 +420,11 @@ async function main(){
     landChanged:.85,landMean:.08,landGrid:.90,landBounds:.90,
     apexPhysicalChanged:.65,apexPhysicalStructure:.34,
     apexFxChanged:.0022,apexFxMean:.0008,apexFxBounds:.030,
-    apexNearChanged:.011,apexNearMean:.0042,apexNearGrid:.11,apexNearBounds:.15
+    apexNearChanged:.011,apexNearMean:.0042,apexNearGrid:.11,apexNearBounds:.15,
+    // Feedback beats measured 2026-07-12 on the shipped FX (drift trail crop
+    // .0200 changed / .0032 mean; wreck crop .0226 / .0077); floors keep
+    // ~30% margin so deleted rubber, smoke, flash, or debris fail loudly.
+    driftFxChanged:.014,driftFxMean:.0022,wreckFxChanged:.015,wreckFxMean:.005
   };
 
   const automatedGates=[];
@@ -462,6 +486,24 @@ async function main(){
     apexFxNear.changedFraction>=bands.apexNearChanged&&apexFxNear.meanDelta>=bands.apexNearMean&&
     apexFxNear.changedGridFraction>=bands.apexNearGrid&&apexFxNear.changedBoundsFraction>=bands.apexNearBounds,
     {apexFx,apexFxNear,apexCrop,apexBurst});
+  const driftPose=runs.drift.get(18).probe.pose,driftFb=runs.drift.get(18).probe.feedback;
+  gate('committed handbrake slide reads on the actor: fishtail past travel, rubber and smoke aftermath',
+    driftPose.slideT>=20&&Math.abs(driftPose.slip)>=.15&&Math.abs(driftPose.angle)>=.35&&
+    Math.sign(driftPose.angle)===Math.sign(driftPose.vx)&&driftFb.skids>=16&&
+    driftFx.changedFraction>=bands.driftFxChanged&&driftFx.meanDelta>=bands.driftFxMean&&
+    driftBurst.changedFraction.max>=.10,
+    {driftPose,driftFb,driftFx,driftBurst});
+  const wreck1=runs.wreck.get(1).probe,wreck8=runs.wreck.get(8).probe,wreck16=runs.wreck.get(16).probe;
+  gate('roadblock crunch is felt: body flash, debris, scrubbed speed, bad pulse',
+    wreck1.feedback.damage===0&&wreck1.feedback.hitFlashT===0&&
+    wreck8.feedback.damage>=28&&wreck8.feedback.hitFlashT>0&&wreck8.feedback.badPulse>=.5&&
+    wreck8.feedback.speed<wreck1.feedback.speed*.6&&wreck16.feedback.badPulse>0&&
+    wreckFx.changedFraction>=bands.wreckFxChanged&&wreckFx.meanDelta>=bands.wreckFxMean,
+    {wreck1:wreck1.feedback,wreck8:wreck8.feedback,wreck16:wreck16.feedback,wreckFx});
+  const streetPose=runs.street.get(13).probe.pose;
+  gate('normal driving carries no phantom crab: heading tracks travel outside slides',
+    Math.abs(streetPose.slip)<=.10&&(Math.abs(streetPose.vx)<.12||Math.sign(streetPose.angle)===Math.sign(streetPose.vx)),
+    {streetPose});
   gate('candidate numeric richness meets both reference medians',median(cm.map(value=>value.edge[1].energy))>=ref.edge*.95&&
     median(cm.map(value=>value.richCellFraction))>=ref.rich*.95&&median(cm.map(value=>value.colorEntropy))>=ref.entropy*.95&&
     median(cm.map(value=>value.lumaStdDev))>=ref.luma*.90,
@@ -523,7 +565,7 @@ async function main(){
       footprint:.20,approach:.55,threshold:ACTOR_THRESHOLD}},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       playerBurst,policeBurst,swapBurst,districtPairs,rampBurst,warningContrast,warningLand,
-      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst,scrollChecks,
+      apexPhysical,apexStructure,apexFx,apexFxNear,apexBurst,driftFx,wreckFx,driftBurst,scrollChecks,
       actorScale:Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
         sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,bounds:m.bounds,drawnPixels:m.drawnPixels,
           clipped:m.clipped,probeOverflow:m.probeOverflow,failures:m.assertion.failures}))])),

@@ -994,6 +994,67 @@ verified and committed per game.
   shrank (deck dressing, road furniture, biome ground detail, tunnel vaults with
   four rotating line themes for surfers) and measured frame richness went UP.
 
+## NEON GETAWAY: honest heading + good/bad feedback legibility (2026-07-12)
+
+Owner directive, carrying the Pocket League polish-bar lessons over: "the car
+spends a lot of time driving at an angle for some reason", "there are no car
+effects, you can't tell when something good or bad happens", and "establish
+entertainment evals around measuring that good/bad is visibly represented on
+screen."
+
+- **Root cause of the angle complaint**: the old pose was cosmetic AND
+  wrong-signed — `angle = -vx*.11 - steer*.055` leaned the nose AWAY from the
+  car's own lateral travel, and the steer term held the lean for the entire
+  transit to any distant lane target (whole seconds of visible crab). Replaced
+  with the pocket-league doctrine: heading = atan2(lateral, forward) with yaw
+  inertia (response .22, .30 in slides), a committed handbrake slide swings the
+  tail up to .32 rad PAST the travel direction, catching it costs visible
+  counter-steer frames, and spin recovery eases out of the wrapped tumble pose
+  instead of snapping. Pose state (yaw/slideT/slip) is read by nothing in
+  physics and stays out of the replay signature, so every behavior band
+  survived unchanged and the whole pass is proven sim-inert.
+- **Pose invariants (eval section 8, persistence-based hard zeros)**: over
+  paired 3-minute seeds 0x6100/0x613d — wrong-way lean runs max 0 frames
+  (violations 0), free-slip (tail-out without a latched slide) runs max 0,
+  phantom-crab violations 0, while slides stay alive: 65/37 fishtails over
+  4673/2344 held-slip frames, max held slip .448/.344. Scripted fixtures
+  through the shared integrator fail the old build outright (steadyRight
+  leaned -0.10 the wrong way; slip/slideT did not exist).
+- **Feedback layer (all render-only, gated by __NO_PAYOFF_FX)**: coral/white
+  body flash + coral edge pulse on every hit, gold glory shimmer + gold edge
+  pulse on escapes, gold launch/landing puffs, mint ticks on threads and
+  near-misses, tiered damage smoke from 30 damage (embers past 70), teal-lit
+  skid rubber laid by both rear wheels during committed slides (expires on the
+  world clock in every state — the pocket-league round-8 lesson), and smashed
+  roadblocks leaving knocked-flat barriers with a punch-through hole for 12
+  seconds instead of evaporating.
+- **New shared contract `evals/feedback.js`** (doctrine added to AGENTS.md):
+  the game keeps an append-only `__feedbackProbe` ledger of curated good/bad
+  sim events with fire-time screen coordinates; live and __NO_PAYOFF_FX twins
+  advance in lockstep (signatures must stay byte-identical — proven), and each
+  sampled event must change pixels near its location AND carry absolute
+  palette-signature counts (good: gold/mint/cyan/pink; bad: coral/white).
+  Measured on seeds 0x5300/0x52d4: 59 sampled beats across all 13 categories
+  (escape, swap, paint, ramp, ramp-clear, thread, near-miss, land / wanted-up,
+  roadblock-hit, traffic-hit, cop-hit, bust), thinnest beat 17px changed,
+  weakest signature 9px; floors pinned at 12/8px (6/4 for the four smallest
+  beats) with 40%+ margin. The first draft of this eval CAUGHT real
+  presentation failures — tan landing dust, 3-particle near-miss ticks, a
+  1-pixel lapse cue — which were fixed in the game, not in the floors.
+- **Visual suite**: two new authored beats — `drift` (committed slide:
+  slideT 24, slip -.29, angle -.61 matching travel sign, 32+ rubber points;
+  live-vs-ablated trail crop .0200 changed / .0032 mean) and `wreck` (real
+  featureStep roadblock hit: damage 0->28, speed 2.2->0.95, hitFlash 9f,
+  badPulse .75; crop .0348 / .0123) — plus a no-phantom-crab gate on the
+  street beat. Floors keep ~30% margin. Thirteen-beat montage re-reviewed at
+  native size against both references (sha ff183976...), 30s clip receipt
+  4,960,793 bytes.
+- **Lesson**: a mechanic's pose must be computed FROM the momentum it claims
+  to express — a cosmetic lean is indistinguishable from a physics bug at
+  160px, and the wrong sign made honest motion read as permanent drift. And
+  feedback floors measured as shares dilute under concurrent FX; absolute
+  signature-pixel counts are the robust form.
+
 ## D. Per-game priorities
 
 1. **Hex Cascade** (2/5): add 2-ply cascade awareness via `simulateCandidates` (its board
