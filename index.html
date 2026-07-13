@@ -133,16 +133,29 @@
     }
     .footer-status{white-space:nowrap;text-transform:uppercase}
     .workshop-dock{
-      position:relative;min-width:0;display:grid;grid-template-columns:auto minmax(190px,1fr) auto auto;
-      grid-template-areas:"signal copy scarcity cta";align-items:center;gap:10px;overflow:hidden;
-      padding:5px 6px 5px 8px;border:1px solid rgba(45,226,230,.16);border-radius:6px;
+      position:relative;isolation:isolate;min-width:0;display:grid;
+      grid-template-columns:auto minmax(150px,1fr) auto auto;grid-template-areas:"brand copy scarcity cta";
+      align-items:center;gap:10px;overflow:hidden;padding:5px 6px 5px 7px;
+      border:1px solid rgba(45,226,230,.16);border-radius:6px;
       background:linear-gradient(180deg,rgba(17,19,27,.94),rgba(12,14,20,.94));
     }
+    .workshop-dock>:not(.workshop-fx-canvas):not(.workshop-scan){position:relative;z-index:2}
+    .workshop-fx-canvas{position:absolute;inset:0;z-index:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:screen}
     .workshop-scan{
-      position:absolute;inset-block:0;left:-25%;width:18%;pointer-events:none;
+      position:absolute;z-index:1;inset-block:0;left:-25%;width:18%;pointer-events:none;
       background:linear-gradient(90deg,transparent,rgba(45,226,230,.18),transparent);transform:skewX(-18deg);
     }
-    .workshop-signal{grid-area:signal;display:flex;gap:3px}
+    .workshop-brand{grid-area:brand;display:grid;grid-template-columns:38px auto;align-items:center;gap:5px;min-width:48px}
+    .workshop-eggo{
+      position:relative;width:38px;height:40px;touch-action:none;user-select:none;cursor:grab;
+    }
+    .workshop-eggo:active{cursor:grabbing}
+    .workshop-eggo img{display:block;width:38px;height:40px;object-fit:contain;pointer-events:none}
+    .workshop-eggo-canvas{
+      position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform:translate(-50%,-50%);
+    }
+    .workshop-eggo-canvas[hidden]{display:none}
+    .workshop-signal{display:flex;flex-direction:column;gap:3px}
     .workshop-signal-cell{
       width:5px;height:5px;border:1px solid #3d4257;background:#10121a;
       transition:background 160ms ease,border-color 160ms ease,box-shadow 160ms ease;
@@ -153,21 +166,14 @@
       border-color:var(--cyan);background:var(--cyan);box-shadow:0 0 7px rgba(45,226,230,.45);
     }
     .workshop-copy{grid-area:copy;min-width:0;display:flex;flex-direction:column;gap:2px}
-    .workshop-state-label{
-      overflow:hidden;color:#70788d;font-size:7px;letter-spacing:.13em;white-space:nowrap;text-overflow:ellipsis;
-    }
+    .workshop-state-label{overflow:hidden;color:#70788d;font-size:7px;letter-spacing:.13em;white-space:nowrap;text-overflow:ellipsis}
     .workshop-state-earned{display:none}
     [data-workshop-state="earned"]{border-color:rgba(45,226,230,.34)}
     [data-workshop-state="earned"] .workshop-state-quiet{display:none}
     [data-workshop-state="earned"] .workshop-state-earned{display:inline;color:var(--cyan)}
-    #workshop-title{
-      overflow:hidden;margin:0;color:var(--ink);font-size:9px;line-height:1.1;letter-spacing:.1em;
-      white-space:nowrap;text-overflow:ellipsis;
-    }
+    #workshop-title{overflow:hidden;margin:0;color:var(--ink);font-size:9px;line-height:1.1;letter-spacing:.1em;white-space:nowrap;text-overflow:ellipsis}
     .workshop-authority{overflow:hidden;color:#747b8f;font-size:7px;white-space:nowrap;text-overflow:ellipsis}
-    .workshop-scarcity{
-      grid-area:scarcity;color:#ffb16c;font-size:7px;font-weight:800;letter-spacing:.12em;white-space:nowrap;
-    }
+    .workshop-scarcity{grid-area:scarcity;color:#ffb16c;font-size:7px;font-weight:800;letter-spacing:.12em;white-space:nowrap}
     .workshop-link{
       grid-area:cta;display:inline-flex;min-height:36px;align-items:center;justify-content:center;gap:6px;
       padding:5px 9px;border:1px solid rgba(255,138,42,.45);border-radius:4px;background:rgba(255,138,42,.09);
@@ -183,9 +189,7 @@
     .is-unlocking .workshop-scan{animation:workshop-scan 620ms var(--ease) 1}
     [data-workshop-state="earned"] .workshop-link{animation:workshop-ticket-pulse 620ms var(--ease) 1}
     @keyframes workshop-scan{to{left:110%}}
-    @keyframes workshop-ticket-pulse{
-      50%{border-color:rgba(255,138,42,.9);box-shadow:0 0 0 1px rgba(255,138,42,.18),0 0 18px rgba(255,138,42,.18)}
-    }
+    @keyframes workshop-ticket-pulse{50%{border-color:rgba(255,138,42,.9);box-shadow:0 0 0 1px rgba(255,138,42,.18),0 0 18px rgba(255,138,42,.18)}}
     .site-footer details{position:relative}
     .site-footer summary{display:flex;align-items:center;min-height:30px;color:#b7bdcb;cursor:pointer;text-transform:uppercase;letter-spacing:.1em;list-style:none}
     .site-footer summary::-webkit-details-marker{display:none}
@@ -229,7 +233,7 @@
       .footer-status{display:none}
       .workshop-dock{
         grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;
-        grid-template-areas:"signal copy cta" "signal scarcity cta";gap:3px 7px;
+        grid-template-areas:"brand copy cta" "brand scarcity cta";gap:3px 7px;
       }
       .workshop-link{min-height:44px}
     }
@@ -242,7 +246,9 @@
       #clip button{padding-inline:8px}
       .rail-toolbar,#game-track{padding-inline:12px;scroll-padding-inline:12px}
       .site-footer{gap:7px;padding-inline:8px}
-      .workshop-dock{padding-left:6px;gap:3px 5px}
+      .workshop-dock{padding-left:5px;gap:3px 5px}
+      .workshop-brand{grid-template-columns:34px auto;min-width:42px}
+      .workshop-eggo,.workshop-eggo img{width:34px;height:36px}
       .workshop-state-label{display:none}
       .workshop-cta-wide{display:none}
       .workshop-cta-short{display:inline}
@@ -256,6 +262,7 @@
         transition:none!important;animation:none!important;
       }
       .workshop-link:hover{transform:none}
+      .workshop-eggo-canvas,.workshop-fx-canvas{display:none!important}
     }
   </style>
 </head>
@@ -289,12 +296,19 @@
 
   <footer class="site-footer">
     <span class="footer-status">Self-playing previews · click any card to play</span>
-    <aside id="workshop-dock" class="workshop-dock" data-workshop-state="quiet" data-workshop-seen="0" aria-labelledby="workshop-title">
+    <aside id="workshop-dock" class="workshop-dock" data-workshop-state="quiet" data-workshop-seen="0" data-workshop-shader="disabled" aria-labelledby="workshop-title">
+      <canvas id="workshop-fx-canvas" class="workshop-fx-canvas" aria-hidden="true"></canvas>
       <span class="workshop-scan" aria-hidden="true"></span>
-      <span class="workshop-signal" aria-hidden="true">
-        <span class="workshop-signal-cell"></span>
-        <span class="workshop-signal-cell"></span>
-        <span class="workshop-signal-cell"></span>
+      <span class="workshop-brand">
+        <span id="workshop-eggo" class="workshop-eggo" role="img" aria-label="Eggo, the egghead.io mascot — grab to stretch" data-eggo-state="static">
+          <img id="workshop-eggo-fallback" src="eggo.svg" alt="" aria-hidden="true" draggable="false">
+          <canvas id="workshop-eggo-canvas" class="workshop-eggo-canvas" aria-hidden="true" hidden></canvas>
+        </span>
+        <span class="workshop-signal" aria-hidden="true">
+          <span class="workshop-signal-cell"></span>
+          <span class="workshop-signal-cell"></span>
+          <span class="workshop-signal-cell"></span>
+        </span>
       </span>
       <span class="workshop-copy">
         <span class="workshop-state-label" aria-hidden="true">
@@ -448,8 +462,7 @@
     },{passive:false});
     track.addEventListener('scroll',()=>{
       clearTimeout(scrollTimer);
-      if(coarsePointer.matches||swipeLayout.matches)
-        scrollTimer=setTimeout(()=>setActive(nearestToCenter(),{source:'swipe'}),110);
+      if(coarsePointer.matches||swipeLayout.matches)scrollTimer=setTimeout(()=>setActive(nearestToCenter(),{source:'swipe'}),110);
     },{passive:true});
 
     // Edge autoscroll: on fine pointers, parking the cursor near the left or
@@ -515,5 +528,6 @@
     });
   })();
   </script>
+  <script src="workshop-fx.js"></script>
 </body>
 </html>

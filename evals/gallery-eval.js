@@ -18,7 +18,8 @@ for(const game of games)if(!/^[a-z0-9-]+$/.test(game.id)||!game.title||!game.lab
   fail(`malformed manifest entry: ${JSON.stringify(game)}`);
 
 const index=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const workshopAudit=auditWorkshopMarkup(index);
+const workshopFx=fs.readFileSync(path.join(ROOT,'workshop-fx.js'),'utf8');
+const workshopAudit=auditWorkshopMarkup(index,workshopFx);
 for(const error of workshopAudit.errors)fail(`[${error.code}] ${error.message}`);
 if(!index.includes('games.js'))fail('gallery does not load the shared manifest');
 if(!index.includes("sidequest:active"))fail('gallery does not manage preview visibility');
@@ -47,7 +48,7 @@ for(const [i,game]of games.entries()){
   }catch(error){fail(`${game.id}: ${error.stack||error}`);}
 }
 
-console.log('gallery browser: workshop conversion path');
+console.log('gallery browser: workshop dock and effects');
 const browserCheck=spawnSync(process.execPath,[path.join(__dirname,'workshop-funnel-browser.js'),'--root',ROOT],{
   stdio:'inherit',env:process.env
 });
