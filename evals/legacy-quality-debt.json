@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "protocol": "ambient-evidence-v1",
+  "frozenAt": "2026-07-13",
+  "policy": {
+    "mayResolveExistingEntries": true,
+    "mayAddEntries": false,
+    "newCatalogGamesMustUseStatus": "aep1"
+  },
+  "frozenLegacyIds": [
+    "horizon",
+    "meatlad",
+    "rocket",
+    "smallguys",
+    "wordfall",
+    "hexcascade",
+    "blockmine",
+    "webslam",
+    "deadline-deck",
+    "scrapshift",
+    "motobowl"
+  ],
+  "games": {
+    "horizon": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/horizon-eval.js"}
+    },
+    "meatlad": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/meatlad-eval.js"}
+    },
+    "rocket": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/rocket-eval.js"}
+    },
+    "smallguys": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/smallguys-eval.js"}
+    },
+    "wordfall": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/wordfall-eval.js"}
+    },
+    "hexcascade": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/hexcascade-eval.js"}
+    },
+    "blockmine": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {
+        "behaviorEval": "evals/blockmine-eval.js",
+        "additionalEval": "evals/blockmine-30m-eval.js"
+      }
+    },
+    "webslam": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/webslam-eval.js"}
+    },
+    "deadline-deck": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/deadline-deck-eval.js"}
+    },
+    "scrapshift": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/scrapshift-eval.js"}
+    },
+    "motobowl": {
+      "status": "open",
+      "missing": ["visualEval", "visualReview", "visualReceipt"],
+      "present": {"behaviorEval": "evals/motobowl-eval.js"}
+    }
+  }
+}

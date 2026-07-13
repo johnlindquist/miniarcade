@@ -10,6 +10,7 @@
 'use strict';
 const fs=require('fs'),path=require('path');
 const{seededRandom,inlineScript}=require('./harness');
+const{analyzeLocalOscillation,assertLocalOscillation}=require('./motion');
 const dir=path.join(__dirname,'..');
 const html=fs.readFileSync(path.join(dir,'blockmine.html'),'utf8');
 const inline=inlineScript(html);
@@ -30,22 +31,51 @@ globalThis.__bmProbe=()=>({
   depth:deepest,tool:P.tool,wood:P.wood,diamonds:P.diamond,kills,lights:torches.length,cx:P.cx,cy:P.cy,
   trapKills,trapBuilds,buildScore,builds:structures.length,deaths,repaths,mobs:mobs.length,mode:P.aiMode,
   goalStage:goalState.stage,goalsDone:goalState.completed,goalLabel:primaryGoal().label,
-  progress:P.progressFrame,frame,dur:P.dur,durMax:P.durMax,homing:!!P.homing,caravans,gold:P.gold,
+  progress:P.progressFrame,frame,dur:P.dur,durMax:P.durMax,homing:!!P.homing,caravans,gold:P.gold,cycleBreaks:P.cycleBreaks,
   food:P.food,ammo:P.ammo,torch:P.torch,caravanTarget:goalState.caravanTarget,atCamp:campNear(),
   discoveryPasses,
   finite:Number.isFinite(P.x)&&Number.isFinite(P.y)&&Number.isFinite(camY),playing:playing()
 });
 globalThis.__bmStoryRun=n=>{
-  let last=-1,stall=0,maxStall=0;
-  for(let i=0;i<n;i++){step();const progress=P.progressFrame;
+  let last=-1,stall=0,maxStall=0,lastCell=key(P.cx,P.cy),segment=0;
+  const motionEvents=[{at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment}];
+  for(let i=0;i<n;i++){step();const progress=P.progressFrame,cell=key(P.cx,P.cy);
+    if(cell!==lastCell){const dx=Math.abs(P.cx-keyX(lastCell)),dy=Math.abs(P.cy-keyY(lastCell));
+      if(dx+dy>2)segment++;motionEvents.push({at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment});lastCell=cell;}
     if(progress>last){last=progress;stall=0;}else{stall++;maxStall=Math.max(maxStall,stall);}}
-  return Object.assign({maxStall},globalThis.__bmProbe());
+  return Object.assign({maxStall,motionEvents},globalThis.__bmProbe());
 };
 globalThis.__bmPathFixture=()=>{
-  resetGame();for(let y=16;y<=46;y++)for(let x=1;x<COLS-1;x++)setTile(x,y,AIR);
+  resetGame();for(let y=16;y<=46;y++)for(let x=1;x<COLS-1;x++)setTile(x,y,LADDER);
   for(let y=16;y<=46;y++)if(y!==35)setTile(9,y,BEDROCK);
   const r=findRoute(3,28,15,28,{airOnly:true});
   return{ok:!!r&&r.length>0,crosses:!!r&&r.some(c=>c.x===9&&c.y===35),length:r?r.length:0};
+};
+globalThis.__bmLavaLipFixture=()=>{
+  resetGame();for(let y=38;y<=43;y++)for(let x=1;x<COLS-1;x++)setTile(x,y,BEDROCK);
+  setTile(10,40,AIR);setTile(11,40,AIR);setTile(11,41,LAVA);setTile(12,40,DIAMOND);
+  for(let y=38;y<=43;y++)for(let x=8;x<=13;x++)discovered.add(key(x,y));
+  Object.assign(P,{cx:10,cy:40,x:centerX(10),y:centerY(40),toX:10,toY:40,tool:4,cobble:20,
+    route:[],target:null,mine:null,buildCd:1e9,lastBuildDepth:40,progressFrame:frame});
+  goalState.stage=3;mobs=[];nextMob=1e9;
+  const route=findRoute(10,40,12,40,{allowBridge:true,avoidMobs:true});
+  P.route=route||[];P.target={x:12,y:40};P.targetT=600;
+  return{route:route?route.length:0};
+};
+globalThis.__bmLavaLipProbe=()=>({bridge:tile(11,41)===BRIDGE,diamonds:P.diamond,cycleBreaks:P.cycleBreaks,cx:P.cx,cy:P.cy});
+globalThis.__bmLavaShoreFixture=()=>{
+  resetGame();for(let y=38;y<=42;y++)for(let x=0;x<=6;x++)setTile(x,y,BEDROCK);
+  for(let x=0;x<=3;x++)setTile(x,40,LAVA);setTile(0,41,LAVA);setTile(4,40,STONE);setTile(5,40,STONE);
+  for(let y=38;y<=42;y++)for(let x=0;x<=6;x++)discovered.add(key(x,y));
+  Object.assign(P,{cx:0,cy:40,x:centerX(0),y:centerY(40),toX:0,toY:40,tool:4,cobble:0,
+    route:[],target:null,mine:null,buildCd:1e9,lastBuildDepth:40,progressFrame:frame,hp:100,invT:0});
+  goalState.stage=3;mobs=[];nextMob=1e9;
+};
+globalThis.__bmLavaShoreRun=n=>{
+  let lastCell=key(P.cx,P.cy),escaped=false;const cells=[P.cx],motionEvents=[{at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment:0}];
+  for(let i=0;i<n;i++){step();const cell=key(P.cx,P.cy);if(cell!==lastCell){cells.push(P.cx);motionEvents.push({at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment:0});lastCell=cell;}
+    if(!escaped&&tile(P.cx,P.cy)!==LAVA){escaped=true;P.dead=1e9;}}
+  return{cx:P.cx,cy:P.cy,escaped,cells,motionEvents,cycleBreaks:P.cycleBreaks};
 };
 globalThis.__bmBreachFixture=()=>{
   resetGame();for(let y=30;y<=48;y++)for(let x=1;x<COLS-1;x++)setTile(x,y,BEDROCK);
@@ -197,9 +227,12 @@ const fail=m=>{console.error('  FAIL:',m);failed=true;};
 console.log('autonomous story: 3 x 10 simulated minutes');
 for(let run=1;run<=3;run++){
   boot(0xB10C0000+run);const p=globalThis.__bmStoryRun(36000),maxStall=p.maxStall;
+  const oscillation=analyzeLocalOscillation(p.motionEvents);
   console.log(`  run ${run}: ${p.depth}m, tool tier ${p.tool}, ${p.diamonds} diamonds, `+
     `${p.kills} mobs (${p.trapKills} trapped), ${p.builds} builds / ${p.buildScore} BLD, `+
-    `${p.goalsDone} goals, worst action stall ${(maxStall/60).toFixed(1)}s`);
+    `${p.goalsDone} goals, worst action stall ${(maxStall/60).toFixed(1)}s, `+
+    `${oscillation.violations.length} local oscillations, ${p.cycleBreaks} cycle breaks`);
+  assertLocalOscillation(`run ${run}`,oscillation,fail);
   if(!p.finite)fail(`run ${run}: non-finite player or camera state`);
   if(p.depth<60)fail(`run ${run}: reached only ${p.depth}m (limit 60m)`);
   if(p.tool<3)fail(`run ${run}: only reached tool tier ${p.tool} (limit iron)`);
@@ -220,6 +253,22 @@ console.log('pathfinding: route around an unbreakable wall through its only gap'
 boot();const pathProbe=globalThis.__bmPathFixture();
 console.log(`  route ${pathProbe.length} cells, required gap used: ${pathProbe.crosses}`);
 if(!pathProbe.ok||!pathProbe.crosses)fail('A* did not solve the forced-gap maze');
+
+console.log('route execution: air over lava gets a bridge before the miner lands');
+boot();const lipSetup=globalThis.__bmLavaLipFixture(),lipRun=globalThis.__bmStoryRun(500),lipProbe=globalThis.__bmLavaLipProbe();
+const lipOscillation=analyzeLocalOscillation(lipRun.motionEvents);assertLocalOscillation('lava lip',lipOscillation,fail);
+console.log(`  route ${lipSetup.route} cells, bridge ${lipProbe.bridge}, diamonds ${lipProbe.diamonds}, cycle breaks ${lipProbe.cycleBreaks}`);
+if(lipSetup.route<2||!lipProbe.bridge||lipProbe.diamonds<1)fail('air-over-lava route did not bridge the landing and mine the diamond');
+if(lipProbe.cycleBreaks!==0)fail('lava-lip fixture needed generic cycle recovery instead of executable routing');
+
+console.log('lava escape: a wall-edge lake produces a committed swim to mineable shore');
+boot();globalThis.__bmLavaShoreFixture();const shoreRun=globalThis.__bmLavaShoreRun(600);
+const shoreOscillation=analyzeLocalOscillation(shoreRun.motionEvents);assertLocalOscillation('lava shore',shoreOscillation,fail);
+const backtracks=shoreRun.cells.reduce((n,x,i)=>n+(i&&x<shoreRun.cells[i-1]?1:0),0);
+console.log(`  escaped to ${shoreRun.cx},${shoreRun.cy}, ${shoreRun.cells.length-1} moves, ${backtracks} backtracks, cycle breaks ${shoreRun.cycleBreaks}`);
+if(!shoreRun.escaped||shoreRun.cx<4)fail('lava swimmer did not commit to the mineable shore');
+if(backtracks)fail('lava swimmer reversed away from the interior shore');
+if(shoreRun.cycleBreaks!==0)fail('lava-shore fixture needed generic cycle recovery instead of directed escape');
 
 console.log('breach tactics: wall-separated zombie regression');
 boot();globalThis.__bmBreachFixture();run(600);

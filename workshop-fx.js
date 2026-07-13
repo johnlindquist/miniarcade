@@ -8,7 +8,10 @@
     state:{eggo:'static',shader:'disabled'},
     eggoRafActive:false,
     shaderEnergy:0,
-    shaderPointer:{x:0,y:0}
+    shaderPointer:{x:0,y:0},
+    events:{pointerBoop:0,keyboardBoop:0,semanticBoop:0,dragRelease:0,cancel:0,longPressRejected:0},
+    captureEggoPixels:null,
+    captureSpotlightPair:null
   }:null;
   if(debug)window.__workshopFx=debug;
 
@@ -58,17 +61,21 @@
     let meshCleanup=null;
     let shaderCleanup=null;
 
+    const staticEggoLabel='Eggo, the egghead.io mascot';
+    const interactiveEggoLabel='Eggo, the egghead.io mascot — tap to boop, grab to stretch';
     const setEggoState=state=>{
       if(eggo)eggo.dataset.eggoState=state;
       if(debug)debug.state.eggo=state;
     };
     const showEggoFallback=state=>{
+      if(eggo){eggo.disabled=true;eggo.setAttribute('aria-label',staticEggoLabel);}
       if(eggoCanvas)eggoCanvas.hidden=true;
       if(fallback)fallback.hidden=false;
       setEggoState(state||'static');
       if(debug)debug.eggoRafActive=false;
     };
     const showEggoCanvas=()=>{
+      if(eggo){eggo.disabled=false;eggo.setAttribute('aria-label',interactiveEggoLabel);}
       if(fallback)fallback.hidden=true;
       if(eggoCanvas)eggoCanvas.hidden=false;
     };
@@ -114,11 +121,17 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
 
       const gl=eggoCanvas.getContext('webgl',{
         alpha:true,antialias:false,depth:false,stencil:false,
-        premultipliedAlpha:true,preserveDrawingBuffer:false,powerPreference:'low-power'
+        premultipliedAlpha:true,preserveDrawingBuffer:true,powerPreference:'low-power'
       });
       if(!gl||gl.isContextLost()){showEggoFallback('static');return false;}
       const program=makeProgram(gl,MESH_VERT,MESH_FRAG);
       if(!program){showEggoFallback('static');return false;}
+      if(debug)debug.captureEggoPixels=()=>{
+        const pixels=new Uint8Array(eggoCanvas.width*eggoCanvas.height*4);
+        gl.finish();
+        gl.readPixels(0,0,eggoCanvas.width,eggoCanvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+        return Array.from(pixels);
+      };
       gl.useProgram(program);
       gl.viewport(0,0,eggoCanvas.width,eggoCanvas.height);
       gl.enable(gl.BLEND);
@@ -183,10 +196,16 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
       let grabbing=false;
       let pointerId=-1;
       let grabX=0,grabY=0,pullX=0,pullY=0;
+      let grabT=0,maxGestureDistance=0,lastPointerRelease=-Infinity;
+      const keyboardActivations=new Set();
+      const keyboardResetTimers=new Set();
+      let keyboardSource='';
       let raf=0;
       let lastTime=0;
       const maxPull=Math.max(12,Math.min(14,Math.min(artW,artH)*0.35));
+      const tapSlop=Math.max(6,Math.min(10,Math.min(artW,artH)*0.18));
       const fallRadius=Math.max(22,Math.min(26,Math.min(artW,artH)*0.62));
+      const boopVelocity=540*Math.min(artW,artH)/124;
 
       const draw=()=>{
         gl.clearColor(0,0,0,0);
@@ -250,14 +269,43 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
         const r=eggo.getBoundingClientRect();
         return[e.clientX-r.left+pad,e.clientY-r.top+pad];
       };
+      const boop=(x,y,source)=>{
+        if(!ready)return;
+        for(let i=0;i<count;i++){
+          const ix=i*2,iy=ix+1;
+          const dx=base[ix]-x,dy=base[iy]-y;
+          const distance=Math.hypot(dx,dy)||1;
+          const influence=Math.exp(-(distance*distance)/(fallRadius*fallRadius));
+          velocity[ix]+=dx/distance*boopVelocity*influence;
+          velocity[iy]+=dy/distance*boopVelocity*influence;
+        }
+        if(debug)debug.events[source==='keyboard'?'keyboardBoop':source==='semantic'?'semanticBoop':'pointerBoop']++;
+        lastTime=0;
+        setEggoState('booping');
+        startFrame();
+      };
+      const resetKeyboardActivation=()=>{
+        for(const timer of keyboardResetTimers)clearTimeout(timer);
+        keyboardResetTimers.clear();
+        keyboardActivations.clear();
+        keyboardSource='';
+      };
+      const scheduleKeyboardReset=key=>{
+        const timer=setTimeout(()=>{
+          keyboardResetTimers.delete(timer);
+          keyboardActivations.delete(key);
+          if(keyboardSource===key)keyboardSource='';
+        },0);
+        keyboardResetTimers.add(timer);
+      };
       const onDown=e=>{
-        if(!ready||e.button!==0)return;
-        e.preventDefault();
+        if(!ready||e.button!==0||e.isPrimary===false)return;
+        resetKeyboardActivation();
         e.stopPropagation();
         pointerId=e.pointerId;
         try{eggo.setPointerCapture(pointerId);}catch(_error){}
         [grabX,grabY]=local(e);
-        pullX=0;pullY=0;grabbing=true;lastTime=0;
+        pullX=0;pullY=0;maxGestureDistance=0;grabT=performance.now();grabbing=true;lastTime=0;
         setEggoState('dragging');
         startFrame();
       };
@@ -268,6 +316,7 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
         const point=local(e);
         let dx=point[0]-grabX,dy=point[1]-grabY;
         const distance=Math.hypot(dx,dy);
+        maxGestureDistance=Math.max(maxGestureDistance,distance);
         if(distance>maxPull){
           const soft=Math.min(maxPull*1.4,maxPull+(distance-maxPull)*0.24);
           dx=dx/distance*soft;
@@ -276,17 +325,56 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
         pullX=dx;pullY=dy;
         startFrame();
       };
-      const release=e=>{
+      const release=(e,reason)=>{
         if(!grabbing||(e.pointerId!==undefined&&e.pointerId!==pointerId))return;
-        e.preventDefault();
         e.stopPropagation();
+        const releasedPointer=pointerId;
+        const elapsed=performance.now()-grabT;
+        let releaseDistance=0;
+        if(reason==='pointerup'&&Number.isFinite(e.clientX)&&Number.isFinite(e.clientY)){
+          const point=local(e);
+          releaseDistance=Math.hypot(point[0]-grabX,point[1]-grabY);
+        }
+        const gestureDistance=Math.max(maxGestureDistance,Math.hypot(pullX,pullY),releaseDistance);
+        const cleanTap=reason==='pointerup'&&gestureDistance<tapSlop&&elapsed<400;
         grabbing=false;
-        try{eggo.releasePointerCapture(pointerId);}catch(_error){}
+        lastPointerRelease=performance.now();
+        if(reason!=='lost')try{eggo.releasePointerCapture(releasedPointer);}catch(_error){}
         pointerId=-1;pullX=0;pullY=0;lastTime=0;
+        if(cleanTap){boop(grabX,grabY,'pointer');return;}
+        if(debug){
+          if(reason==='cancel'||reason==='lost')debug.events.cancel++;
+          else if(gestureDistance<tapSlop&&elapsed>=400)debug.events.longPressRejected++;
+          else debug.events.dragRelease++;
+        }
         setEggoState('settling');
         startFrame();
       };
-      const onLost=e=>{if(grabbing&&e.pointerId===pointerId)release(e);};
+      const onPointerUp=e=>release(e,'pointerup');
+      const onPointerCancel=e=>release(e,'cancel');
+      const onLost=e=>{if(grabbing&&e.pointerId===pointerId)release(e,'lost');};
+      const onKeyDown=e=>{
+        if(e.key!=='Enter'&&e.key!==' ')return;
+        if(e.repeat){e.preventDefault();return;}
+        keyboardActivations.add(e.key);
+        keyboardSource=e.key;
+      };
+      const onKeyUp=e=>{
+        if((e.key!=='Enter'&&e.key!==' ')||!keyboardActivations.has(e.key))return;
+        keyboardSource=e.key;
+        scheduleKeyboardReset(e.key);
+      };
+      const onClick=e=>{
+        if(e.detail>0&&performance.now()-lastPointerRelease<700){resetKeyboardActivation();return;}
+        const key=keyboardActivations.has(keyboardSource)?keyboardSource:'';
+        const source=key?'keyboard':'semantic';
+        if(key){
+          keyboardActivations.delete(key);
+          const remaining=[...keyboardActivations];
+          keyboardSource=remaining[remaining.length-1]||'';
+        }
+        boop(pad+artW/2,pad+artH/2,source);
+      };
       const onContextLost=e=>{
         e.preventDefault();
         if(meshCleanup)meshCleanup();
@@ -297,9 +385,14 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
       eggo.style.touchAction='none';
       eggo.addEventListener('pointerdown',onDown);
       eggo.addEventListener('pointermove',onMove);
-      eggo.addEventListener('pointerup',release);
-      eggo.addEventListener('pointercancel',release);
+      eggo.addEventListener('pointerup',onPointerUp);
+      eggo.addEventListener('pointercancel',onPointerCancel);
       eggo.addEventListener('lostpointercapture',onLost);
+      eggo.addEventListener('keydown',onKeyDown);
+      eggo.addEventListener('keyup',onKeyUp);
+      eggo.addEventListener('blur',resetKeyboardActivation);
+      eggo.addEventListener('click',onClick);
+      window.addEventListener('blur',resetKeyboardActivation);
       eggoCanvas.addEventListener('webglcontextlost',onContextLost,false);
 
       const image=new Image();
@@ -332,15 +425,22 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
       meshCleanup=()=>{
         if(disposed)return;
         disposed=true;ready=false;grabbing=false;
+        resetKeyboardActivation();
         stopFrame();
         image.onload=null;image.onerror=null;
         eggo.removeEventListener('pointerdown',onDown);
         eggo.removeEventListener('pointermove',onMove);
-        eggo.removeEventListener('pointerup',release);
-        eggo.removeEventListener('pointercancel',release);
+        eggo.removeEventListener('pointerup',onPointerUp);
+        eggo.removeEventListener('pointercancel',onPointerCancel);
         eggo.removeEventListener('lostpointercapture',onLost);
+        eggo.removeEventListener('keydown',onKeyDown);
+        eggo.removeEventListener('keyup',onKeyUp);
+        eggo.removeEventListener('blur',resetKeyboardActivation);
+        eggo.removeEventListener('click',onClick);
+        window.removeEventListener('blur',resetKeyboardActivation);
         eggoCanvas.removeEventListener('webglcontextlost',onContextLost,false);
         eggo.style.touchAction=previousTouchAction;
+        if(debug)debug.captureEggoPixels=null;
         gl.deleteTexture(texture);
         gl.deleteBuffer(positionBuffer);
         gl.deleteBuffer(uvBuffer);
@@ -360,6 +460,9 @@ uniform vec2 u_mouse;
 uniform vec2 u_velocity;
 uniform float u_energy;
 uniform float u_time;
+uniform float u_wobbleTime;
+uniform float u_spotlight;
+uniform float u_spotlightWobble;
 uniform vec4 u_cta;
 float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float noise(vec2 p){
@@ -383,6 +486,26 @@ void main(){
   vec3 orange=vec3(1.0,0.43,0.12);
   vec3 cyan=vec3(0.18,0.80,0.92);
   vec3 color=comet*mix(orange,cyan,clamp(grain*0.7+speed*0.0003,0.0,1.0));
+
+  vec2 toCta=u_cta.xy-u_mouse;
+  float targetDistance=length(toCta);
+  float spotlightReach=max(90.0,min(300.0,u_resolution.x*0.78));
+  float spotlightProximity=1.0-smoothstep(44.0,spotlightReach,targetDistance);
+  vec2 fromMouse=p-u_mouse;
+  vec2 spotlightDirection=toCta/max(targetDistance,1.0);
+  vec2 spotlightNormal=vec2(-spotlightDirection.y,spotlightDirection.x);
+  float spotlightT=clamp(dot(fromMouse,toCta)/max(dot(toCta,toCta),1.0),0.0,1.0);
+  vec2 spotlightOffset=fromMouse-toCta*spotlightT;
+  float spotlightSide=dot(spotlightOffset,spotlightNormal);
+  float spotlightEnd=abs(dot(spotlightOffset,spotlightDirection));
+  float spotlightWobble=(noise(vec2(spotlightT*7.0-u_wobbleTime*1.4,13.1))-0.5)
+    *u_spotlightWobble*min(16.0,u_resolution.y*0.24)*spotlightT*(1.0-spotlightT);
+  float spotlightDistance=length(vec2(spotlightSide+spotlightWobble,spotlightEnd));
+  float spotlightWidth=mix(min(11.0,u_resolution.y*0.18),2.2,spotlightT);
+  float spotlight=exp(-(spotlightDistance*spotlightDistance)/(2.0*spotlightWidth*spotlightWidth));
+  float spotlightPulse=0.6+0.4*sin(spotlightT*24.0-u_time*5.0);
+  color+=u_spotlight*spotlight*spotlightPulse*spotlightProximity*(0.025+0.34*u_energy)
+    *mix(orange,cyan,spotlightT*0.8);
 
   float box=roundedBox(p-u_cta.xy,u_cta.zw,10.0);
   float edge=exp(-abs(box)/3.5);
@@ -424,6 +547,9 @@ void main(){
       const uVelocity=gl.getUniformLocation(program,'u_velocity');
       const uEnergy=gl.getUniformLocation(program,'u_energy');
       const uTime=gl.getUniformLocation(program,'u_time');
+      const uWobbleTime=gl.getUniformLocation(program,'u_wobbleTime');
+      const uSpotlight=gl.getUniformLocation(program,'u_spotlight');
+      const uSpotlightWobble=gl.getUniformLocation(program,'u_spotlightWobble');
       const uCta=gl.getUniformLocation(program,'u_cta');
       let disposed=false;
       let timer=0,raf=0,lastDraw=0,lastMove=0;
@@ -480,6 +606,9 @@ void main(){
         gl.uniform2f(uVelocity,velocityX,velocityY);
         gl.uniform1f(uEnergy,Math.min(1,energy));
         gl.uniform1f(uTime,now/1000);
+        gl.uniform1f(uWobbleTime,now/1000);
+        gl.uniform1f(uSpotlight,1);
+        gl.uniform1f(uSpotlightWobble,1);
         gl.uniform4f(uCta,ctaX,ctaY,ctaW,ctaH);
         gl.drawArrays(gl.TRIANGLES,0,3);
         if(debug)debug.drawCounters.shader++;
@@ -490,6 +619,47 @@ void main(){
         const now=performance.now();
         const remaining=Math.max(0,1000/30-(now-lastDraw));
         queue(remaining,true);
+      };
+      if(debug)debug.captureSpotlightPair=()=>{
+        clearSchedule();
+        const probeDistance=Math.min(180,fxCanvas.width*0.28);
+        const probeX=Math.max(4,ctaX-probeDistance);
+        const probeY=Math.max(4,Math.min(fxCanvas.height-4,ctaY+fxCanvas.height*0.08));
+        const liveSpotlight=Number(gl.getUniform(program,uSpotlight));
+        const liveWobble=Number(gl.getUniform(program,uSpotlightWobble));
+        const liveTime=Number(gl.getUniform(program,uTime));
+        const liveWobbleTime=Number(gl.getUniform(program,uWobbleTime));
+        const capture=(spotlight,wobble)=>{
+          gl.clearColor(0,0,0,0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.uniform2f(uResolution,fxCanvas.width,fxCanvas.height);
+          gl.uniform2f(uMouse,probeX,probeY);
+          gl.uniform2f(uVelocity,0,0);
+          gl.uniform1f(uEnergy,1);
+          gl.uniform1f(uTime,1.75);
+          gl.uniform1f(uWobbleTime,liveWobbleTime);
+          gl.uniform1f(uSpotlight,spotlight);
+          gl.uniform1f(uSpotlightWobble,wobble);
+          gl.uniform4f(uCta,ctaX,ctaY,ctaW,ctaH);
+          gl.drawArrays(gl.TRIANGLES,0,3);
+          gl.finish();
+          const pixels=new Uint8Array(fxCanvas.width*fxCanvas.height*4);
+          gl.readPixels(0,0,fxCanvas.width,fxCanvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+          return Array.from(pixels);
+        };
+        const off=capture(0,liveWobble);
+        const straight=capture(liveSpotlight,0);
+        const bent=capture(liveSpotlight,liveWobble);
+        gl.uniform1f(uSpotlight,liveSpotlight);
+        gl.uniform1f(uSpotlightWobble,liveWobble);
+        gl.uniform1f(uTime,liveTime);
+        gl.uniform1f(uWobbleTime,liveWobbleTime);
+        lastDraw=0;
+        queue(0,true);
+        return{off,straight,bent,on:bent,
+          live:{spotlight:liveSpotlight,wobble:liveWobble,time:liveWobbleTime,ambientTime:liveTime},
+          width:fxCanvas.width,height:fxCanvas.height,
+          mouse:{x:probeX,y:probeY},cta:{x:ctaX,y:ctaY}};
       };
       const onPointerMove=e=>{
         const rect=dock.getBoundingClientRect();
@@ -538,7 +708,7 @@ void main(){
         fxCanvas.removeEventListener('webglcontextlost',onContextLost,false);
         gl.deleteBuffer(buffer);
         gl.deleteProgram(program);
-        if(debug){debug.shaderEnergy=0;}
+        if(debug){debug.shaderEnergy=0;debug.captureSpotlightPair=null;}
       };
       return true;
     };

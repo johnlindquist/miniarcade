@@ -142,10 +142,74 @@ function assertMotion(label,report,fail){
   return report.violations.length===0;
 }
 
+function analyzeLocalOscillation(events,limits){
+  limits=Object.assign({windowFrames:240,minObservedFrames:180,minMoves:10,minReversals:8,
+    minReversalShare:.7,minRevisitShare:.7,maxSpanCells:2,maxNetCells:1},limits||{});
+  if(!Array.isArray(events))throw new Error('local oscillation analysis needs an event array');
+  const required=['windowFrames','minObservedFrames','minMoves','minReversals','minReversalShare','minRevisitShare','maxSpanCells','maxNetCells'];
+  if(required.some(k=>!Number.isFinite(limits[k]))||limits.windowFrames<limits.minObservedFrames||
+    limits.minObservedFrames<0||limits.minMoves<2||limits.minReversals<1||limits.minReversalShare<0||
+    limits.minReversalShare>1||limits.minRevisitShare<0||limits.minRevisitShare>1||limits.maxSpanCells<0||limits.maxNetCells<0)
+    throw new Error('local oscillation limits must be finite and in range');
+  const clean=[];let finite=true,lastAt=-Infinity,id=null,segment=null,previous=null;
+  for(const e of events){
+    if(!e||!Number.isFinite(e.at)||e.at<lastAt||typeof e.id!=='string'||!e.id||
+      !Number.isFinite(e.cx)||!Number.isFinite(e.cy)||!Number.isInteger(e.segment))finite=false;
+    else{
+      if(id===null)id=e.id;else if(e.id!==id)finite=false;
+      if(segment===null)segment=e.segment;
+      else if(e.segment!==segment){
+        const jump=previous?Math.abs(e.cx-previous.cx)+Math.abs(e.cy-previous.cy):0;
+        if(e.segment!==segment+1||jump<=2)finite=false;
+        segment=e.segment;
+      }
+      lastAt=e.at;previous=e;clean.push(e);
+    }
+  }
+  const violations=[];
+  for(let end=1;end<clean.length;end++){
+    const b=clean[end];
+    for(let start=end-1;start>=0;start--){
+      const a=clean[start];if(a.id!==b.id||a.segment!==b.segment)break;
+      const observed=b.at-a.at;if(observed>limits.windowFrames)break;
+      if(observed<limits.minObservedFrames)continue;
+      const slice=clean.slice(start,end+1),vectors=[];
+      for(let i=1;i<slice.length;i++){
+        const dx=slice[i].cx-slice[i-1].cx,dy=slice[i].cy-slice[i-1].cy;
+        if(dx||dy)vectors.push({dx,dy});
+      }
+      if(vectors.length<limits.minMoves)continue;
+      let reversals=0;for(let i=1;i<vectors.length;i++)if(vectors[i].dx===-vectors[i-1].dx&&vectors[i].dy===-vectors[i-1].dy)reversals++;
+      const reversalShare=vectors.length>1?reversals/(vectors.length-1):0;
+      const seen=new Set([`${slice[0].cx},${slice[0].cy}`]);let revisits=0;
+      for(let i=1;i<slice.length;i++){const k=`${slice[i].cx},${slice[i].cy}`;if(seen.has(k))revisits++;else seen.add(k);}
+      const revisitShare=revisits/vectors.length,xs=slice.map(e=>e.cx),ys=slice.map(e=>e.cy);
+      const spanCells=Math.max(...xs)-Math.min(...xs)+Math.max(...ys)-Math.min(...ys);
+      const netCells=Math.abs(b.cx-a.cx)+Math.abs(b.cy-a.cy);
+      const repeated=reversals>=limits.minReversals&&reversalShare>=limits.minReversalShare||revisitShare>=limits.minRevisitShare;
+      if(repeated&&spanCells<=limits.maxSpanCells&&netCells<=limits.maxNetCells){
+        violations.push({id:b.id,segment:b.segment,startFrame:a.at,endFrame:b.at,observedFrames:observed,
+          moves:vectors.length,reversals,reversalShare,revisits,revisitShare,spanCells,netCells,
+          cells:[...new Set(slice.map(e=>`${e.cx},${e.cy}`))],modes:[...new Set(slice.map(e=>e.mode).filter(Boolean))]});
+        end=clean.length;break;
+      }
+    }
+  }
+  return{finite,id,events:clean.length,limits,violations};
+}
+
+function assertLocalOscillation(label,report,fail){
+  if(!report.finite)fail(`${label}: invalid local-oscillation telemetry; use one stable actor ID, monotonic finite arrivals, and segments only for spatial discontinuities`);
+  for(const v of report.violations)fail(`${label}: local oscillation ${v.startFrame}-${v.endFrame} `+
+    `${v.moves} moves/${v.reversals} reversals in cells ${v.cells.join(' ')} modes ${v.modes.join(' / ')||'unknown'}`);
+  return report.finite&&report.violations.length===0;
+}
+
 const motionLine=r=>{
   const worst=r.actors.reduce((m,a)=>Math.max(m,a.worstBareStillFrames),0);
   const emote=r.actors.reduce((m,a)=>Math.max(m,a.worstEmoteStillFrames),0);
   return`${r.actors.length} actors, worst bare still ${worst}f, worst emote pause ${emote}f`;
 };
 
-module.exports={HALF_SECOND,MAX_SAMPLE_STEP,runMotion,analyzeMotion,assertMotion,motionLine};
+module.exports={HALF_SECOND,MAX_SAMPLE_STEP,runMotion,analyzeMotion,assertMotion,
+  analyzeLocalOscillation,assertLocalOscillation,motionLine};

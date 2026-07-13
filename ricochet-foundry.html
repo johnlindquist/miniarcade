@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RICOCHET FOUNDRY</title>
+<style>
+  html,body{margin:0;height:100%;background:#080b10}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#151a20}
+  canvas:focus-visible{outline:2px solid #ff8a45;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Ricochet Foundry. A tiny forge operator selects one of six deterministic banks, routes a single white-hot workpiece through heat, stamp, quench and die, counters pressure hazards, and installs four persistent engine parts."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,RI,hash,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,keys,tap,manual,
+  initSession,sessionStep,drawSession,playing,addScore,createShow,createEvidence,fxBurst,fxDust}=E;
+const{controllerMux}=AI;
+
+const TAU=Math.PI*2,Q=1024,SUBSTEPS=3,EPS=1/Q;
+const RAW=0,HEATED=1,SHAPED=2,TEMPERED=3,WARPED=4;
+const STAGE_NAMES=['RAW','HEATED','SHAPED','TEMPERED','SCRAP'];
+const PAL={ink:'#080b10',soot:'#151a20',iron0:'#303842',iron1:'#66717c',ironHi:'#a7b0b8',
+  copper:'#a85f39',heat:'#ff7a2f',gold:'#ffd166',cream:'#fff3bf',quench:'#63dfe5',
+  mint:'#9ff5df',danger:'#ff4f5e',badDark:'#681e2b'};
+const WORLD={x:0,y:34,width:160,height:284};
+const MACHINE_POS={furnace:{x:22.5,y:68},stamp:{x:80,y:73},quench:{x:137,y:68},die:{x:80,y:157},valve:{x:16.5,y:214},director:{x:80,y:218}};
+const PORT_X=[30,80,130];
+const LAUNCH=Object.freeze([
+  Object.freeze({port:0,director:-1,vx:1.10,vy:-2.18}),Object.freeze({port:0,director:1,vx:.72,vy:-2.36}),
+  Object.freeze({port:1,director:-1,vx:-.62,vy:-2.42}),Object.freeze({port:1,director:1,vx:.62,vy:-2.42}),
+  Object.freeze({port:2,director:-1,vx:-.72,vy:-2.36}),Object.freeze({port:2,director:1,vx:-1.10,vy:-2.18})
+]);
+const ACTIONS=Object.freeze(LAUNCH.map(q=>Object.freeze({port:q.port,director:q.director})));
+const TACTICS=Object.freeze({ADVANCE_RECIPE:'ADVANCE THE RECIPE',CLEAR_BRACE:'CLEAR THE BRACE',
+  COUNTER_DROP:'COUNTER THE DROP',VENT_PRESSURE:'VENT PRESSURE',RISK_DIE:'RISK THE DIE',RECOVER_RETURN:'RECOVER THE CHARGE'});
+const TASKS={furnace:'PRIME_FURNACE',stamp:'SET_PRESS',quench:'OPEN_QUENCH',die:'WATCH_DIE',
+  valve:'BRACE_SHUTTER',dependency:'RESET_CUP'};
+const TASK_X={PRIME_FURNACE:28,SET_PRESS:66,OPEN_QUENCH:121,WATCH_DIE:92,BRACE_SHUTTER:14,RESET_CUP:145};
+const ORDERS=Object.freeze([
+  Object.freeze({id:'drive-gear',label:'DRIVE GEAR',part:'gear',recipe:['HEAT','STAMP','QUENCH','DIE'],requiredStamps:1,deps:0,accent:PAL.gold}),
+  Object.freeze({id:'pressure-valve',label:'PRESSURE VALVE',part:'valve',recipe:['OPEN 2 PINS','HEAT','STAMP','QUENCH','DIE'],requiredStamps:1,deps:2,accent:'#e8a26d'}),
+  Object.freeze({id:'turbine-blade',label:'TURBINE BLADE',part:'turbine',recipe:['CLEAR ARCH','HEAT','STAMP','QUENCH','DIE'],requiredStamps:1,deps:1,accent:PAL.quench}),
+  Object.freeze({id:'foundry-heart',label:'FOUNDRY HEART',part:'heart',recipe:['HEAT','STAMP','STAMP','QUENCH','DIE'],requiredStamps:2,deps:0,accent:PAL.danger})
+]);
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{1:{frames:14},2:{frames:42,minGap:90},3:{frames:96,minGap:600}}});
+const EVIDENCE=createEvidence({limit:1600,sources:[
+  {id:'order-issued',kind:'setup'},{id:'choice-ready',kind:'setup'},
+  {id:'pressure-warning',kind:'threat'},{id:'slag-warning',kind:'threat'},
+  {id:'operator-counter',kind:'response',stableActor:true},{id:'shot-commit',kind:'commit',stableActor:true},
+  {id:'cast-complete',kind:'payoff'},{id:'machine-transition',kind:'progress'},{id:'foundry-state',kind:'environment'}
+]});
+const TACTICAL_BEATS=new Set(['order-issued','hazard-warning','operator-response','recipe-transition','dependency-open','hazard-land','hazard-counter','scrap','overheat','cast','installation','emergency-vent']);
+const PROGRESS_BEATS=new Set(['recipe-transition','dependency-open','hazard-counter','cast','installation']);
+
+let showFrame=0,runFrame=0,worldSeed=1,shift=0,sim=null,pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let currentOrderSetupSerial=0,currentChoiceSetupSerial=0,currentThreatSerial=0,currentCommitSerial=0;
+let feedback=[],feedbackSerial=0,goodPulse=0,badPulse=0,texts=[],lastTacticalBeat=0,lastProgressBeat=0;
+let visualFixture='',visualLocked=false,visualTick=0,plannerCandidates=[],manualPort=1,manualDirector=1;
+
+const quantize=v=>Math.round(v*Q)/Q;
+const round=(v,d)=>{const p=Math.pow(10,d===undefined?3:d);return Math.round(v*p)/p};
+const mod=(n,d)=>((n%d)+d)%d;
+const alpha=(a,fn)=>{const old=ctx.globalAlpha;ctx.globalAlpha=a;fn();ctx.globalAlpha=old};
+const line=(pts,c,w)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.stroke();ctx.lineWidth=1};
+const poly=(pts,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill()};
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),m=i=>Math.round(((pa>>i)&255)*(1-t)+((pb>>i)&255)*t);return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1)};
+const deepClone=o=>JSON.parse(JSON.stringify(o));
+const currentOrder=w=>ORDERS[w.orderIndex];
+const dieOpen=w=>w.dependenciesOpen>=currentOrder(w).deps&&!w.machines.find(m=>m.id==='machine:die').jammed;
+const requiredStamps=w=>currentOrder(w).requiredStamps;
+const chargeSpeed=w=>w.pressure<45?2:w.pressure<75?2.25:2.5;
+const actionKey=a=>a.port+':'+a.director;
+
+function baseStats(){return{ordersIssued:0,shotsCommitted:0,recipeTransitions:0,casts:0,scraps:0,overheats:0,
+  hazardActions:0,playerResponses:0,dependenciesOpened:0,emergencyVents:0,hazardCounters:0,jamLands:0,
+  wallBounces:0,slagHits:0,slagBroken:0,totalDistance:0,rawScore:0,events:0,progress:0,
+  maxTacticalLull:0,maxProgressLull:0,smartPlans:0,baselinePlans:0,plannerCalls:0,loopReturns:0,
+  wrongOrders:0,engineStarts:0,ordersCompleted:0,partsInstalled:0};}
+function makeCharge(){return{id:'charge',x:80,y:306,vx:0,vy:0,radius:3,stage:RAW,heat:0,stampCount:0,
+  mode:'cup',heldBy:null,holdT:0,shotSerial:0,lastColliderId:'',repeatCycle:0,collisionHistory:[],routeTarget:'machine:furnace',routeLocked:false,
+  port:1,director:1,afterDirector:false,lastStampShot:-1,scrapReason:'',trail:[]};}
+function makeMachines(){return[
+  {id:'machine:furnace',kind:'furnace',phase:'idle',phaseT:0,enabled:true,jammed:false},
+  {id:'machine:stamp',kind:'stamp',phase:'idle',phaseT:0,enabled:true,jammed:false},
+  {id:'machine:quench',kind:'quench',phase:'idle',phaseT:0,enabled:true,jammed:false},
+  {id:'machine:die',kind:'die',phase:'idle',phaseT:0,enabled:true,jammed:false}
+];}
+function blueprintItems(index,seed){
+  const variant=(seed+index)%3,out=[];
+  const add=(id,x,y,w,h,type,hp,active)=>out.push({id,x,y,w,h,type:type||'clinker',hp:hp||1,active:active!==false});
+  add('slag:brace:a',34,118,9,8,'brace',1);add('slag:brace:b',117,126,11,7,'brace',1);
+  add('slag:ingots',13,176,17,9,'ingots',2);add('slag:pipe-knot',131,185,15,11,'pipe',2);
+  add('slag:plate:l',36,244,18,6,'plate',2);add('slag:plate:r',107,250,19,6,'plate',2);
+  if(variant===0){add('slag:arch:l',54,173,9,18,'arch',2);add('slag:arch:r',97,173,9,18,'arch',2)}
+  else if(variant===1){add('slag:rack:l',43,198,19,6,'rack',2);add('slag:rack:r',100,201,17,6,'rack',2)}
+  else{add('slag:column:l',47,151,7,19,'column',2);add('slag:column:r',108,154,7,19,'column',2)}
+  if(index===1){add('dependency:pin:0',63,143,5,11,'pin',1);add('dependency:pin:1',96,143,5,11,'pin',1)}
+  if(index===2)add('dependency:arch',118,108,12,8,'clinker-arch',1);
+  return out;
+}
+function makeWorld(){
+  worldSeed=RI(1,0x7fffffff);shift=0;
+  return{runFrame:0,shift:0,orderIndex:0,orderPhase:'read',phaseT:54,pressure:24,charge:makeCharge(),operator:{id:'operator',x:80,targetX:80,face:1,task:'RESET_CUP',taskT:0,port:1,director:1,pose:'read',step:0,intent:null},
+    machines:makeMachines(),slag:blueprintItems(0,worldSeed),hazard:{id:'',kind:'pressure',phase:'calm',warnAt:760,landAt:1000,endAt:1360,lane:1,countered:false,t:0,serial:0,box:{x:74,y:112,width:13,height:17}},
+    installed:[],component:null,dependenciesOpen:0,blueprint:{id:'forge-'+(worldSeed%3)},selectedIntent:null,planTimer:54,
+    installationT:0,apexT:0,actNotes:[],stats:baseStats(),actsEnabled:typeof globalThis.__NO_ACTS==='undefined'};
+}
+
+function evidenceFact(source,data){if(typeof globalThis.__NO_EVIDENCE_LEDGER!=='undefined')return null;return EVIDENCE.record(source,Object.assign({frame:showFrame,showFrame,runFrame},data));}
+function recordOrderSetup(order){const e=evidenceFact('order-issued',{id:`shift:${shift}:order:${sim.orderIndex}`,orderId:order.id,dieId:`shift:${shift}:order:${sim.orderIndex}:die`,pressure:sim.pressure,requiredStages:order.recipe.slice(),x:80,y:18});currentOrderSetupSerial=e?e.serial:0;}
+function recordChoiceReady(options){const e=evidenceFact('choice-ready',{id:`shift:${shift}:order:${sim.orderIndex}:choice:${sim.charge.shotSerial+1}`,orderId:currentOrder(sim).id,chargeId:'charge',stage:sim.charge.stage,heat:sim.charge.heat,pressure:sim.pressure,choices:options.length,x:sim.charge.x,y:sim.charge.y});currentChoiceSetupSerial=e?e.serial:0;}
+function recordThreat(source,h){const e=evidenceFact(source,{id:h.id,actorId:h.id,orderId:currentOrder(sim).id,phase:'warn',landsAt:showFrame+240,lane:h.lane,x:h.box.x+h.box.width/2,y:h.box.y+h.box.height/2});currentThreatSerial=e?e.serial:0;}
+function recordCounter(intent,h){if(!currentThreatSerial)return null;return evidenceFact('operator-counter',{id:`${h.id}:response:${sim.charge.shotSerial+1}`,actorId:'operator',causeSerial:currentThreatSerial,setupSerial:currentChoiceSetupSerial,hazardId:h.id,port:intent.port,director:intent.director,tactic:intent.tactic,x:MACHINE_POS.valve.x,y:MACHINE_POS.valve.y});}
+function recordCommit(intent){const e=evidenceFact('shot-commit',{id:`shift:${shift}:order:${sim.orderIndex}:shot:${sim.charge.shotSerial}`,actorId:'operator',setupSerial:currentChoiceSetupSerial,orderSetupSerial:currentOrderSetupSerial,chargeId:'charge',port:intent.port,director:intent.director,tactic:intent.tactic,x:PORT_X[intent.port],y:306});currentCommitSerial=e?e.serial:0;}
+function recordCast(component){if(!currentOrderSetupSerial||!currentCommitSerial)return null;return evidenceFact('cast-complete',{id:`shift:${shift}:order:${sim.orderIndex}:cast`,orderId:currentOrder(sim).id,componentId:component.id,setupSerial:currentOrderSetupSerial,commitSerial:currentCommitSerial,x:component.x,y:component.y});}
+function recordMachine(kind,data){return evidenceFact('machine-transition',Object.assign({id:`shift:${shift}:order:${sim.orderIndex}:${kind}:${sim.charge.shotSerial}`,actorId:'charge',orderId:currentOrder(sim).id,x:sim.charge.x,y:sim.charge.y},data));}
+function recordFoundry(kind,data){return evidenceFact('foundry-state',Object.assign({id:`shift:${shift}:order:${sim.orderIndex}:${kind}:${showFrame}`,state:kind,x:80,y:180},data));}
+
+function markTacticalBeat(kind){if(!TACTICAL_BEATS.has(kind))throw new Error('unapproved tactical beat: '+kind);sim.stats.events++;sim.stats.maxTacticalLull=Math.max(sim.stats.maxTacticalLull,showFrame-lastTacticalBeat);lastTacticalBeat=showFrame;}
+function markProgress(kind){if(!PROGRESS_BEATS.has(kind))throw new Error('unapproved progress beat: '+kind);sim.stats.progress++;sim.stats.maxProgressLull=Math.max(sim.stats.maxProgressLull,showFrame-lastProgressBeat);lastProgressBeat=showFrame;}
+function say(s,c,x,y,t){texts.push({s,c:c||PAL.cream,x:x===undefined?80:x,y:y===undefined?108:y,t:t||58});if(texts.length>8)texts.shift();}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+42});}
+function feedbackCue(kind,id,sx,sy,pulse){feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,sx:Math.round(clamp(sx,0,W-1)),sy:Math.round(clamp(sy,34,H-1))});if(feedback.length>420)feedback.splice(0,feedback.length-420);if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.5:pulse);else badPulse=Math.max(badPulse,pulse===undefined?.5:pulse);}
+function payoffBurst(x,y,n,c,sp,g){if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;fxBurst(x,y,n,c,sp,g);}
+function payoffDust(x,y,n,c){if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;fxDust(x,y,n,c);}
+function payoffShake(n){if(typeof globalThis.__NO_PAYOFF_FX==='undefined')shake(n);}
+
+function nextRecipe(w){const c=w.charge,o=currentOrder(w);if(w.dependenciesOpen<o.deps)return o.id==='pressure-valve'?'OPEN COPPER PINS':'CLEAR QUENCH ARCH';if(c.stage===RAW)return'HEAT';if(c.stage===HEATED)return'STAMP';if(c.stage===SHAPED&&c.stampCount<o.requiredStamps)return'STAMP AGAIN';if(c.stage===SHAPED)return'QUENCH';if(c.stage===TEMPERED)return'DIE';return'RECAST';}
+function normalizeChargeVelocity(ball,w){const target=chargeSpeed(w),length=Math.hypot(ball.vx,ball.vy)||1;ball.vx=quantize(ball.vx/length*target);ball.vy=quantize(ball.vy/length*target);}
+function aimAt(ball,x,y,w){const dx=x-ball.x,dy=y-ball.y,l=Math.hypot(dx,dy)||1,s=chargeSpeed(w);ball.vx=quantize(dx/l*s);ball.vy=quantize(dy/l*s);}
+function targetForAction(action,w){
+  const k=actionKey(action);if(k==='0:-1')return'machine:furnace';if(k==='0:1')return'dependency';
+  if(k==='1:-1')return'machine:stamp';if(k==='1:1')return'machine:die';
+  if(k==='2:-1')return'machine:quench';return'machine:valve';
+}
+function targetPoint(id,w){
+  if(id==='machine:furnace')return{x:MACHINE_POS.furnace.x,y:MACHINE_POS.furnace.y};
+  if(id==='machine:stamp')return{x:MACHINE_POS.stamp.x,y:MACHINE_POS.stamp.y};
+  if(id==='machine:quench')return{x:MACHINE_POS.quench.x,y:MACHINE_POS.quench.y};
+  if(id==='machine:die')return{x:MACHINE_POS.die.x,y:MACHINE_POS.die.y};
+  if(id==='machine:valve')return{x:MACHINE_POS.valve.x,y:MACHINE_POS.valve.y};
+  const dep=w.slag.filter(q=>q.active&&q.id.startsWith('dependency:')).sort((a,b)=>a.id.localeCompare(b.id))[0];
+  return dep?{x:dep.x+dep.w/2,y:dep.y+dep.h/2}:{x:80,y:157};
+}
+function buildColliders(w){
+  const out=[
+    {id:'boundary:left',kind:'wall',x:-4,y:34,w:4,h:278,active:true},
+    {id:'boundary:right',kind:'wall',x:160,y:34,w:4,h:278,active:true},
+    {id:'boundary:ceiling',kind:'wall',x:0,y:32,w:160,h:4,active:true},
+    {id:'cup:return',kind:'cup',x:4,y:310,w:152,h:10,active:true},
+    {id:'guide:0',kind:'guide',port:0,x:23,y:288,w:14,h:7,active:true},
+    {id:'guide:1',kind:'guide',port:1,x:73,y:288,w:14,h:7,active:true},
+    {id:'guide:2',kind:'guide',port:2,x:123,y:288,w:14,h:7,active:true},
+    {id:'director',kind:'director',active:true,x1:w.operator.director<0?71:71,y1:w.operator.director<0?209:227,x2:89,y2:w.operator.director<0?227:209},
+    {id:'machine:furnace',kind:'machine',machine:'furnace',x:14,y:58,w:17,h:20,active:true},
+    {id:'machine:stamp',kind:'machine',machine:'stamp',x:69,y:65,w:22,h:17,active:true},
+    {id:'machine:quench',kind:'machine',machine:'quench',x:128,y:57,w:18,h:22,active:true},
+    {id:'machine:die',kind:'machine',machine:'die',x:68,y:145,w:24,h:23,active:true},
+    {id:'machine:valve',kind:'valve',x:10,y:207,w:13,h:14,active:true}
+  ];
+  for(const q of w.slag)if(q.active)out.push({id:q.id,kind:q.id.startsWith('dependency:')?'dependency':'slag',x:q.x,y:q.y,w:q.w,h:q.h,active:true});
+  return out;
+}
+function sweepCircleAabb(ball,c,maxT){
+  const minX=c.x-ball.radius,maxX=c.x+c.w+ball.radius,minY=c.y-ball.radius,maxY=c.y+c.h+ball.radius;
+  let enter=-Infinity,exit=Infinity,nx=0,ny=0;
+  const axis=(p,v,min,max,axisName)=>{
+    if(Math.abs(v)<EPS)return p>=min&&p<=max;
+    let t1=(min-p)/v,t2=(max-p)/v,near=t1,far=t2,sign=-1;if(t1>t2){near=t2;far=t1;sign=1;}
+    if(near>enter){enter=near;if(axisName==='x'){nx=sign;ny=0}else{nx=0;ny=sign}}
+    exit=Math.min(exit,far);return enter<=exit+EPS;
+  };
+  if(!axis(ball.x,ball.vx,minX,maxX,'x')||!axis(ball.y,ball.vy,minY,maxY,'y'))return null;
+  if(exit<-EPS||enter>maxT+EPS)return null;
+  if(enter<0){if(Math.abs(ball.vx)>=Math.abs(ball.vy)){nx=ball.vx>0?-1:1;ny=0}else{nx=0;ny=ball.vy>0?-1:1}enter=0;}
+  return{t:Math.max(0,enter),nx,ny};
+}
+function sweepCircleSegment(ball,c,maxT){
+  const sx=c.x2-c.x1,sy=c.y2-c.y1,len=Math.hypot(sx,sy)||1,tx=sx/len,ty=sy/len;
+  let nx=-ty,ny=tx,dist=(ball.x-c.x1)*nx+(ball.y-c.y1)*ny,vd=ball.vx*nx+ball.vy*ny;
+  if(Math.abs(vd)<EPS)return null;let side=dist>=0?1:-1,t=(side*ball.radius-dist)/vd;
+  if(t<-EPS||t>maxT+EPS){side=-side;t=(side*ball.radius-dist)/vd;if(t<-EPS||t>maxT+EPS)return null;}
+  const px=ball.x+ball.vx*t,py=ball.y+ball.vy*t,u=(px-c.x1)*tx+(py-c.y1)*ty;if(u<-ball.radius||u>len+ball.radius)return null;
+  nx*=side;ny*=side;return{t:Math.max(0,t),nx:quantize(nx),ny:quantize(ny)};
+}
+function firstCollision(ball,colliders,maxT){let winner=null;for(const c of colliders){if(!c.active||c.id===ball.lastColliderId)continue;if(ball.routeLocked){if(c.kind==='machine'&&c.id!==ball.routeTarget)continue;if(c.kind==='valve'&&ball.routeTarget!=='machine:valve')continue;if(c.kind==='dependency'&&ball.routeTarget!=='dependency')continue;if(c.kind==='slag')continue;if(c.kind==='director'&&!ball.afterDirector)continue;if(c.kind==='guide'&&(ball.routeTarget==='cup:return'||c.port!==ball.port))continue;}const hit=c.kind==='director'?sweepCircleSegment(ball,c,maxT):sweepCircleAabb(ball,c,maxT);if(!hit)continue;if(!winner||hit.t<winner.t-EPS||(Math.abs(hit.t-winner.t)<=EPS&&c.id<winner.collider.id))winner=Object.assign(hit,{collider:c});}return winner;}
+function noteCollision(ball,id){ball.collisionHistory.push(id);if(ball.collisionHistory.length>12)ball.collisionHistory.shift();const a=ball.collisionHistory.slice(-4).join('|'),b=ball.collisionHistory.slice(-8,-4).join('|');if(a&&a===b)ball.repeatCycle++;else ball.repeatCycle=0;}
+function emit(sink,type,data){if(sink)sink(type,data||{});}
+function setScrap(w,reason,sink){const b=w.charge;if(b.mode==='scrap'||b.mode==='cast')return;b.stage=WARPED;b.mode='scrap';b.routeLocked=false;b.scrapReason=reason;b.holdT=38;b.vx=b.vy=0;w.stats.scraps++;if(reason==='overheat')w.stats.overheats++;else w.stats.wrongOrders++;w.pressure=clamp(w.pressure+(reason==='overheat'?12:10),0,100);emit(sink,reason==='overheat'?'overheat':'scrap',{reason,x:b.x,y:b.y});}
+function processMachine(w,kind,sink){
+  const b=w.charge,o=currentOrder(w),before=b.stage;let good=false;
+  if(kind==='furnace'&&b.stage===RAW){b.stage=HEATED;b.heat=o.requiredStamps===2?960:600;good=true;}
+  else if(kind==='stamp'&&b.stage===HEATED){b.stage=SHAPED;b.stampCount=1;b.lastStampShot=b.shotSerial;good=true;}
+  else if(kind==='stamp'&&b.stage===SHAPED&&b.stampCount<o.requiredStamps&&b.lastStampShot!==b.shotSerial){b.stampCount++;b.lastStampShot=b.shotSerial;good=true;}
+  else if(kind==='quench'&&b.stage===SHAPED&&b.stampCount>=o.requiredStamps){b.stage=TEMPERED;b.heat=0;good=true;}
+  else if(kind==='die'&&b.stage===TEMPERED&&dieOpen(w)){completeCastState(w,sink);return;}
+  if(!good){setScrap(w,'wrong-order',sink);return;}
+  w.pressure=Math.max(0,w.pressure-2);w.stats.recipeTransitions++;emit(sink,'recipe-transition',{machine:kind,before,after:b.stage,x:b.x,y:b.y});
+}
+function completeCastState(w,sink){const o=currentOrder(w),b=w.charge;b.mode='cast';b.vx=b.vy=0;b.holdT=o.id==='foundry-heart'?60:20;w.component={id:'component:'+o.part,type:o.part,x:80,y:157,installed:false,liftT:0};w.stats.casts++;w.stats.ordersCompleted++;w.pressure=Math.max(0,w.pressure-25);emit(sink,'cast',{component:w.component,x:80,y:157});}
+function enterMachine(ball,c,w,sink){const m=w.machines.find(q=>q.id===c.id);if(!m||m.jammed){setScrap(w,'wrong-order',sink);return;}ball.mode='machine';ball.heldBy=c.id;ball.holdT=c.machine==='furnace'?14:c.machine==='stamp'?12:c.machine==='quench'?18:20;ball.vx=ball.vy=0;m.phase='capture';m.phaseT=ball.holdT;processMachine(w,c.machine,sink);}
+function counterHazardState(w,sink){const h=w.hazard,active=h.phase==='warn',jammed=w.machines.some(m=>m.jammed);w.pressure=Math.max(0,w.pressure-18);for(const m of w.machines)m.jammed=false;if(active){h.countered=true;h.phase='countered';h.t=70;w.stats.hazardCounters++;w.stats.playerResponses++;emit(sink,'hazard-counter',{hazard:h.id,x:MACHINE_POS.valve.x,y:MACHINE_POS.valve.y});}else if(jammed)emit(sink,'die-repair',{x:MACHINE_POS.valve.x,y:MACHINE_POS.valve.y});else emit(sink,'vent-pressure',{x:MACHINE_POS.valve.x,y:MACHINE_POS.valve.y});}
+function openDependency(w,c,sink){const q=w.slag.find(v=>v.id===c.id);if(!q||!q.active)return;q.hp--;if(q.hp<=0){q.active=false;w.dependenciesOpen++;w.stats.dependenciesOpened++;emit(sink,'dependency-open',{id:q.id,x:q.x+q.w/2,y:q.y+q.h/2});}}
+function resolveSpecialCollider(ball,c,w,sink){
+  noteCollision(ball,c.id);
+  if(c.kind==='cup'&&ball.vy>0){returnToCupState(w,sink);return true;}
+  if(c.kind==='guide'){
+    ball.lastColliderId=c.id;const target=targetPoint(ball.routeTarget,w);ball.afterDirector=false;aimAt(ball,target.x,target.y,w);return true;
+  }
+  if(c.kind==='director'){
+    ball.lastColliderId=c.id;ball.afterDirector=false;if(ball.routeLocked){const target=targetPoint(ball.routeTarget,w);aimAt(ball,target.x,target.y,w)}else{ball.vx=w.operator.director<0?-2:2;ball.vy=-.35;normalizeChargeVelocity(ball,w)}return true;
+  }
+  if(c.kind==='machine'){enterMachine(ball,c,w,sink);return true;}
+  if(c.kind==='valve'){counterHazardState(w,sink);ball.lastColliderId=c.id;ball.routeTarget='cup:return';ball.routeLocked=true;aimAt(ball,80,315,w);return true;}
+  if(c.kind==='dependency'){openDependency(w,c,sink);ball.lastColliderId=c.id;ball.routeTarget='cup:return';ball.routeLocked=true;aimAt(ball,80,315,w);return true;}
+  if(c.kind==='slag'){w.stats.slagHits++;const q=w.slag.find(v=>v.id===c.id);if(q&&--q.hp<=0){q.active=false;w.stats.slagBroken++;}return false;}
+  if(c.kind==='wall'){w.stats.wallBounces++;return false;}return false;
+}
+function stepChargePhysics(ball,w,sink){
+  const colliders=buildColliders(w),subDt=1/SUBSTEPS;
+  for(let sub=0;sub<SUBSTEPS;sub++){
+    if(ball.mode!=='flight')break;
+    let remaining=subDt,guard=0;while(remaining>EPS&&guard++<7){
+      const hit=firstCollision(ball,colliders,remaining);if(!hit){ball.x=quantize(ball.x+ball.vx*remaining);ball.y=quantize(ball.y+ball.vy*remaining);w.stats.totalDistance+=Math.hypot(ball.vx*remaining,ball.vy*remaining);break;}
+      ball.x=quantize(ball.x+ball.vx*hit.t);ball.y=quantize(ball.y+ball.vy*hit.t);w.stats.totalDistance+=Math.hypot(ball.vx*hit.t,ball.vy*hit.t);
+      const special=resolveSpecialCollider(ball,hit.collider,w,sink);if(ball.mode!=='flight'||special&&['guide','director','valve','dependency'].includes(hit.collider.kind)){remaining=0;break;}
+      const dot=ball.vx*hit.nx+ball.vy*hit.ny;ball.vx=quantize(ball.vx-2*dot*hit.nx);ball.vy=quantize(ball.vy-2*dot*hit.ny);normalizeChargeVelocity(ball,w);ball.x=quantize(ball.x+hit.nx*EPS);ball.y=quantize(ball.y+hit.ny*EPS);ball.lastColliderId=hit.collider.id;remaining=quantize(remaining-hit.t);
+    }
+  }
+  ball.x=quantize(ball.x);ball.y=quantize(ball.y);ball.vx=quantize(ball.vx);ball.vy=quantize(ball.vy);
+  if(ball.repeatCycle>=2)openReliefReturnState(w,sink);
+  if(ball.x<-16||ball.x>176||ball.y<-16||ball.y>330)openReliefReturnState(w,sink);
+}
+function returnToCupState(w,sink){const b=w.charge;b.x=clamp(quantize(b.x),7,153);b.y=306;b.vx=b.vy=0;b.mode='cup';b.routeLocked=false;b.heldBy=null;b.holdT=0;b.lastColliderId='';b.repeatCycle=0;b.collisionHistory=[];b.trail=[];w.orderPhase='read';w.planTimer=54;w.selectedIntent=null;emit(sink,'cup-return',{x:b.x,y:b.y});}
+function openReliefReturnState(w,sink){w.stats.loopReturns++;w.charge.repeatCycle=0;w.charge.collisionHistory=[];returnToCupState(w,sink);emit(sink,'loop-return',{});}
+function releaseMachine(w){const b=w.charge,m=w.machines.find(q=>q.id===b.heldBy);if(m){m.phase='release';m.phaseT=10;}b.mode='flight';b.heldBy=null;b.lastColliderId='';b.routeTarget='cup:return';b.routeLocked=true;aimAt(b,80,315,w);}
+function emergencyVentState(w,sink){if(w.pressure<100)return;w.pressure=55;w.stats.emergencyVents++;for(const q of w.slag.filter(q=>q.active&&!q.id.startsWith('dependency:')).slice(0,2))q.active=false;setScrap(w,'emergency-vent',null);emit(sink,'emergency-vent',{x:80,y:210});}
+function landHazardState(w,sink){const h=w.hazard;if(h.countered)return;h.phase='land';h.t=90;w.pressure=clamp(w.pressure+15,0,100);w.stats.hazardActions++;w.stats.jamLands++;const die=w.machines.find(m=>m.kind==='die');die.jammed=true;emit(sink,'hazard-land',{hazard:h.id,x:h.box.x+h.box.width/2,y:h.box.y+h.box.height/2});emergencyVentState(w,sink);}
+function stepHazardState(w,sink){
+  const h=w.hazard;if(!w.actsEnabled)return;
+  if(h.phase==='calm'&&w.runFrame>=h.warnAt){h.serial++;h.kind=w.orderIndex===1?'slag':'pressure';h.id=`shift:${w.shift}:${h.kind}:${h.serial}`;h.phase='warn';h.landAt=w.runFrame+240;h.endAt=h.landAt+360;h.countered=false;h.lane=(w.orderIndex+h.serial)%3;h.box={x:PORT_X[h.lane]-6,y:112,width:12,height:17};emit(sink,'hazard-warning',{hazard:h});}
+  else if(h.phase==='warn'&&w.runFrame>=h.landAt)landHazardState(w,sink);
+  else if((h.phase==='land'||h.phase==='countered')&&--h.t<=0){h.phase='calm';h.warnAt=w.runFrame+1080+(w.orderIndex*120);h.countered=false;}
+}
+function advanceSimWorld(w,sink){
+  w.runFrame++;stepHazardState(w,sink);const b=w.charge;
+  if((b.stage===HEATED||b.stage===SHAPED)&&b.heat>0){b.heat--;if(b.heat<=0)setScrap(w,'overheat',sink);}
+  if(b.mode==='flight'){b.trail.unshift({x:b.x,y:b.y,stage:b.stage});if(b.trail.length>16)b.trail.length=16;stepChargePhysics(b,w,sink);}
+  else if(b.mode==='machine'){if(b.holdT>0)b.holdT--;const m=w.machines.find(q=>q.id===b.heldBy);if(m)m.phaseT=b.holdT;if(b.mode==='machine'&&b.holdT<=0)releaseMachine(w);}
+  else if(b.mode==='scrap'){if(b.holdT>0)b.holdT--;if(b.holdT<=0){const serial=b.shotSerial;w.charge=makeCharge();w.charge.shotSerial=serial;w.orderPhase='read';w.planTimer=54;w.selectedIntent=null;emit(sink,'replacement',{});}}
+  emergencyVentState(w,sink);
+}
+
+function launchState(w,intent,sink){const b=w.charge,lv=LAUNCH.find(q=>q.port===intent.port&&q.director===intent.director)||LAUNCH[3];b.x=PORT_X[intent.port];b.y=306;b.vx=lv.vx;b.vy=lv.vy;b.port=intent.port;b.director=intent.director;b.routeTarget=targetForAction(intent,w);b.routeLocked=true;b.afterDirector=false;b.mode='flight';b.heldBy=null;b.shotSerial++;b.lastColliderId='';b.collisionHistory=[];b.repeatCycle=0;normalizeChargeVelocity(b,w);w.operator.port=intent.port;w.operator.director=intent.director;w.operator.intent=Object.assign({},intent);w.operator.task=TASKS[b.routeTarget.replace('machine:','')]||TASKS.dependency;w.operator.taskT=18;w.operator.targetX=TASK_X[w.operator.task];w.orderPhase='flight';w.stats.shotsCommitted++;emit(sink,'shot-commit',{intent});}
+function clonePlannerState(w){const out=deepClone(w);out.stats=deepClone(w.stats);out.selectedIntent=null;out.operator.intent=null;return out;}
+function simulateAction(sourceState,action,budget){
+  const w=clonePlannerState(sourceState),start={stage:w.charge.stage,heat:w.charge.heat,pressure:w.pressure,deps:w.dependenciesOpen,casts:w.stats.casts,hazards:w.stats.hazardCounters,scraps:w.stats.scraps,jams:w.stats.jamLands};
+  const events=[];launchState(w,{port:action.port,director:action.director,commit:true,targetId:targetForAction(action,w),tactic:TACTICS.ADVANCE_RECIPE},(type,data)=>events.push({type,data,frame:events.length}));
+  let frames=0,terminal=false;for(;frames<(budget||360);frames++){advanceSimWorld(w,(type,data)=>events.push({type,data,frame:frames}));if(w.charge.mode==='cup'||w.charge.mode==='scrap'||w.charge.mode==='cast'){terminal=w.charge.mode!=='cup';break;}}
+  const meaningful=events.find(e=>['recipe-transition','dependency-open','hazard-counter','die-repair','cast','scrap','overheat','emergency-vent'].includes(e.type));
+  const recipeDelta=w.stats.recipeTransitions-sourceState.stats.recipeTransitions,dependencyOpened=w.dependenciesOpen>start.deps,hazardCountered=w.stats.hazardCounters>start.hazards,dieRepaired=events.some(e=>e.type==='die-repair'),castCompleted=w.stats.casts>start.casts,warped=w.stats.scraps>start.scraps,overheated=events.some(e=>e.type==='overheat'),jamLanded=w.stats.jamLands>start.jams;
+  return{action:{port:action.port,director:action.director},targetId:targetForAction(action,sourceState),outcomeKind:castCompleted?'cast':hazardCountered?'counter':dependencyOpened?'dependency':events.some(e=>e.type==='recipe-transition')?'recipe':warped?'scrap':w.charge.mode==='cup'?'return':'flight',
+    firstMeaningfulId:meaningful?meaningful.type:null,firstMeaningfulFrame:meaningful?meaningful.frame:null,recipeDelta,dependencyOpened,hazardCountered,dieRepaired,castCompleted,warped,overheated,jamLanded,
+    pressureDelta:w.pressure-start.pressure,pressureAfter:w.pressure,heatAfter:w.charge.heat,hazardResult:hazardCountered?'countered':jamLanded?'landed':'none',returnsToCup:w.charge.mode==='cup',terminal,frames,events,state:w,futureLaneOpened:dependencyOpened,noMeaningfulContact:!meaningful,repeatedCycle:w.stats.loopReturns>sourceState.stats.loopReturns};
+}
+function immediateUtility(result){let value=0;value+=result.recipeDelta*120;value+=result.dependencyOpened?55:0;value+=result.hazardCountered?70:0;value+=result.dieRepaired?140:0;value+=result.castCompleted?260:0;value-=result.warped?130:0;value-=result.overheated?120:0;value-=result.jamLanded?85:0;value-=Math.max(0,result.pressureDelta)*3;value-=result.noMeaningfulContact?40:0;value-=result.repeatedCycle?30:0;return value;}
+function strategicUtility(first){if(first.terminal)return 0;const next=ACTIONS.map(a=>simulateAction(first.state,a,360)),best=Math.max(...next.map(r=>immediateUtility(r)));let value=best*.62;value+=Math.min(first.heatAfter,240)*.08;value+=Math.max(0,80-first.pressureAfter)*.25;value+=first.futureLaneOpened?35:0;if(first.state.hazard.phase==='warn'&&first.hazardCountered)value+=190;if(first.state.hazard.phase==='warn'&&!first.hazardCountered)value-=120;return value;}
+function classifyTactic(first,w){if(first.hazardCountered)return TACTICS.COUNTER_DROP;if(first.dependencyOpened)return TACTICS.CLEAR_BRACE;if(first.castCompleted)return TACTICS.RISK_DIE;if(first.recipeDelta>0)return TACTICS.ADVANCE_RECIPE;if(first.pressureDelta<0)return TACTICS.VENT_PRESSURE;return TACTICS.RECOVER_RETURN;}
+function chooseBotIntent(w){
+  const strategic=typeof globalThis.__NO_THERMAL_LOOKAHEAD==='undefined',source=clonePlannerState(w);if(!strategic&&source.hazard.phase==='warn'){source.hazard.phase='calm';source.hazard.warnAt=source.runFrame+999999;}
+  const results=ACTIONS.map(action=>{const first=simulateAction(source,action,360),score=immediateUtility(first)+(strategic?strategicUtility(first):0);return{action,first,score};});
+  results.sort((a,b)=>b.score-a.score||a.action.port-b.action.port||a.action.director-b.action.director);plannerCandidates=results.map(r=>({action:Object.assign({},r.action),score:r.score,outcome:r.first.outcomeKind,firstMeaningfulId:r.first.firstMeaningfulId,samples:[]}));
+  const winner=results[0];w.stats.plannerCalls++;if(strategic)w.stats.smartPlans++;else w.stats.baselinePlans++;
+  return{port:winner.action.port,director:winner.action.director,commit:true,targetId:winner.first.targetId||'cup:return',tactic:classifyTactic(winner.first,w)};
+}
+function botIntent(){if(!sim.selectedIntent)sim.selectedIntent=chooseBotIntent(sim);return Object.assign({},sim.selectedIntent);}
+function humanIntent(){if(tap('left'))manualPort=mod(manualPort-1,3);if(tap('right'))manualPort=mod(manualPort+1,3);if(tap('up')||tap('down'))manualDirector*=-1;return{port:manualPort,director:manualDirector,commit:!!(tap('a')||keys.a||keys.b),targetId:targetForAction({port:manualPort,director:manualDirector},sim),tactic:'MANUAL FORGE'};}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+function applyIntent(intent){if(!intent)return;sim.operator.intent=Object.assign({},intent);sim.operator.port=clamp(intent.port|0,0,2);sim.operator.director=intent.director<0?-1:1;sim.operator.targetX=PORT_X[sim.operator.port];sim.operator.pose=sim.planTimer<=12?'crank':'read';sim.selectedIntent=Object.assign({},intent);}
+function launchCharge(){const intent=sim.selectedIntent||botIntent();launchState(sim,intent,liveEventSink);}
+function startCupPlan(){sim.orderPhase='read';sim.planTimer=54;sim.selectedIntent=null;sim.operator.pose='read';sim.operator.task='RESET_CUP';sim.operator.targetX=80;const intent=chooseBotIntent(sim);sim.selectedIntent=intent;recordChoiceReady(ACTIONS);say(intent.tactic,currentOrder(sim).accent,80,291,46);}
+function stepCupPlan(){if(!sim.selectedIntent)startCupPlan();if(!manual()&&!playing()&&sim.hazard.phase==='warn'&&sim.selectedIntent.targetId!=='machine:valve')sim.selectedIntent=chooseBotIntent(sim);const intent=controller();applyIntent(intent);if(!manual()&&!playing())sim.planTimer--;else if(sim.selectedIntent.commit&&sim.planTimer>12)sim.planTimer=12;if(sim.planTimer<=12)sim.orderPhase='commit';if(sim.planTimer<=0||(sim.orderPhase==='commit'&&sim.selectedIntent.commit&&(manual()||playing()))){launchCharge();}}
+function stepOperator(){const o=sim.operator,dx=o.targetX-o.x;o.x=quantize(o.x+clamp(dx,-.7,.7));o.face=dx<-.05?-1:dx>.05?1:o.face;o.step+=Math.abs(dx)>.1?.35:0;if(sim.charge.mode==='flight'||sim.charge.mode==='machine'){if(o.taskT>0){o.taskT--;o.pose=o.task==='BRACE_SHUTTER'?'brace':'work'}else{o.pose='watch';o.targetX=80}}else if(sim.orderPhase==='install'||sim.orderPhase==='apex')o.pose='cheer';}
+
+function liveEventSink(type,data){
+  if(type==='shot-commit'){const i=data.intent;recordCommit(i);offer('launch',1,PORT_X[i.port],300,'CHARGE AWAY');payoffDust(PORT_X[i.port],300,5,PAL.ironHi);}
+  else if(type==='recipe-transition'){
+    const id=data.machine==='furnace'?'heat':data.machine==='stamp'?'stamp':'quench',p=MACHINE_POS[data.machine];recordMachine(id,{transition:id,before:data.before,after:data.after});markTacticalBeat('recipe-transition');markProgress('recipe-transition');feedbackCue('good',id,p.x,p.y,.65);offer(id,1,p.x,p.y,id.toUpperCase());payoffBurst(p.x,p.y,12,id==='quench'?PAL.quench:PAL.gold,1.6,.03);payoffShake(data.machine==='stamp'?3:1);if(playing())addScore(8);
+  }else if(type==='dependency-open'){recordFoundry('dependency-open',{dependencyId:data.id,x:data.x,y:data.y});markTacticalBeat('dependency-open');markProgress('dependency-open');feedbackCue('good','hazard-counter',data.x,data.y,.55);offer('brace',2,data.x,data.y,'ACCESS OPEN');payoffBurst(data.x,data.y,14,PAL.copper,1.8,.04);
+  }else if(type==='hazard-warning'){const h=data.hazard,note={kind:'act-warning',id:h.id,at:showFrame,landsAt:showFrame+240,tag:h.id};recordThreat(h.kind==='slag'?'slag-warning':'pressure-warning',h);markTacticalBeat('hazard-warning');sim.actNotes.push(note);if(sim.actNotes.length>32)sim.actNotes.shift();SHOW.note(note);say(h.kind==='slag'?'SLAG DROP // 4':'PRESSURE SURGE // 4',PAL.danger,80,116,180);
+  }else if(type==='hazard-counter'){recordCounter(sim.selectedIntent||botIntent(),sim.hazard);recordFoundry('hazard-counter',{hazardId:data.hazard,x:data.x,y:data.y});markTacticalBeat('operator-response');markTacticalBeat('hazard-counter');markProgress('hazard-counter');feedbackCue('good','hazard-counter',data.x,data.y,.8);offer('counter',2,data.x,data.y,'RACK PINNED');payoffBurst(data.x,data.y,20,PAL.quench,2,.025);payoffShake(3);
+  }else if(type==='die-repair'){recordFoundry('die-repair',{x:data.x,y:data.y});markTacticalBeat('dependency-open');markProgress('dependency-open');feedbackCue('good','hazard-counter',data.x,data.y,.65);offer('die-repair',2,data.x,data.y,'DIE UNJAMMED');payoffBurst(data.x,data.y,14,PAL.quench,1.8,.03);
+  }else if(type==='hazard-land'){const note={kind:'act-land',id:data.hazard,at:showFrame,tag:data.hazard};recordFoundry('hazard-land',{hazardId:data.hazard,x:data.x,y:data.y});markTacticalBeat('hazard-land');feedbackCue('bad','jam-land',data.x,data.y,.85);sim.actNotes.push(note);if(sim.actNotes.length>32)sim.actNotes.shift();SHOW.note(note);offer('jam',2,data.x,data.y,'DIE JAMMED');payoffBurst(data.x,data.y,20,PAL.danger,2.2,.06);payoffShake(5);
+  }else if(type==='scrap'){markTacticalBeat('scrap');feedbackCue('bad','wrong-order',data.x,data.y,.75);offer('scrap',1,data.x,data.y,'WRONG ORDER');say('WARPED SCRAP',PAL.danger,data.x,data.y-12,60);payoffBurst(data.x,data.y,16,PAL.danger,1.8,.05);payoffShake(3);
+  }else if(type==='overheat'){markTacticalBeat('overheat');feedbackCue('bad','overheat',data.x,data.y,.85);offer('cold',2,data.x,data.y,'HEAT LOST');say('COLD SCRAP',PAL.danger,data.x,data.y-12,60);payoffBurst(data.x,data.y,18,PAL.danger,1.7,.05);
+  }else if(type==='emergency-vent'){recordFoundry('emergency-vent',{pressure:sim.pressure,x:data.x,y:data.y});markTacticalBeat('emergency-vent');feedbackCue('bad','emergency-vent',data.x,data.y,1);offer('vent',2,data.x,data.y,'EMERGENCY VENT');payoffBurst(data.x,data.y,34,PAL.danger,2.8,.035);payoffShake(7);
+  }else if(type==='cast'){recordCast(data.component);markTacticalBeat('cast');markProgress('cast');feedbackCue('good','cast',data.x,data.y,1);offer('cast',2,data.x,data.y,currentOrder(sim).label+' CAST');payoffBurst(data.x,data.y,30,currentOrder(sim).accent,2.5,.025);payoffShake(5);sim.orderPhase='cast';sim.installationT=sim.charge.holdT;
+  }
+}
+
+function installComponent(){const c=sim.component;if(!c||c.installed)return;c.installed=true;sim.charge.mode='installed';c.x=80;c.y=112+sim.orderIndex*17;sim.installed.push({id:c.id,type:c.type,x:c.x,y:c.y});sim.stats.partsInstalled++;recordFoundry('part-install',{componentId:c.id,x:c.x,y:c.y});markTacticalBeat('installation');markProgress('installation');offer('install-'+c.type,c.type==='heart'?3:2,c.x,c.y,c.type==='heart'?'FOUNDRY ONLINE':currentOrder(sim).label+' INSTALLED');payoffBurst(c.x,c.y,c.type==='heart'?46:22,currentOrder(sim).accent,c.type==='heart'?3:2,.025);payoffShake(c.type==='heart'?8:4);if(playing())addScore(c.type==='heart'?100:30);
+  if(c.type==='heart'){sim.stats.engineStarts++;feedbackCue('good','engine-start',80,140,1);sim.orderPhase='apex';sim.apexT=170;}
+  else{sim.orderPhase='install';sim.installationT=74;}
+}
+function startOrder(index){sim.orderIndex=index;sim.orderPhase='read';sim.charge=makeCharge();sim.charge.shotSerial=0;sim.dependenciesOpen=0;sim.slag=blueprintItems(index,worldSeed+shift*17);sim.machines=makeMachines();sim.component=null;sim.selectedIntent=null;sim.planTimer=54;sim.stats.ordersIssued++;sim.hazard.phase='calm';sim.hazard.warnAt=sim.runFrame+(index===0?720:330);sim.hazard.countered=false;sim.hazard.t=0;currentChoiceSetupSerial=currentThreatSerial=currentCommitSerial=0;recordOrderSetup(currentOrder(sim));markTacticalBeat('order-issued');say('ORDER '+(index+1)+' // '+currentOrder(sim).label,currentOrder(sim).accent,80,46,110);startCupPlan();}
+function startShift(){sim.shift=++shift;sim.installed=[];sim.pressure=Math.max(18,sim.pressure-20);sim.orderIndex=0;sim.blueprint={id:'forge-'+mod(worldSeed+shift,3)};startOrder(0);}
+function stepCastAndInstall(){
+  if(sim.charge.mode==='cast'){if(sim.charge.holdT>0)sim.charge.holdT--;if(sim.charge.holdT<=0){sim.orderPhase='lift';if(sim.component)sim.component.liftT++;if(sim.component&&sim.component.liftT>=42)installComponent();}}
+  else if(sim.orderPhase==='install'){if(--sim.installationT<=0)startOrder(sim.orderIndex+1);}
+  else if(sim.orderPhase==='apex'){if(--sim.apexT<=0)startShift();}
+}
+function stepWorld(){sim.actsEnabled=typeof globalThis.__NO_ACTS==='undefined';if(sim.charge.mode==='cup'&&(sim.orderPhase==='read'||sim.orderPhase==='commit'))stepCupPlan();advanceSimWorld(sim,liveEventSink);runFrame=sim.runFrame;stepOperator();stepCastAndInstall();sim.stats.maxTacticalLull=Math.max(sim.stats.maxTacticalLull,showFrame-lastTacticalBeat);sim.stats.maxProgressLull=Math.max(sim.stats.maxProgressLull,showFrame-lastProgressBeat);}
+function step(){showFrame++;sessionStep({reset:()=>resetGame(true)});pres=SHOW.step(showFrame);goodPulse=Math.max(0,goodPulse-.028);badPulse=Math.max(0,badPulse-.028);if(visualLocked){visualTick++;runFrame++;stepParts();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);return;}stepWorld();stepParts();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);}
+function resetGame(full){sim=makeWorld();runFrame=0;shift=0;showFrame=Math.max(0,showFrame);feedback=[];feedbackSerial=0;goodPulse=badPulse=0;texts=[];plannerCandidates=[];manualPort=1;manualDirector=1;visualFixture='';visualLocked=false;visualTick=0;currentOrderSetupSerial=currentChoiceSetupSerial=currentThreatSerial=currentCommitSerial=0;lastTacticalBeat=lastProgressBeat=showFrame;if(typeof globalThis.__NO_EVIDENCE_LEDGER==='undefined')EVIDENCE.reset();if(full)SHOW.reset(showFrame);recordOrderSetup(currentOrder(sim));sim.stats.ordersIssued++;markTacticalBeat('order-issued');startCupPlan();}
+
+function drawBackdrop(){
+  const g=ctx.createLinearGradient(0,34,0,318);g.addColorStop(0,'#21161a');g.addColorStop(.42,'#25262a');g.addColorStop(1,'#11171d');ctx.fillStyle=g;ctx.fillRect(0,34,160,284);
+  rect(3,39,5,270,'#252e35');rect(152,39,5,270,'#0b1015');for(let y=48;y<306;y+=17){rect(4,y,3,2,PAL.iron1);rect(153,y+7,2,2,PAL.copper)}
+  for(let i=0;i<7;i++){const x=10+i*24,h=24+(i%3)*12;rect(x,318-h,17,h,'#182027');rect(x+3,318-h-19,5,19,'#303842');for(let q=0;q<3;q++)rect(x+4+q*4,322-h+(q%2)*5,2,2,i%2?PAL.heat:PAL.quench)}
+  for(let i=0;i<18;i++){const x=7+hash(i,worldSeed+shift)*146,y=42+hash(i+31,worldSeed)*250;rect(x,y,1+(i%4===0),1,i%3?PAL.iron1:PAL.copper)}
+  line([[6,104],[44,104],[52,94],[119,94],[128,105],[154,105]],PAL.iron0,3);line([[6,108],[44,108],[52,98],[119,98],[128,109],[154,109]],mix(PAL.iron0,PAL.ironHi,.18),1);
+  alpha(.08+.03*Math.sin(showFrame*.02),()=>{ctx.fillStyle=PAL.heat;ctx.beginPath();ctx.ellipse(80,182,66,92,0,0,TAU);ctx.fill()});
+}
+function drawRearEngine(){
+  const installed=new Set(sim.installed.map(p=>p.type)),apex=sim.orderPhase==='apex',spin=apex?showFrame*.09:installed.has('gear')?showFrame*.025:0;
+  rect(48,91,64,99,'#11171c');rect(51,94,58,93,'#283139');rect(54,97,52,87,'#161d23');for(const p of[[52,95],[105,95],[52,181],[105,181]]){rect(p[0],p[1],3,3,PAL.ironHi)}
+  line([[57,107],[103,107],[107,116],[107,174],[98,183],[61,183],[53,174],[53,116],[57,107]],PAL.iron1,2);
+  // gear socket
+  ctx.save();ctx.translate(68,125);ctx.rotate(spin);for(let i=0;i<8;i++){ctx.save();ctx.rotate(i*TAU/8);rect(-2,-15,4,6,installed.has('gear')?PAL.gold:'#303842');ctx.restore()}ctx.fillStyle=installed.has('gear')?PAL.copper:'#222a31';ctx.beginPath();ctx.arc(0,0,11,0,TAU);ctx.fill();ctx.strokeStyle=installed.has('gear')?PAL.cream:PAL.iron1;ctx.stroke();ctx.fillStyle=PAL.ink;ctx.beginPath();ctx.arc(0,0,4,0,TAU);ctx.fill();ctx.restore();
+  // valve socket
+  rect(89,112,5,30,installed.has('valve')?PAL.copper:'#252d34');ctx.fillStyle=installed.has('valve')?PAL.quench:'#303842';ctx.beginPath();ctx.arc(91,115,7,0,TAU);ctx.fill();for(let i=0;i<4;i++)line([[91,115],[91+Math.cos(i*TAU/4)*9,115+Math.sin(i*TAU/4)*9]],installed.has('valve')?PAL.ironHi:PAL.iron0,2);
+  // turbine socket
+  ctx.save();ctx.translate(69,159);ctx.rotate(installed.has('turbine')?showFrame*.05:0);for(let i=0;i<6;i++){ctx.save();ctx.rotate(i*TAU/6);poly([[2,-2],[14,-5],[11,2],[3,3]],installed.has('turbine')?PAL.quench:'#293139');ctx.restore()}ctx.fillStyle=installed.has('turbine')?PAL.cream:PAL.iron0;ctx.beginPath();ctx.arc(0,0,4,0,TAU);ctx.fill();ctx.restore();
+  // heart socket
+  const beat=installed.has('heart')?Math.floor(showFrame/12)%2:0;poly([[88,151],[96,145],[104,151],[102,164],[96,174],[90,164]],installed.has('heart')?(beat?PAL.cream:PAL.danger):'#2a3035');if(installed.has('heart')){rect(94,151,4,15,PAL.gold);rect(91,156,10,4,PAL.heat)}
+  if(apex){alpha(.16+.08*Math.sin(showFrame*.18),()=>rect(50,92,60,96,PAL.gold));for(let i=0;i<5;i++)rect(55+i*12,86+(i%2)*3,7,2,i%2?PAL.quench:PAL.gold)}
+}
+function drawFurnace(){const hot=sim.charge.heldBy==='machine:furnace'||sim.charge.stage>=HEATED;rect(10,48,26,35,'#1b2025');poly([[12,78],[12,60],[17,52],[30,52],[35,60],[35,78]],PAL.iron0);poly([[16,77],[16,62],[20,57],[28,57],[32,62],[32,77]],hot?PAL.heat:'#351f20');rect(19,65,10,10,hot?PAL.gold:PAL.badDark);for(let x=13;x<35;x+=5)rect(x,49,2,2,PAL.ironHi);rect(7,61,5,13,PAL.copper);line([[8,61],[5,55],[5,73]],PAL.iron1,2);}
+function drawStamp(){const m=sim.machines.find(q=>q.kind==='stamp'),down=m.phase==='capture'?clamp(m.phaseT/12,0,1):0;rect(65,46,31,39,'#171d22');rect(68,49,7,32,PAL.iron1);rect(89,49,7,32,PAL.iron0);rect(67,48,29,6,PAL.copper);rect(74,52,16,7,PAL.iron0);rect(77,56,10,11+down*7,PAL.ironHi);rect(72,76,18,6,PAL.copper);for(const x of[70,93]){rect(x,53,2,2,PAL.gold);rect(x,72,2,2,PAL.ironHi)}}
+function drawQuench(){const active=sim.charge.heldBy==='machine:quench'||sim.charge.stage===TEMPERED;rect(124,49,25,34,'#17252b');rect(127,55,19,27,PAL.iron0);poly([[127,61],[132,55],[142,55],[147,61]],PAL.iron1);rect(131,61,12,14,active?PAL.quench:'#24434a');for(let x=130;x<146;x+=4)line([[x,49],[x,57]],PAL.ironHi);line([[146,54],[153,54],[153,75]],PAL.copper,2);if(active)for(let i=0;i<4;i++)rect(132+i*3,77+(i%2),1,3,PAL.mint);}
+function drawDie(){const open=dieOpen(sim),m=sim.machines.find(q=>q.kind==='die'),cast=sim.charge.mode==='cast';rect(64,139,32,34,'#10161b');poly([[66,146],[77,141],[77,168],[66,163]],open?PAL.copper:PAL.iron0);poly([[94,146],[83,141],[83,168],[94,163]],open?PAL.copper:PAL.iron0);rect(77,146,6,18,cast?currentOrder(sim).accent:'#242d34');rect(62,168,36,5,PAL.iron1);for(const x of[65,93])rect(x,142,2,2,open?PAL.gold:PAL.danger);line([[80,139],[80,128]],PAL.ironHi,2);poly([[76,128],[84,128],[82,134],[78,134]],PAL.copper);}
+function drawMachines(){drawFurnace();drawStamp();drawQuench();drawDie();}
+function drawSlagItem(q){if(!q.active)return;const x=q.x,y=q.y,w=q.w,h=q.h,c=q.type==='pin'?PAL.copper:q.type==='clinker-arch'?mix(PAL.copper,PAL.iron0,.45):q.type==='pipe'?PAL.iron1:q.type==='ingots'?'#4e5961':'#3b4146';if(q.type==='brace'||q.type==='rack'){line([[x,y+h],[x+w/2,y],[x+w,y+h]],c,3);for(let i=0;i<3;i++)rect(x+i*w/3,y+h-2,2,2,PAL.ironHi)}else if(q.type==='arch'||q.type==='clinker-arch'){poly([[x,y+h],[x,y+4],[x+3,y],[x+w-3,y],[x+w,y+4],[x+w,y+h],[x+w-3,y+h],[x+w-3,y+5],[x+3,y+5],[x+3,y+h]],c);rect(x+1,y+2,2,2,PAL.copper)}else if(q.type==='pipe'){ctx.strokeStyle=c;ctx.lineWidth=4;ctx.beginPath();ctx.arc(x+w/2,y+h/2,w/2-2,0,TAU*.75);ctx.stroke();ctx.lineWidth=1;rect(x+w-5,y+h-4,5,3,PAL.copper)}else if(q.type==='ingots'){for(let i=0;i<3;i++){poly([[x+i*5,y+h],[x+2+i*5,y+2],[x+7+i*5,y+2],[x+9+i*5,y+h]],mix(c,PAL.ironHi,i*.12));rect(x+3+i*5,y+3,2,1,PAL.ironHi)}}else if(q.type==='pin'){rect(x,y,w,h,c);rect(x-2,y+2,w+4,3,PAL.gold);rect(x+1,y+1,1,h-2,PAL.cream)}else if(q.type==='plate'||q.type==='column'){poly([[x,y+2],[x+3,y],[x+w,y+1],[x+w-2,y+h],[x+1,y+h]],c);for(let i=0;i<3;i++)rect(x+2+i*(w-4)/2,y+2+(i%2)*(h-4),1,1,PAL.ironHi)}else{poly([[x,y+h],[x+2,y+1],[x+w-2,y],[x+w,y+h-1]],c)}if(q.hp===1&&!q.id.startsWith('dependency:'))line([[x+2,y+2],[x+w-2,y+h-2]],PAL.heat);}
+function drawSlag(){for(const q of sim.slag)drawSlagItem(q);}
+function drawValveAndDirector(){
+  rect(7,202,19,24,'#171d22');ctx.fillStyle=PAL.copper;ctx.beginPath();ctx.arc(16,213,7,0,TAU);ctx.fill();ctx.fillStyle=PAL.ink;ctx.beginPath();ctx.arc(16,213,3,0,TAU);ctx.fill();for(let i=0;i<6;i++)line([[16,213],[16+Math.cos(i*TAU/6)*9,213+Math.sin(i*TAU/6)*9]],PAL.ironHi,2);rect(9,223,14,3,PAL.iron0);
+  const d=sim.operator.director;ctx.save();ctx.translate(80,218);ctx.rotate(d<0?Math.PI/4:-Math.PI/4);poly([[-13,-5],[10,-5],[14,0],[10,5],[-13,5],[-16,0]],PAL.iron0);rect(-10,-3,18,2,PAL.ironHi);for(const x of[-8,4])rect(x,1,2,2,PAL.copper);ctx.restore();rect(76,227,8,5,PAL.copper);
+}
+function drawHazard(){const h=sim.hazard;if(h.phase==='calm')return;const x=h.box.x,y=h.box.y,w=h.box.width,land=h.phase==='land',pulse=Math.floor(showFrame/8)%2;alpha(land?.75:.25+.1*pulse,()=>rect(x-3,34,w+6,284,land?PAL.danger:PAL.gold));if(h.kind==='slag'){poly([[x,y],[x+w,y],[x+w-2,y+10],[x+3,y+17]],land?PAL.danger:PAL.copper);rect(x+2,y+3,w-4,3,PAL.ironHi)}else{for(let i=0;i<4;i++){const yy=y+i*5;line([[x,yy],[x+w/2,yy-3],[x+w,yy]],land?PAL.danger:PAL.gold,2)}}if(h.phase==='warn'){rect(28,111,104,15,'rgba(8,11,16,.92)');ctx.strokeStyle=PAL.danger;ctx.strokeRect(28.5,111.5,103,14);ctx.fillStyle=PAL.cream;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText((h.kind==='slag'?'SLAG DROP':'PRESSURE SURGE')+' // '+Math.max(1,Math.ceil((h.landAt-sim.runFrame)/60)),80,121);ctx.textAlign='left';}}
+function drawPortsAndCup(){
+  rect(0,318,160,42,PAL.ink);rect(4,309,152,11,'#242c33');poly([[4,309],[13,318],[147,318],[156,309],[156,319],[4,319]],PAL.iron1);rect(8,311,144,2,PAL.ironHi);for(let x=13;x<151;x+=12)rect(x,316,7,2,PAL.iron0);
+  for(let i=0;i<3;i++){const sel=sim.operator.port===i,px=PORT_X[i];rect(px-8,294,16,15,'#1d252c');poly([[px-6,306],[px-4,296],[px+4,296],[px+6,306]],sel?PAL.copper:PAL.iron0);rect(px-3,299,6,6,PAL.ink);rect(px-2,300,4,4,sel?(Math.floor(showFrame/8)%2?PAL.cream:PAL.gold):PAL.iron1);ctx.fillStyle=sel?PAL.gold:PAL.iron1;ctx.font='bold 5px monospace';ctx.textAlign='center';ctx.fillText(['L','C','R'][i],px,327)}ctx.textAlign='left';
+  rect(7,334,146,4,PAL.iron0);for(let x=9;x<153;x+=9)rect(x,335,5,1,PAL.ironHi);
+}
+function drawCharge(){const b=sim.charge;if(b.mode==='cast'&&sim.component)return;const stage=b.stage,x=Math.round(b.x),y=Math.round(b.y);for(let i=Math.min(8,b.trail.length-1);i>=0;i--){const p=b.trail[i];alpha((9-i)/34,()=>{ctx.fillStyle=stage===HEATED?PAL.heat:stage===SHAPED?PAL.gold:stage===TEMPERED?PAL.quench:PAL.ironHi;ctx.beginPath();ctx.arc(p.x,p.y,Math.max(1,3-i*.22),0,TAU);ctx.fill()})}ctx.save();ctx.translate(x,y);if(stage===WARPED){poly([[-4,-2],[-1,-4],[4,-2],[3,3],[-2,4],[-4,1]],PAL.badDark);line([[-2,-1],[2,2]],PAL.danger,2)}else{ctx.fillStyle=stage===RAW?PAL.iron1:stage===HEATED?PAL.heat:stage===SHAPED?PAL.gold:PAL.quench;ctx.beginPath();ctx.arc(0,0,3.3,0,TAU);ctx.fill();ctx.fillStyle=PAL.cream;ctx.beginPath();ctx.arc(-1,-1,1.5,0,TAU);ctx.fill();if(stage===SHAPED){rect(-4,-1,2,2,PAL.cream);rect(3,1,2,2,PAL.gold)}if(stage===TEMPERED){rect(-2,4,1,2,PAL.mint);rect(2,4,1,3,PAL.quench)}}ctx.restore();}
+function componentBox(){const c=sim.component||sim.installed.at(-1);if(!c)return null;const size=c.type==='heart'?{w:18,h:22}:c.type==='gear'?{w:20,h:20}:c.type==='turbine'?{w:18,h:18}:{w:14,h:20};return{x:c.x-size.w/2,y:c.y-size.h/2,width:size.w,height:size.h};}
+function drawComponent(){const c=sim.component;if(!c)return;let x=c.x,y=c.y;if(sim.orderPhase==='lift'&&!c.installed){const u=clamp(c.liftT/42,0,1);x=80;y=157+(112+sim.orderIndex*17-157)*u;line([[80,42],[80,y-10]],PAL.ironHi,1)}ctx.save();ctx.translate(x,y);if(c.type==='gear'){ctx.rotate(showFrame*.03);for(let i=0;i<8;i++){ctx.save();ctx.rotate(i*TAU/8);rect(-2,-10,4,5,PAL.gold);ctx.restore()}ctx.fillStyle=PAL.copper;ctx.beginPath();ctx.arc(0,0,7,0,TAU);ctx.fill();ctx.fillStyle=PAL.ink;ctx.beginPath();ctx.arc(0,0,3,0,TAU);ctx.fill()}else if(c.type==='valve'){ctx.fillStyle=PAL.copper;ctx.beginPath();ctx.arc(0,0,7,0,TAU);ctx.fill();for(let i=0;i<5;i++)line([[0,0],[Math.cos(i*TAU/5)*9,Math.sin(i*TAU/5)*9]],PAL.cream,2)}else if(c.type==='turbine'){for(let i=0;i<6;i++){ctx.save();ctx.rotate(i*TAU/6+showFrame*.04);poly([[1,-2],[9,-4],[7,2],[2,3]],PAL.quench);ctx.restore()}rect(-2,-2,4,4,PAL.cream)}else{poly([[-8,-5],[-3,-10],[0,-6],[3,-10],[8,-5],[6,6],[0,11],[-6,6]],PAL.danger);rect(-2,-5,4,12,PAL.gold);rect(-5,-1,10,3,PAL.cream)}ctx.restore();}
+function drawOperator(){const o=sim.operator,x=Math.round(o.x),y=346,walk=Math.sin(o.step),face=o.face||1,brace=o.pose==='brace',crank=o.pose==='crank'||o.pose==='work';ctx.save();ctx.translate(x,y);alpha(.28,()=>{ctx.fillStyle=PAL.ink;ctx.beginPath();ctx.ellipse(0,7,5,1.2,0,0,TAU);ctx.fill()});rect(-2,4,2,3,'#20262b');rect(1,4,2,3,'#20262b');if(Math.abs(o.targetX-o.x)>.2){rect(-3+walk,6,3,2,PAL.ink);rect(1-walk,6,3,2,PAL.ink)}else{rect(-3,6,3,2,PAL.ink);rect(1,6,3,2,PAL.ink)}rect(-4,-2,8,7,'#5d382c');rect(-3,-1,6,5,PAL.copper);rect(-3,2,6,2,'#272d31');rect(-face*5,-1,2,5,'#473128');rect(face*4,-1,2,5,PAL.gold);rect(-3,-6,6,4,'#c88862');rect(face,-5,1,1,PAL.ink);poly([[-5,-7],[-2,-10],[4,-9],[5,-6]],PAL.iron0);rect(-2,-10,5,2,PAL.iron1);if(crank)line([[face*5,1],[face*8,-4+(showFrame%8<4?0:3)]],PAL.cream,2);else if(brace)line([[face*5,1],[face*9,5]],PAL.ironHi,2);else line([[face*5,1],[face*8,2]],PAL.cream,1);ctx.restore();}
+function drawFeedback(){if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;if(goodPulse>0){alpha(goodPulse*.18,()=>rect(0,34,160,284,PAL.gold));ctx.strokeStyle=PAL.mint;ctx.strokeRect(2.5,36.5,155,279)}if(badPulse>0){alpha(badPulse*.22,()=>rect(0,34,160,284,PAL.danger));ctx.strokeStyle=PAL.danger;ctx.strokeRect(1.5,35.5,157,281)}}
+function drawHUD(){
+  rect(0,0,160,34,PAL.ink);rect(4,4,152,18,'#11171d');rect(5,5,150,16,'#20262c');rect(7,7,3,12,currentOrder(sim).accent);ctx.fillStyle=PAL.cream;ctx.font='bold 8px monospace';ctx.fillText('RICOCHET FOUNDRY',13,14);ctx.fillStyle=currentOrder(sim).accent;ctx.font='5px monospace';ctx.fillText('ORDER '+(sim.orderIndex+1)+' // '+currentOrder(sim).label,13,20);
+  ctx.textAlign='right';ctx.fillStyle=sim.pressure>=75?PAL.danger:sim.pressure>=45?PAL.gold:PAL.mint;ctx.font='bold 6px monospace';ctx.fillText('P '+sim.pressure,153,13);ctx.fillStyle=PAL.ironHi;ctx.font='5px monospace';ctx.fillText('SHIFT '+(shift+1),153,20);ctx.textAlign='left';
+  rect(4,24,152,8,'#12181e');const next=nextRecipe(sim);ctx.fillStyle=PAL.ironHi;ctx.font='5px monospace';ctx.fillText(STAGE_NAMES[sim.charge.stage]+'  >',8,30);ctx.fillStyle=currentOrder(sim).accent;ctx.font='bold 5px monospace';ctx.fillText(next,42,30);const hw=sim.charge.heat>0?Math.round(49*clamp(sim.charge.heat/600,0,1)):0;rect(104,26,49,3,PAL.iron0);if(hw)rect(104,26,hw,3,sim.charge.heat<150?PAL.danger:PAL.heat);
+  if(sim.orderPhase==='read'||sim.orderPhase==='commit'){const s=sim.selectedIntent&&sim.selectedIntent.tactic||'READ THE RECIPE';rect(22,278,116,12,'rgba(8,11,16,.9)');ctx.strokeStyle=currentOrder(sim).accent;ctx.strokeRect(22.5,278.5,115,11);ctx.fillStyle=PAL.cream;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(s.slice(0,24),80,287);ctx.textAlign='left'}
+  if(pres.cue){const c=pres.cue.tier===3?PAL.gold:pres.cue.tier===2?PAL.quench:PAL.cream;rect(25,257,110,18,'rgba(6,8,12,.94)');ctx.strokeStyle=c;ctx.strokeRect(25.5,257.5,109,17);ctx.fillStyle=c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(String(pres.cue.tag||pres.cue.id).slice(0,25),80,269);ctx.textAlign='left'}
+  drawSession(false);
+}
+function render(){drawBackdrop();drawRearEngine();drawSlag();drawMachines();drawValveAndDirector();preDraw();drawHazard();drawPortsAndCup();drawCharge();drawComponent();drawOperator();drawParts();for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.textAlign='center';ctx.fillText(t.s,clamp(t.x,25,135),t.y);ctx.textAlign='left'}ctx.globalAlpha=1;drawFeedback();postDraw();drawHUD();}
+
+function allFinite(){const values=[showFrame,runFrame,sim.pressure,sim.charge.x,sim.charge.y,sim.charge.vx,sim.charge.vy,sim.charge.heat,sim.operator.x,sim.operator.targetX,sim.operator.taskT,...sim.slag.flatMap(q=>[q.x,q.y,q.w,q.h,q.hp]),...sim.machines.flatMap(m=>[m.phaseT])];return values.every(Number.isFinite);}
+function simulationSignature(){return JSON.stringify({runFrame,shift,orderIndex:sim.orderIndex,orderPhase:sim.orderPhase,pressure:sim.pressure,charge:[quantize(sim.charge.x),quantize(sim.charge.y),quantize(sim.charge.vx),quantize(sim.charge.vy),sim.charge.stage,sim.charge.heat,sim.charge.stampCount,sim.charge.mode,sim.charge.heldBy,sim.charge.holdT,sim.charge.shotSerial,sim.charge.routeTarget],operator:[quantize(sim.operator.x),sim.operator.task,sim.operator.taskT,sim.operator.port,sim.operator.director,sim.operator.pose],machines:sim.machines.slice().sort((a,b)=>a.id.localeCompare(b.id)).map(m=>[m.id,m.phase,m.phaseT,m.enabled,m.jammed]),slag:sim.slag.slice().sort((a,b)=>a.id.localeCompare(b.id)).map(q=>[q.id,q.hp,q.active]),hazards:[[sim.hazard.id,sim.hazard.phase,sim.hazard.warnAt,sim.hazard.landAt,sim.hazard.lane,sim.hazard.countered]],installed:sim.installed.map(p=>p.id),dependenciesOpen:sim.dependenciesOpen,component:sim.component&&[sim.component.id,sim.component.installed,sim.component.liftT],timers:[sim.planTimer,sim.installationT,sim.apexT],simStats:[sim.stats.ordersIssued,sim.stats.shotsCommitted,sim.stats.recipeTransitions,sim.stats.casts,sim.stats.scraps,sim.stats.overheats,sim.stats.hazardActions,sim.stats.playerResponses,sim.stats.dependenciesOpened,sim.stats.emergencyVents,sim.stats.hazardCounters,sim.stats.jamLands,sim.stats.ordersCompleted,sim.stats.partsInstalled,sim.stats.engineStarts]});}
+function physicalSignature(){return JSON.stringify([round(sim.charge.x),round(sim.charge.y),round(sim.charge.vx),round(sim.charge.vy),sim.charge.mode,sim.charge.stage,round(sim.operator.x),sim.operator.task,sim.operator.director,sim.machines.map(m=>[m.phase,m.phaseT,m.jammed]),sim.hazard.phase,sim.hazard.lane,sim.installed.map(p=>p.id)]);}
+function probe(){return{showFrame,runFrame,shift,orderIndex:sim.orderIndex,order:currentOrder(sim).id,orderPhase:sim.orderPhase,pressure:sim.pressure,finite:allFinite(),charge:deepClone(sim.charge),operator:deepClone(sim.operator),machines:deepClone(sim.machines),slag:deepClone(sim.slag),hazard:deepClone(sim.hazard),installed:deepClone(sim.installed),component:deepClone(sim.component),dependenciesOpen:sim.dependenciesOpen,recipe:{next:nextRecipe(sim),requiredStamps:requiredStamps(sim)},intent:sim.operator.intent&&Object.assign({},sim.operator.intent),stats:Object.assign({},sim.stats),show:SHOW.probe(),acts:sim.actNotes.slice()};}
+function soakProbe(){return{sig:[round(sim.charge.x,1),round(sim.charge.y,1),sim.charge.mode,sim.charge.stage,sim.machines.map(m=>m.phaseT).join(','),round(sim.operator.x,1),sim.operator.task,sim.hazard.phase,sim.installed.length].join('|'),events:sim.stats.events,progress:sim.stats.progress,finite:allFinite()};}
+function motionProbe(){return{frame:showFrame,finite:allFinite(),actors:[{id:'charge',kind:'workpiece',x:sim.charge.x,y:sim.charge.y,action:sim.charge.mode,emote:sim.charge.mode==='cup'?'read':''},{id:'operator',kind:'smith',x:sim.operator.x,y:346,action:sim.operator.task,emote:sim.operator.pose}]};}
+function activityProbe(){return{frame:showFrame,finite:allFinite(),chargeMoving:sim.charge.mode==='flight',machineMoving:sim.machines.some(m=>m.phaseT>0),hazardMoving:sim.hazard.phase!=='calm',operatorTask:sim.operator.task,physical:physicalSignature()};}
+function entertainmentEvidence(){const ledger=EVIDENCE.probe(),count=kind=>ledger.events.filter(e=>e.kind===kind).length;return{topology:{ports:3,directorStates:2,processMachines:4,authoredOrders:4,blueprint:sim.blueprint.id},puzzle:{transitions:sim.stats.recipeTransitions+sim.stats.dependenciesOpened,completions:sim.stats.casts},agency:{enemyActions:sim.stats.hazardActions,playerResponses:sim.stats.playerResponses},decisions:{setup:{count:count('setup'),source:'order-issued+choice-ready'},threat:{count:count('threat'),source:'pressure-warning+slag-warning'},response:{count:count('response'),source:'operator-counter'},commit:{count:count('commit'),source:'shot-commit'},payoff:{count:count('payoff'),source:'cast-complete'}},maxDeadAir:sim.stats.maxTacticalLull};}
+function ambientProbe(){const ledger=EVIDENCE.probe(),evidence=entertainmentEvidence(),stateSignature=simulationSignature();return{protocol:'ambient-evidence/v1',schema:1,game:'ricochet-foundry',frame:{run:runFrame,show:showFrame},runFrame,showFrame,stateSignature,stateDigest:stateSignature,finite:allFinite(),soak:soakProbe(),motion:motionProbe(),activity:activityProbe(),counters:Object.assign({},sim.stats),evidence,entertainment:evidence,topology:evidence.topology,ledger,serial:ledger.serial,events:ledger.events.slice()};}
+function feedbackProbe(){return{finite:allFinite(),serial:feedbackSerial,goodPulse:round(goodPulse,4),badPulse:round(badPulse,4),pulses:{good:round(goodPulse,4),bad:round(badPulse,4)},events:feedback.map(e=>Object.assign({},e))};}
+function plannerFixture(){const before=simulationSignature(),controlState=clonePlannerState(sim),a=ACTIONS.map(action=>simulateAction(controlState,action,360)),mid=simulationSignature(),b=ACTIONS.map(action=>simulateAction(controlState,action,360)),after=simulationSignature();return{pure:before===mid&&mid===after,repeat:JSON.stringify(a.map(stripPlannerState))===JSON.stringify(b.map(stripPlannerState)),rngSamples:[],candidateCount:a.length,outcomes:[...new Set(a.map(q=>q.outcomeKind))],candidates:a.map(stripPlannerState),budget:a.reduce((n,q)=>Math.max(n,q.frames),0)};}
+function stripPlannerState(q){const out=Object.assign({},q);delete out.state;delete out.events;return out;}
+function intentFixture(){const ai=chooseBotIntent(clonePlannerState(sim)),old={left:keys.left,right:keys.right,up:keys.up,down:keys.down,a:keys.a,b:keys.b};manualPort=1;manualDirector=1;keys.right=true;keys.up=true;keys.a=true;const human=humanIntent();Object.assign(keys,old);return{ai,human,aiKeys:Object.keys(ai).sort(),humanKeys:Object.keys(human).sort(),actions:ACTIONS.map(a=>Object.assign({},a))};}
+function actFixture(){visualLocked=false;sim.charge=makeCharge();sim.charge.stage=SHAPED;sim.charge.heat=900;sim.charge.stampCount=1;sim.pressure=68;sim.orderIndex=3;sim.dependenciesOpen=0;sim.slag=blueprintItems(3,worldSeed);sim.hazard={id:`shift:${shift}:surge:fixture`,kind:'pressure',phase:'warn',warnAt:sim.runFrame,landAt:sim.runFrame+240,endAt:sim.runFrame+600,lane:1,countered:false,t:0,serial:99,box:{x:74,y:112,width:13,height:17}};sim.orderPhase='read';sim.planTimer=54;sim.selectedIntent=null;sim.operator.intent=null;sim.actNotes=[{kind:'act-warning',id:sim.hazard.id,at:showFrame,landsAt:showFrame+240,tag:sim.hazard.id}];SHOW.note(sim.actNotes[0]);currentThreatSerial=recordThreat('pressure-warning',sim.hazard);startCupPlan();return{physical:physicalSignature(),liveIntent:chooseBotIntent(clonePlannerState(sim)),landAt:sim.hazard.landAt,warnAt:sim.runFrame,notes:sim.actNotes.slice()};}
+function plannerContamination(){plannerCandidates=plannerCandidates.length?plannerCandidates.map((q,i)=>Object.assign({},q,{score:9e12+i,firstMeaningfulId:'ABSURD:'+i,samples:[{x:-99999,y:99999},{x:Infinity,y:-Infinity}]})):[{action:{port:2,director:-1},score:9e12,firstMeaningfulId:'ABSURD',samples:[{x:-99999,y:99999}]}];return true;}
+function collisionFixture(name){const w=clonePlannerState(sim),b=w.charge;w.hazard.phase='calm';w.slag=[];b.mode='flight';b.lastColliderId='';b.collisionHistory=[];b.radius=3;const fixtures={side:{x:6,y:180,vx:-2,vy:.2},ceiling:{x:80,y:39,vx:.2,vy:-2},horizontal:{x:80,y:180,vx:.2,vy:2},vertical:{x:80,y:180,vx:2,vy:.2},cup:{x:80,y:305,vx:.1,vy:2},'director-left':{x:80,y:240,vx:0,vy:-2},'director-right':{x:80,y:240,vx:0,vy:-2}};if(name&&name.startsWith('launch-')){const n=+name.slice(7),a=ACTIONS[n]||ACTIONS[0];return stripPlannerState(simulateAction(w,a,360));}Object.assign(b,fixtures[name]||fixtures.side);if(name==='horizontal')w.slag=[{id:'fixture:h',x:60,y:188,w:40,h:5,hp:9,active:true,type:'plate'}];if(name==='vertical')w.slag=[{id:'fixture:v',x:90,y:150,w:5,h:50,hp:9,active:true,type:'column'}];if(name==='director-left'||name==='director-right'){w.operator.director=name==='director-left'?-1:1;b.afterDirector=true;b.routeTarget='machine:furnace';}for(let i=0;i<12&&b.mode==='flight'&&!b.collisionHistory.length;i++)stepChargePhysics(b,w,null);return{charge:deepClone(b),finite:[b.x,b.y,b.vx,b.vy].every(Number.isFinite),quantized:[b.x,b.y,b.vx,b.vy].every(v=>Math.round(v*Q)===v*Q)};}
+function manufacturingFixture(name){const w=clonePlannerState(sim),events=[],sink=(type,data)=>events.push({type,data});w.orderIndex=name==='heart-double'?3:0;w.dependenciesOpen=currentOrder(w).deps;w.charge=makeCharge();if(name==='raw-furnace'){w.charge.stage=RAW;processMachine(w,'furnace',sink)}else if(name==='heated-stamp'){w.charge.stage=HEATED;w.charge.heat=600;processMachine(w,'stamp',sink)}else if(name==='shaped-quench'){w.charge.stage=SHAPED;w.charge.stampCount=1;processMachine(w,'quench',sink)}else if(name==='tempered-die'){w.charge.stage=TEMPERED;processMachine(w,'die',sink)}else if(name==='raw-stamp'){w.charge.stage=RAW;processMachine(w,'stamp',sink)}else if(name==='heart-double'){w.charge.stage=HEATED;w.charge.shotSerial=1;processMachine(w,'stamp',sink);w.charge.mode='cup';w.charge.shotSerial=2;processMachine(w,'stamp',sink)}return{charge:deepClone(w.charge),component:deepClone(w.component),pressure:w.pressure,events};}
+function operatorBox(){return{x:sim.operator.x-6,y:336,width:12,height:20};}
+function chargeBox(){return{x:sim.charge.x-4,y:sim.charge.y-4,width:8,height:8};}
+function threatBox(){return sim.hazard.phase==='calm'?null:Object.assign({},sim.hazard.box);}
+function visualProbe(){const cb=componentBox(),actors=[{id:'operator',kind:'smith',type:sim.operator.pose,box:operatorBox()},{id:'charge',kind:'workpiece',type:STAGE_NAMES[sim.charge.stage],box:chargeBox()}];if(threatBox())actors.push({id:'slag-hazard',kind:'hazard',type:sim.hazard.kind,box:threatBox()});if(cb)actors.push({id:'active-component',kind:'component',type:(sim.component||sim.installed.at(-1)).type,box:cb});return{fixture:visualFixture,finite:allFinite(),operator:{box:operatorBox(),task:sim.operator.task,pose:sim.operator.pose},charge:{box:chargeBox(),stage:STAGE_NAMES[sim.charge.stage],mode:sim.charge.mode},order:{id:currentOrder(sim).id,index:sim.orderIndex},recipe:{next:nextRecipe(sim)},pressure:sim.pressure,threat:{id:sim.hazard.id,phase:sim.hazard.phase,box:threatBox()},die:{open:dieOpen(sim)},installed:sim.installed.map(p=>({id:p.id,type:p.type})),component:{box:cb,type:(sim.component||sim.installed.at(-1)||{}).type||null},actors,layout:{playfield:Object.assign({},WORLD),ports:PORT_X.slice(),processMachines:4,guidelines:0}};}
+function stageVisualBase(order){visualLocked=true;visualTick=0;sim.orderIndex=order||0;sim.orderPhase='read';sim.planTimer=54;sim.pressure=36;sim.charge=makeCharge();sim.operator={id:'operator',x:80,targetX:80,face:1,task:'RESET_CUP',taskT:0,port:1,director:1,pose:'read',step:0,intent:null};sim.machines=makeMachines();sim.slag=blueprintItems(sim.orderIndex,worldSeed);sim.dependenciesOpen=0;sim.component=null;sim.hazard={id:'',kind:'pressure',phase:'calm',warnAt:999999,landAt:999999,endAt:999999,lane:1,countered:false,t:0,serial:0,box:{x:74,y:112,width:13,height:17}};sim.selectedIntent={port:1,director:1,commit:true,targetId:'machine:stamp',tactic:TACTICS.ADVANCE_RECIPE};texts=[];feedback=[];goodPulse=badPulse=0;SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};}
+function setVisualBeat(name){const allowed=['opening','order-setup','commit-left','commit-right','heat-impact','stamp-impact','quench-impact','threat-warning','operator-response','wrong-order','cast-before','cast-payoff','cast-aftermath','heart-before','heart-cast','heart-aftermath','actor-scale','planner-clean','planner-contaminated'];if(!allowed.includes(name))return false;visualFixture=name;stageVisualBase(name.startsWith('heart')?3:name==='cast-aftermath'?1:0);
+  if(name==='opening'){sim.operator.x=79;sim.charge.x=80;sim.charge.y=306;}
+  else if(name==='order-setup'){sim.selectedIntent={port:0,director:-1,commit:true,targetId:'machine:furnace',tactic:TACTICS.ADVANCE_RECIPE};sim.operator.port=0;sim.operator.director=-1;sim.operator.targetX=30;}
+  else if(name==='commit-left'||name==='commit-right'){const right=name==='commit-right';sim.operator.port=right?2:0;sim.operator.director=right?1:-1;sim.operator.x=right?126:34;sim.operator.targetX=PORT_X[sim.operator.port];sim.operator.pose='crank';sim.orderPhase='commit';sim.planTimer=12;sim.charge.x=PORT_X[sim.operator.port];sim.selectedIntent={port:sim.operator.port,director:sim.operator.director,commit:true,targetId:right?'machine:valve':'machine:furnace',tactic:right?TACTICS.COUNTER_DROP:TACTICS.ADVANCE_RECIPE};}
+  else if(name==='heat-impact'){sim.charge.stage=HEATED;sim.charge.heat=590;sim.charge.mode='machine';sim.charge.heldBy='machine:furnace';sim.charge.x=23;sim.charge.y=68;sim.charge.holdT=10;sim.machines[0].phase='capture';sim.machines[0].phaseT=10;goodPulse=.7;}
+  else if(name==='stamp-impact'){sim.charge.stage=SHAPED;sim.charge.heat=440;sim.charge.stampCount=1;sim.charge.mode='machine';sim.charge.heldBy='machine:stamp';sim.charge.x=80;sim.charge.y=73;sim.charge.holdT=9;sim.machines[1].phase='capture';sim.machines[1].phaseT=9;goodPulse=.75;}
+  else if(name==='quench-impact'){sim.charge.stage=TEMPERED;sim.charge.mode='machine';sim.charge.heldBy='machine:quench';sim.charge.x=137;sim.charge.y=68;sim.charge.holdT=14;sim.machines[2].phase='capture';sim.machines[2].phaseT=14;goodPulse=.8;}
+  else if(name==='threat-warning'||name==='operator-response'){sim.hazard={id:'shift:0:slag:1',kind:'slag',phase:'warn',warnAt:sim.runFrame,landAt:sim.runFrame+180,endAt:sim.runFrame+540,lane:1,countered:false,t:0,serial:1,box:{x:74,y:112,width:13,height:17}};sim.pressure=72;if(name==='operator-response'){sim.operator.x=17;sim.operator.targetX=17;sim.operator.pose='brace';sim.operator.task='BRACE_SHUTTER';sim.charge.stage=SHAPED;sim.charge.heat=230;sim.selectedIntent={port:2,director:1,commit:true,targetId:'machine:valve',tactic:TACTICS.COUNTER_DROP};goodPulse=.65;}}
+  else if(name==='wrong-order'){sim.charge.stage=WARPED;sim.charge.mode='scrap';sim.charge.x=80;sim.charge.y=73;sim.charge.holdT=30;sim.operator.pose='hurt';badPulse=.8;}
+  else if(name==='cast-before'){sim.charge.stage=TEMPERED;sim.charge.x=80;sim.charge.y=174;sim.charge.mode='flight';sim.dependenciesOpen=currentOrder(sim).deps;}
+  else if(name==='cast-payoff'){sim.charge.stage=TEMPERED;sim.charge.mode='cast';sim.component={id:'component:gear',type:'gear',x:80,y:157,installed:false,liftT:8};sim.orderPhase='cast';goodPulse=1;offer('visual-cast',2,80,157,'DRIVE GEAR CAST');}
+  else if(name==='cast-aftermath'){sim.installed=[{id:'component:gear',type:'gear',x:68,y:125},{id:'component:valve',type:'valve',x:91,y:115}];sim.charge=makeCharge();sim.orderIndex=2;sim.slag=blueprintItems(2,worldSeed);sim.dependenciesOpen=1;}
+  else if(name==='heart-before'){sim.installed=[{id:'component:gear',type:'gear',x:68,y:125},{id:'component:valve',type:'valve',x:91,y:115},{id:'component:turbine',type:'turbine',x:69,y:159}];sim.charge.stage=TEMPERED;sim.charge.mode='flight';sim.charge.x=80;sim.charge.y=178;sim.dependenciesOpen=0;}
+  else if(name==='heart-cast'){sim.installed=[{id:'component:gear',type:'gear',x:68,y:125},{id:'component:valve',type:'valve',x:91,y:115},{id:'component:turbine',type:'turbine',x:69,y:159}];sim.component={id:'component:heart',type:'heart',x:80,y:157,installed:false,liftT:22};sim.charge.mode='cast';sim.charge.stage=TEMPERED;sim.orderPhase='lift';goodPulse=1;offer('visual-heart',3,80,145,'FOUNDRY HEART');}
+  else if(name==='heart-aftermath'){sim.installed=[{id:'component:gear',type:'gear',x:68,y:125},{id:'component:valve',type:'valve',x:91,y:115},{id:'component:turbine',type:'turbine',x:69,y:159},{id:'component:heart',type:'heart',x:96,y:159}];sim.orderPhase='apex';sim.apexT=150;sim.operator.pose='cheer';goodPulse=.8;}
+  else if(name==='actor-scale'){sim.operator.x=28;sim.charge.x=80;sim.charge.y=230;sim.charge.stage=HEATED;sim.hazard={id:'scale:slag',kind:'slag',phase:'land',warnAt:0,landAt:0,endAt:999,lane:2,countered:false,t:90,serial:1,box:{x:123,y:184,width:12,height:16}};sim.component={id:'component:valve',type:'valve',x:58,y:205,installed:false,liftT:0};}
+  else if(name==='planner-clean'){sim.selectedIntent={port:0,director:-1,commit:true,targetId:'machine:furnace',tactic:TACTICS.ADVANCE_RECIPE};plannerCandidates=ACTIONS.map((a,i)=>({action:a,score:i,outcome:'fixture',samples:[]}));}
+  else if(name==='planner-contaminated'){sim.selectedIntent={port:0,director:-1,commit:true,targetId:'machine:furnace',tactic:TACTICS.ADVANCE_RECIPE};plannerContamination();}
+  return true;
+}
+
+function resetForFixture(){resetGame(true);visualLocked=false;return simulationSignature();}
+
+globalThis.__ricochetFoundryProbe=probe;
+globalThis.__ricochetFoundrySignature=simulationSignature;
+globalThis.__ricochetFoundryFullSignature=simulationSignature;
+globalThis.__ricochetFoundryPhysical=physicalSignature;
+globalThis.__ricochetFoundryPlannerFixture=plannerFixture;
+globalThis.__ricochetFoundryIntentFixture=intentFixture;
+globalThis.__ricochetFoundryActFixture=actFixture;
+globalThis.__ricochetFoundryNextRandom=()=>random();
+globalThis.__ricochetFoundrySetVisualBeat=setVisualBeat;
+globalThis.__ricochetFoundryVisualProbe=visualProbe;
+globalThis.__ricochetFoundryPlannerContamination=plannerContamination;
+globalThis.__ricochetFoundryCollisionFixture=collisionFixture;
+globalThis.__ricochetFoundryManufacturingFixture=manufacturingFixture;
+globalThis.__ricochetFoundryReset=resetForFixture;
+globalThis.__ricochetFoundryActions=()=>ACTIONS.map(a=>Object.assign({},a));
+globalThis.__ricochetFoundrySimulate=(action,frames)=>stripPlannerState(simulateAction(sim,action,frames||360));
+globalThis.__ricochetFoundryTrace=(action,frames)=>{const q=simulateAction(sim,action,frames||360),out=Object.assign({},q);delete out.state;return out;};
+globalThis.__soakProbe=soakProbe;
+globalThis.__motionProbe=motionProbe;
+globalThis.__activityProbe=activityProbe;
+globalThis.__feedbackProbe=feedbackProbe;
+globalThis.__ambientProbe=ambientProbe;
+globalThis.__ricochetFoundryVisualBeats=['opening','order-setup','commit-left','commit-right','heat-impact','stamp-impact','quench-impact','threat-warning','operator-response','wrong-order','cast-before','cast-payoff','cast-aftermath','heart-before','heart-cast','heart-aftermath','actor-scale','planner-clean','planner-contaminated'];
+
+initSession('ricochet-foundry',[["LEFT / RIGHT","SELECT LAUNCH PORT"],["UP / DOWN","TURN DIRECTOR ANVIL"],["SPACE / X","COMMIT THE CHARGE"],["ESC","RETURN TO AUTOPILOT"]],{viewer:true});
+resetGame(true);start(step,render);
+</script>
+</html>

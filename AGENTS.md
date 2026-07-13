@@ -104,6 +104,43 @@ location, and the changed pixels must carry palette-separated signature colors
 so good reads differently from bad. An event the viewer cannot see did not
 happen.
 
+## Ambient Evidence Protocol v1
+
+AEP v1 is the release-accounting boundary for the catalog:
+
+- `evals/game-contracts.js` has exactly one entry for every current `games.js`
+  entry. Duplicate, missing, or extra contracts are release failures.
+- `status: "aep1"` requires a game behavior eval plus the complete executable
+  native visual chain: `*-visual-eval.js`, `visual-reviews/<game>.json`, and one
+  preserved reviewed PNG whose bytes match the review hash. In this catalog
+  registry, that status names the release-evidence chain; it does not by itself
+  assert that the game has migrated to the shared runtime evidence ledger.
+- `evals/legacy-quality-debt.json` freezes the exact games that lacked that
+  visual chain on 2026-07-13. Existing entries may move from `open` to
+  `resolved`; they may not be replaced or expanded. A new catalog game may not
+  use `status: "legacy"` and must ship as `aep1`.
+- `node evals/catalog-eval.js` rejects catalog/eval/review/receipt set drift,
+  stale review-to-PNG hashes, missing pages, stale manifest cachebusters, and
+  stale game-count copy in the package, README, or gallery.
+- AEP accounting never grants quality credit for mere file presence. Every
+  registered eval and native-pixel assertion still executes through the normal
+  suite, and reviewed montage preservation remains explicit and immutable.
+
+Canonical command surfaces are `npm run benchmark` for the independent
+four-game runtime-ledger panel, deterministic AEP scorecards, and source-bound
+receipts; `npm run verify` for renderer plus suite verification;
+`npm run verify:release` for full verification plus release accounting; and
+`npm run verify:live` for the deployed production surface. The default panel
+keeps each game in a separate seed run and requires natural evidence, an active
+same-seed mechanic ablation, and an evidence-disabled simulation/RNG twin; one
+game's volume may not hide another game's failure.
+Release verification must not imply that unavailable CI, attestation,
+calibration, or deploy-commit artifacts exist. The live verifier checks
+base/root/game routes, deployed catalog entries, native canvas and runtime
+scripts, byte-backed cachebusters where present, and
+the required security headers. It does not claim commit identity until the
+site exposes a deployment marker.
+
 Render a deterministic review clip with
 `node render/render.js <game> <seconds> [out.mp4] --seed N --probe --fps 30`.
 The simulation remains 60 Hz regardless of output FPS.

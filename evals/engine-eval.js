@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
+const path=require('path');
 const{bootGame}=require('./harness');
+const{bootRenderedGame}=require('../render/runtime');
 
 let failed=false;
 const fail=m=>{console.error('  FAIL:',m);failed=true;};
@@ -65,6 +67,90 @@ for(const [name,footer] of parityCases){
   const right=JSON.stringify(rendered.sandbox.__parity());
   console.log(`  ${name}: ${left===right?'identical':'DIVERGED'}`);
   if(left!==right)fail(`${name}: rendering changed simulation state`);
+}
+
+console.log('runtime chunking: monolithic, chunked, and one-frame runs are identical');
+const chunkTotal=360;
+const chunkPatterns={monolithic:[chunkTotal],chunked:[7,31,2,89,1,54,176],oneFrame:Array(chunkTotal).fill(1)};
+const chunkFooter=`globalThis.__runtimeParity=()=>({score:[...score],clock,state,stateT,frame,
+  ball:[ball.x,ball.y,ball.vx,ball.vy],cars:cars.map(c=>[c.x,c.y,c.a,c.vx,c.vy,c.boost,c.dead,c.launch]),next:E.random()});`;
+const chunkStates=[];
+for(const [label,chunks] of Object.entries(chunkPatterns)){
+  const headless=bootGame('rocket',{seed:0x51ce,search:'?seed=20942',footer:chunkFooter});
+  for(const count of chunks)headless.frames(count,false);
+  const rendered=bootRenderedGame('rocket',{seed:0x51ce,search:'?seed=20942',footer:chunkFooter});
+  for(const count of chunks)rendered.advance(count);
+  const headlessState=JSON.stringify(headless.sandbox.__runtimeParity());
+  const renderedState=JSON.stringify(rendered.sandbox.__runtimeParity());
+  chunkStates.push([label,headlessState,renderedState]);
+  console.log(`  ${label}: ${headlessState===renderedState?'headless/rendered identical':'DIVERGED'}`);
+  if(headlessState!==renderedState)fail(`${label}: headless and rendered runtimes diverged`);
+}
+const chunkReference=chunkStates[0][1];
+for(const [label,headlessState,renderedState] of chunkStates){
+  if(headlessState!==chunkReference||renderedState!==chunkReference)fail(`${label}: frame chunking changed simulation state`);
+}
+
+console.log('callback frames: repeated direct runs keep cumulative frame numbers');
+const callbackFooter=`globalThis.__callbackFrames=[];
+  E.start(f=>globalThis.__callbackFrames.push(f),()=>{},{headless:true});`;
+const callbackPatterns={monolithic:[24],chunked:[3,5,1,7,8],oneFrame:Array(24).fill(1)};
+for(const [label,chunks] of Object.entries(callbackPatterns)){
+  const expected=Array.from({length:24},(_,index)=>index+1);
+  const headless=bootGame('rocket',{seed:17,footer:callbackFooter});
+  for(const count of chunks)headless.frames(count,false);
+  const rendered=bootRenderedGame('rocket',{seed:17,footer:callbackFooter});
+  for(const count of chunks)rendered.advance(count);
+  const headlessFrames=JSON.stringify(headless.sandbox.__callbackFrames);
+  const renderedFrames=JSON.stringify(rendered.sandbox.__callbackFrames);
+  const want=JSON.stringify(expected);
+  console.log(`  ${label}: ${headlessFrames===want&&renderedFrames===want?'1..24 in both runtimes':'BAD SEQUENCE'}`);
+  if(headlessFrames!==want||renderedFrames!==want)fail(`${label}: callback frames were not cumulative`);
+  if(headless.frame!==24||rendered.frame!==24)fail(`${label}: public runtime frame did not reach 24`);
+}
+
+console.log('script fidelity: strict mode and event listeners match browser behavior');
+const fidelityFooter=`globalThis.__strictSource=(()=>{
+    const strictFunction=fn=>{try{void fn.caller;return false}catch(error){return error instanceof TypeError}};
+    return strictFunction(E.runFrames)&&strictFunction(mkCar);
+  })();
+  globalThis.__listenerLog=[];
+  (()=>{
+    const first=event=>globalThis.__listenerLog.push('first:'+event.code);
+    const second=event=>globalThis.__listenerLog.push('second:'+event.code);
+    const removed=event=>globalThis.__listenerLog.push('removed:'+event.code);
+    document.addEventListener('keydown',first);
+    document.addEventListener('keydown',first);
+    document.addEventListener('keydown',second);
+    document.addEventListener('keydown',removed);
+    document.removeEventListener('keydown',removed);
+  })();`;
+const fidelityHeadless=bootGame('rocket',{seed:23,footer:fidelityFooter});
+const fidelityRendered=bootRenderedGame('rocket',{seed:23,footer:fidelityFooter});
+fidelityHeadless.key('keydown','KeyA');fidelityRendered.key('keydown','KeyA');
+const listenerExpected=JSON.stringify(['first:KeyA','second:KeyA']);
+const headlessListeners=JSON.stringify(fidelityHeadless.sandbox.__listenerLog);
+const renderedListeners=JSON.stringify(fidelityRendered.sandbox.__listenerLog);
+console.log(`  strict headless/rendered ${fidelityHeadless.sandbox.__strictSource}/${fidelityRendered.sandbox.__strictSource}; listeners ${headlessListeners}`);
+if(!fidelityHeadless.sandbox.__strictSource||!fidelityRendered.sandbox.__strictSource)fail('game script lost its strict-mode directive');
+if(headlessListeners!==listenerExpected||renderedListeners!==listenerExpected)fail('multiple/removeEventListener behavior diverged');
+
+console.log('source discovery: headless and rendered dependency sets are exact');
+const expectedSources={
+  meatlad:['engine.js','meatlad.html'],
+  wordfall:['engine.js','autoplay.js','word-puzzle.js','wordfall.html']
+};
+for(const [name,expected] of Object.entries(expectedSources)){
+  const headless=bootGame(name,{seed:29});
+  const rendered=bootRenderedGame(name,{seed:29});
+  const left=headless.sourceFiles.map(file=>path.basename(file));
+  const leftDependencies=headless.dependencyFiles.map(file=>path.basename(file));
+  console.log(`  ${name}: ${left.join(', ')}`);
+  if(JSON.stringify(headless.sourceFiles)!==JSON.stringify(rendered.sourceFiles)||
+    JSON.stringify(headless.dependencyFiles)!==JSON.stringify(rendered.dependencyFiles))
+    fail(`${name}: headless/rendered source files differ`);
+  if(JSON.stringify(left)!==JSON.stringify(expected)||JSON.stringify(leftDependencies)!==JSON.stringify(expected.slice(0,-1)))
+    fail(`${name}: discovered the wrong source dependency set`);
 }
 
 console.log('scheduler: 60Hz simulation, 30Hz preview on a 120Hz display');

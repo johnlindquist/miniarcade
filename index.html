@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#08090d">
-  <meta name="description" content="Thirty tiny, self-playing retro games. Browse the arcade, open a game, or record a perfect gameplay loop.">
+  <meta name="description" content="Thirty-one tiny, self-playing retro games. Browse the arcade, open a game, or record a perfect gameplay loop.">
   <link rel="canonical" href="https://miniarcade.dev/">
   <title>MINI/ARCADE — tiny games, big side quests</title>
   <style>
@@ -125,7 +125,7 @@
     .game-card.is-active .open-hint,.game-card:focus-within .open-hint{opacity:1;transform:none}
     .hz{--accent:#41e8ff}.ml{--accent:#e63946}.rk{--accent:#ff8a2a}.sg{--accent:#ff70a6}
     .sf{--accent:#2de2e6}.wf{--accent:#c792ea}.hc{--accent:#ffd166}.bm{--accent:#58e08a}.ws{--accent:#8fc8ff}
-    .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mb{--accent:#8aff5c}.gs{--accent:#7cf7d4}.wr{--accent:#ffd166}.gg{--accent:#8fe06f}.sk{--accent:#ffd166}.sv{--accent:#9bd1ff}.ng{--accent:#ff3ea5}.pc{--accent:#9fe36b}.fc{--accent:#9bea73}.tp{--accent:#ffd15c}.bb{--accent:#f2b84b}.rc{--accent:#f0b64a}.rr{--accent:#ffcb57}.cc{--accent:#ffb457}.hh{--accent:#caa7ff}.kc{--accent:#ff6b4a}.mv{--accent:#f4d06f}.de{--accent:#65d6d0}.cm{--accent:#63e0f5}
+    .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mb{--accent:#8aff5c}.gs{--accent:#7cf7d4}.wr{--accent:#ffd166}.gg{--accent:#8fe06f}.sk{--accent:#ffd166}.sv{--accent:#9bd1ff}.ng{--accent:#ff3ea5}.pc{--accent:#9fe36b}.fc{--accent:#9bea73}.tp{--accent:#ffd15c}.bb{--accent:#f2b84b}.rc{--accent:#f0b64a}.rr{--accent:#ffcb57}.cc{--accent:#ffb457}.hh{--accent:#caa7ff}.kc{--accent:#ff6b4a}.mv{--accent:#f4d06f}.de{--accent:#65d6d0}.cm{--accent:#63e0f5}.rf{--accent:#ff8a45;--accent2:#63dfe5;--panel:#171c22}
     .site-footer{
       min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;
       min-height:54px;padding:6px clamp(16px,3vw,42px) calc(6px + env(safe-area-inset-bottom));
@@ -147,10 +147,14 @@
     }
     .workshop-brand{grid-area:brand;display:grid;grid-template-columns:38px auto;align-items:center;gap:5px;min-width:48px}
     .workshop-eggo{
-      position:relative;width:38px;height:40px;touch-action:none;user-select:none;cursor:grab;
+      position:relative;display:block;width:38px;height:40px;padding:0;border:0;background:transparent;color:inherit;
+      font:inherit;appearance:none;touch-action:none;user-select:none;cursor:grab;
     }
-    .workshop-eggo:active{cursor:grabbing}
+    .workshop-eggo:active:not(:disabled){cursor:grabbing}
+    .workshop-eggo:disabled{opacity:1;cursor:default}
+    .workshop-eggo:focus-visible{outline:1px solid var(--cyan);outline-offset:2px;border-radius:4px}
     .workshop-eggo img{display:block;width:38px;height:40px;object-fit:contain;pointer-events:none}
+    .workshop-eggo img[hidden]{display:none}
     .workshop-eggo-canvas{
       position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform:translate(-50%,-50%);
     }
@@ -270,7 +274,7 @@
   <header class="site-header">
     <div class="brand">
       <h1>MINI<span>/</span>ARCADE</h1>
-      <p>thirty tiny games · always playing · open one and take over</p>
+      <p>thirty-one tiny games · always playing · open one and take over</p>
     </div>
     <form id="clip">
       <label for="clip-game">CLIP</label>
@@ -286,7 +290,7 @@
       <p id="browse-label">Hover to reveal · click anywhere on a card to play</p>
       <div class="rail-controls">
         <button class="nav-button" id="previous-game" type="button" aria-label="Previous game" aria-controls="game-track">‹</button>
-        <output id="position" aria-live="polite">01 / 30</output>
+        <output id="position" aria-live="polite">01 / 31</output>
         <button class="nav-button" id="next-game" type="button" aria-label="Next game" aria-controls="game-track">›</button>
       </div>
     </div>
@@ -300,10 +304,10 @@
       <canvas id="workshop-fx-canvas" class="workshop-fx-canvas" aria-hidden="true"></canvas>
       <span class="workshop-scan" aria-hidden="true"></span>
       <span class="workshop-brand">
-        <span id="workshop-eggo" class="workshop-eggo" role="img" aria-label="Eggo, the egghead.io mascot — grab to stretch" data-eggo-state="static">
+        <button id="workshop-eggo" class="workshop-eggo" type="button" aria-label="Eggo, the egghead.io mascot" data-eggo-state="static" disabled>
           <img id="workshop-eggo-fallback" src="eggo.svg" alt="" aria-hidden="true" draggable="false">
           <canvas id="workshop-eggo-canvas" class="workshop-eggo-canvas" aria-hidden="true" hidden></canvas>
-        </span>
+        </button>
         <span class="workshop-signal" aria-hidden="true">
           <span class="workshop-signal-cell"></span>
           <span class="workshop-signal-cell"></span>
@@ -332,7 +336,7 @@
     </details>
   </footer>
 
-  <script src="games.js?v=6b152290"></script>
+  <script src="games.js?v=17a381fd"></script>
   <script>
   (()=>{
     const track=document.getElementById('game-track');

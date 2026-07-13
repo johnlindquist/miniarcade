@@ -1124,3 +1124,57 @@ goal-line stand, dive, wipeout, and grapple frames all read at 160px.
    thunderjaw encounter floor.
 7. **Meat Lad**: budget warps/rockets per 10 minutes so late-game rescue-spam can't
    masquerade as skill.
+
+## Ambient Evidence Protocol v1: catalog/release accounting (2026-07-13)
+
+The completed Oracle browser session `miniarcade-agentic-eval-system` used
+`gpt-5.5-pro` to review a packed 109-file, roughly 472k-token repository
+snapshot. It recommended Ambient Evidence Protocol v1 as the next framework
+wave, with catalog-wide contract accounting, frozen legacy debt, deterministic
+benchmark evidence, stronger harness parity, standardized causal ablations,
+source-bound preservation, and executable release/live verification before new
+games. The session also explicitly reported a packaging limitation: its bundle
+did not contain the thirty game HTML implementations, `index.html`, the render
+lockfile/font bytes, or preserved PNG bytes, so its conclusions were advisory
+and its proposed acceptance commands still required the real checkout. This
+entry does not treat that Oracle response as implementation or verification.
+
+The implemented AEP v1 wave is narrower than Oracle's full long-term roadmap,
+but it is an executable end-to-end release slice:
+
+- `evals/game-contracts.js` records exactly one current contract per catalog
+  game. Nineteen games have the existing complete behavior + native visual eval
+  + semantic review + preserved montage chain and are marked `aep1` for this
+  release-accounting protocol. That status does not by itself claim runtime-
+  ledger migration.
+- `evals/legacy-quality-debt.json` freezes the eleven games that already lacked
+  that visual chain: MACHINE HUNT, MEAT LAD, POCKET LEAGUE, SMALL GUYS, WORD
+  FALL, HEX CASCADE, BLOCK MINE, WEB SLAM, DEADLINE DECK, SCRAP SHIFT, and MOTO
+  BOWL. The entries can be resolved but cannot expand; a future game must enter
+  with complete AEP v1 evidence.
+- GHOST SHIFT, PICO CAP, DUNGEON EXPRESS, and TOWER PANIC now expose the shared
+  observational ledger plus the canonical ambient envelope. Their existing
+  probes, motion IDs, source formulas, focused entertainment gates, fixtures,
+  and causal A/Bs remain authoritative; evidence-disabled twins are byte-
+  identical in simulation, RNG, counters, and behavior.
+- The headless and native runtimes now share exact source/dependency discovery,
+  retain strict mode, match listener behavior, and prove monolithic, chunked,
+  one-frame, callback-frame, and dependency parity.
+- `evals/benchmark-catalog.js` is the default independent four-game benchmark.
+  Every selected game is its own seed run and must pass natural ledger validity,
+  an active same-seed mechanic ablation, and an evidence-disabled simulation/RNG
+  twin. Two complete executions produce byte-identical scorecard, events,
+  provenance, diagnosis, artifact-index, and receipt JSON.
+- Visual proof now binds the exact consumed dependency/evidence closure. The
+  explicit preservation command rejects stale source, montage, checkpoint,
+  crop, actor, metric, reference, baseline, runtime, renderer, font, and lockfile
+  identities; ordinary evals still cannot rewrite reviewed JSON or PNG bytes.
+- `evals/catalog-eval.js` rejects catalog and release-evidence drift, while
+  `evals/release-eval.js` and `evals/live-eval.js` provide source and deployed-
+  surface checks without inventing calibration, CI-attestation, commit-identity,
+  or deployment receipts that do not exist.
+
+This accounting layer does not upgrade the eleven debt games' visual quality by
+fiat, and it does not replace any game-specific behavior or native-pixel gate.
+Those migrations remain future work and must retire debt through real executable
+evidence plus explicit reviewed-montage preservation.

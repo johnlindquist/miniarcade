@@ -1,6 +1,6 @@
 # SIDE/QUEST runtime
 
-Thirty self-playing 160×360 games designed for the 4:9 side column beside 4:3 video.
+Thirty-one self-playing 160×360 games designed for the 4:9 side column beside 4:3 video.
 
 ## Layers
 
@@ -18,10 +18,10 @@ sense(game state) -> human or bot controller -> game-owned intent -> game physic
 
 ## Run and record
 
-Serve this directory over HTTP, then open `index.html`:
+Serve the repository root over HTTP, then open `index.html`:
 
 ```sh
-python3 -m http.server 8765 --directory here-now
+npm run dev
 ```
 
 Gallery cards render at 30 fps and pause when horizontally offscreen. Opening a game directly runs it at 60 fps.
@@ -35,11 +35,18 @@ Useful query parameters:
 
 ## Verify
 
-Run every discovered eval suite in parallel:
+The canonical commands use the current deterministic renderer and discovered eval suite:
 
 ```sh
-node here-now/evals/run-all.js
+npm run benchmark       # deterministic AEP scorecard and source-bound receipt runner
+npm run verify          # renderer encode/probe test, then every eval
+npm run verify:release  # full verify, then AEP catalog/release preflight
+npm run verify:live     # production routes, catalog, runtime, cachebusters, headers
 ```
+
+Pass a registered benchmark module after `--`, for example `npm run benchmark -- ./path/to/benchmark.js --profile release`; the runner writes canonical scorecard, diagnosis, provenance, event, artifact-index, and receipt JSON under `.artifacts/benchmarks/` unless `--no-write` is used.
+
+`verify:release` is a source preflight, not a claim that CI or deployment artifacts exist. `verify:live` checks the evidence the current static deployment exposes; it does not assert a commit identity because the site has no deployment commit marker.
 
 Individual simulations accept or print their replay seeds where applicable. The shared harness can advance simulation without traversing draw code:
 
@@ -48,6 +55,18 @@ const {bootGame} = require('./evals/harness');
 const game = bootGame('surfers', {seed: 42});
 game.frames(36000, false); // ten simulated minutes, zero canvas calls
 ```
+
+## Ambient Evidence Protocol v1
+
+AEP v1 makes catalog evidence accounting explicit:
+
+- `evals/game-contracts.js` contains exactly one contract entry per `games.js` game.
+- An `aep1` entry has a behavior eval and the complete native visual chain: executable visual eval, semantic review JSON, and preserved reviewed PNG. This catalog status records release evidence; runtime-ledger migration is tracked separately.
+- `evals/legacy-quality-debt.json` freezes the eleven games that already lacked that visual chain on 2026-07-13. Those entries may be resolved, but the set cannot expand; every new game must enter as `aep1`.
+- `evals/catalog-eval.js` rejects catalog, eval, review, receipt, cachebuster, and count-copy drift. It also verifies preserved montage bytes against their semantic review hashes.
+- Ordinary verification never creates or updates a semantic review or preserved montage. Use the explicit preservation command in `AGENTS.md` only after native-size review.
+
+The catalog accounting slice does not claim that every game has migrated to the shared evidence ledger. The default deterministic benchmark is an independent five-game panel over GHOST SHIFT, PICO CAP, DUNGEON EXPRESS, TOWER PANIC, and RICOCHET FOUNDRY: each run must pass natural evidence, an active same-seed mechanic ablation, and an evidence-disabled simulation/RNG twin before the source-bound receipt passes. Release accounting still does not invent missing calibration, CI-attestation, or deployment-commit evidence; it records the evidence available now and fails closed when that evidence drifts.
 
 ## Add a game
 
@@ -60,7 +79,7 @@ game.frames(36000, false); // ten simulated minutes, zero canvas calls
    distinct environment/level checkpoints, animation and payoff bursts, a contact
    sheet against MACHINE HUNT and BLOCK MINE, and a current visual-review receipt.
    Mock canvas-call counts do not satisfy this gate.
-7. Run `node here-now/evals/run-all.js`, inspect the rendered 160×360 contact sheet,
+7. Run `npm run verify`, inspect the rendered 160×360 contact sheet,
    and browser-check both the gallery preview and direct page. If browser inspection
    is unavailable, visual approval remains unverified and the game does not publish.
 

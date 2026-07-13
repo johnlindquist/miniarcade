@@ -7,10 +7,51 @@ const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
 const{assertEntertainment}=require('./entertainment');
 const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+const{validateEvidence,deriveEvidence}=require('./evidence');
 let failed=false;
 const fail=message=>{console.error('  FAIL:',message);failed=true};
 const source=fs.readFileSync(path.join(__dirname,'..','pico-cap.html'),'utf8');
 const noVisiblePath=!/\bfunction\s+drawRoute\b/.test(source)&&!/\bdrawRoute\s*\(/.test(source)&&!/\.setLineDash\s*\(/.test(source)&&!/routePoints\s*:/.test(source);
+const EVIDENCE_SOURCES={
+  'room-read':'setup','room-choice':'commit','shrink-choice':'commit','commit-briar':'commit',
+  'enemy-tell':'threat','enemy-engage':'threat',dodge:'response',parry:'response',fight:'commit',
+  'sun-key':'payoff','gate-open':'payoff','shrine-ready':'payoff','room-complete':'payoff'
+};
+const HERO_SOURCES=new Set(['room-choice','shrink-choice','commit-briar','dodge','parry','fight']);
+function entertainmentOf(p){const kind=key=>p.decisionKinds[key]||0;return{
+  noVisiblePath,
+  topology:{rooms:3,branches:6,maxStraight:p.stats.maxStraightSteps},
+  puzzle:{transitions:p.stats.gatesOpened,completions:p.stats.glades},
+  agency:{enemyActions:p.stats.charges,playerResponses:p.stats.chargeDodges+p.stats.parries},
+  decisions:{
+    puzzle:{count:kind('room-read')+kind('room-choice')+kind('shrink-choice')+kind('commit-briar'),source:'room-read+room-choice+shrink-choice+commit-briar'},
+    threat:{count:kind('enemy-tell')+kind('enemy-engage'),source:'enemy-tell+enemy-engage'},
+    response:{count:kind('dodge')+kind('parry'),source:'dodge+parry'},
+    combat:{count:kind('fight'),source:'fight'},
+    payoff:{count:kind('sun-key')+kind('gate-open')+kind('shrine-ready')+kind('room-complete'),source:'sun-key+gate-open+shrine-ready+room-complete'}
+  },
+  maxDeadAir:p.stats.maxTravelWithoutDecision
+}}
+function checkAmbient(game,p,label){const ambient=game.sandbox.__ambientProbe(),ledger=ambient.ledger;
+  if(ambient.protocol!=='ambient-evidence/v1'||ambient.schema!==1||ambient.game!=='pico-cap')fail(label+': ambient envelope drifted '+JSON.stringify({protocol:ambient.protocol,schema:ambient.schema,game:ambient.game}));
+  if(!ambient.frame||ambient.frame.run!==p.runFrame||ambient.frame.show!==p.showFrame||ambient.runFrame!==p.runFrame||ambient.showFrame!==p.showFrame||ambient.stateSignature!==game.sandbox.__picoCapSignature()||ambient.stateDigest!==ambient.stateSignature||!ambient.finite)fail(label+': ambient frame/signature/finite mismatch');
+  if(JSON.stringify(ambient.soak)!==JSON.stringify(game.sandbox.__soakProbe())||JSON.stringify(ambient.motion)!==JSON.stringify(game.sandbox.__motionProbe()))fail(label+': ambient soak/motion adapters diverged');
+  if(JSON.stringify(ambient.counters)!==JSON.stringify(p.stats))fail(label+': ambient counters diverged from authoritative stats');
+  const expectedEntertainment=entertainmentOf(p);if(JSON.stringify(ambient.evidence)!==JSON.stringify(expectedEntertainment)||JSON.stringify(ambient.entertainment)!==JSON.stringify(expectedEntertainment)||JSON.stringify(ambient.topology)!==JSON.stringify(expectedEntertainment.topology))fail(label+': ambient entertainment evidence drifted '+JSON.stringify({expected:expectedEntertainment,actual:ambient.evidence}));
+  if(!ledger||ambient.serial!==ledger.serial||JSON.stringify(ambient.events)!==JSON.stringify(ledger.events))fail(label+': ambient ledger aliases drifted');
+  const report=validateEvidence(ledger);for(const violation of report.violations)fail(label+': ['+violation.code+'] '+violation.message);
+  if(!ledger.enabled||ledger.dropped!==0||ledger.events.length<100)fail(label+': natural evidence ledger was disabled, truncated, or empty');
+  const sources=Object.fromEntries(ledger.sources.map(item=>[item.id,item]));
+  if(Object.keys(sources).sort().join(',')!==Object.keys(EVIDENCE_SOURCES).sort().join(','))fail(label+': evidence source registry drifted '+Object.keys(sources).sort().join(','));
+  for(const[id,kind]of Object.entries(EVIDENCE_SOURCES)){const item=sources[id];if(!item||item.kind!==kind)fail(label+': source '+id+' kind '+(item&&item.kind)+' != '+kind);if(HERO_SOURCES.has(id)&&(item.actorId!=='hero'||item.stableActor!==true))fail(label+': source '+id+' lost stable hero identity')}
+  const derived=report.ok?deriveEvidence(ledger):null;if(derived)for(const id of Object.keys(EVIDENCE_SOURCES))if((derived.countsBySource[id]||0)!==(p.decisionKinds[id]||0))fail(label+': source '+id+' count '+(derived.countsBySource[id]||0)+' != decision '+(p.decisionKinds[id]||0));
+  const bySerial=new Map(ledger.events.map(event=>[event.serial,event])),banned=/locomotion|movement|walk|turn|route|replan|navigation|path/i;
+  for(const event of ledger.events){if(banned.test(event.source)||banned.test(event.kind))fail(label+': locomotion/replan received evidence credit '+event.source+'/'+event.kind);if(!Number.isFinite(event.showFrame)||!Number.isFinite(event.runFrame)||event.frame<event.showFrame||event.frame>=event.showFrame+1)fail(label+': serialized evidence lost its actual frame payload');if(HERO_SOURCES.has(event.source)&&event.actorId!=='hero')fail(label+': '+event.source+' laundered hero identity '+event.actorId);
+    if(event.kind==='threat'&&!/^glade:\d+:gnawer:\d+$/.test(event.actorId))fail(label+': threat lost ledger appearance identity '+event.actorId);
+    if(event.kind==='response'){const cause=bySerial.get(event.causeSerial);if(!cause||cause.kind!=='threat'||cause.frame>=event.frame)fail(label+': response '+event.serial+' lacks a prior threat');if(event.actorId!=='hero'||!/^glade:\d+:gnawer:\d+$/.test(event.enemyActorId)||event.causeKey!==event.enemyActorId+':charge:'+event.chargeSerial)fail(label+': response '+event.serial+' lost chargeSerial causality')}
+  }
+  return ambient;
+}
 
 console.log('1) deterministic fixed-step replay and render parity');
 {
@@ -36,6 +77,15 @@ console.log('1b) payoff FX no-op, shared intent schema, and seed-varied lapses')
   console.log('  FX signature identical; '+pa.stats.lapses+' lapses (0 gated); intent keys '+botKeys);
 }
 
+console.log('1c) Ambient Evidence ledger is a same-seed simulation and RNG no-op');
+{
+  const seed=0x9c54,a=bootGame('pico-cap',{seed}),b=bootGame('pico-cap',{seed,footer:'globalThis.__NO_EVIDENCE_LEDGER=true;'});a.frames(18000,false);b.frames(18000,false);
+  const pa=a.sandbox.__picoCapProbe(),pb=b.sandbox.__picoCapProbe(),sa=a.sandbox.__picoCapSignature(),sb=b.sandbox.__picoCapSignature(),ra=a.sandbox.__engine.random(),rb=b.sandbox.__engine.random(),on=a.sandbox.__ambientProbe(),off=b.sandbox.__ambientProbe();
+  if(sa!==sb)fail('__NO_EVIDENCE_LEDGER changed the same-seed signature');if(ra!==rb)fail('__NO_EVIDENCE_LEDGER changed RNG state');if(JSON.stringify(pa.stats)!==JSON.stringify(pb.stats))fail('__NO_EVIDENCE_LEDGER changed stats');if(JSON.stringify(pa.decisionKinds)!==JSON.stringify(pb.decisionKinds))fail('__NO_EVIDENCE_LEDGER changed decisionKinds');
+  if(JSON.stringify(on.evidence)!==JSON.stringify(off.evidence))fail('__NO_EVIDENCE_LEDGER changed the entertainment evidence aggregate');if(!on.ledger.enabled||on.ledger.events.length<100)fail('normal evidence run did not retain a natural ledger');if(off.ledger.enabled||off.ledger.events.length||off.ledger.serial!==0||off.ledger.dropped!==0||off.serial!==0||off.events.length)fail('__NO_EVIDENCE_LEDGER did not expose empty disabled ledger aliases');
+  console.log('  signature/stats/decisions/evidence identical; next RNG '+ra.toFixed(8)+'; '+on.ledger.events.length+' observations vs 0 gated');
+}
+
 console.log('2) authored Zelda-room topology is solvable and never renders the planner');
 {
   const game=bootGame('pico-cap',{seed:0x9c70}),layouts=new Set(),receipts=[];
@@ -59,8 +109,8 @@ console.log('3) natural ten-minute panel proves puzzle pace, enemy agency, and n
 {
   const panel=[];
   for(const seed of[0x9c61,0x9c62]){
-    const{game,samples}=runSoak('pico-cap',{seed,minutes:10}),soak=analyzeSoak(samples),p=game.sandbox.__picoCapProbe(),s=p.stats;
-    console.log('  '+seed.toString(16)+' '+soakLine(soak)+'; rooms '+s.glades+', keys '+s.crackKeys+'/'+s.briarKeys+' crack/briar, charges '+s.charges+', dodge/parry '+s.chargeDodges+'/'+s.parries+', straight '+s.maxStraightSteps+', dead-air '+s.maxTravelWithoutDecision+' steps');
+    const{game,samples}=runSoak('pico-cap',{seed,minutes:10}),soak=analyzeSoak(samples),p=game.sandbox.__picoCapProbe(),s=p.stats,ambient=checkAmbient(game,p,seed.toString(16));
+    console.log('  '+seed.toString(16)+' '+soakLine(soak)+'; rooms '+s.glades+', keys '+s.crackKeys+'/'+s.briarKeys+' crack/briar, charges '+s.charges+', dodge/parry '+s.chargeDodges+'/'+s.parries+', straight '+s.maxStraightSteps+', dead-air '+s.maxTravelWithoutDecision+' steps; ledger '+ambient.ledger.events.length);
     assertSoak(seed.toString(16),soak,{still:3,quiet:5,stall:45,minEvents:1800,minProgress:180},message=>fail(message));
     if(!p.finite)fail(seed.toString(16)+': non-finite state');
     if(s.glades<24||s.glades>40)fail(seed.toString(16)+': room completions outside measured band '+s.glades);

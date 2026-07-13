@@ -20,6 +20,7 @@
 'use strict';
 const fs=require('fs'),path=require('path');
 const{seededRandom,inlineScript}=require('./harness');
+const{analyzeLocalOscillation}=require('./motion');
 
 const dir=path.join(__dirname,'..');
 const html=fs.readFileSync(path.join(dir,'blockmine.html'),'utf8');
@@ -76,18 +77,21 @@ globalThis.__bmProbe=()=>({
   cx:P.cx,cy:P.cy,trapKills,trapBuilds,buildScore,builds:structures.length,deaths,repaths,
   mobs:mobs.length,mode:P.aiMode,goalStage:goalState.stage,goalsDone:goalState.completed,
   goalLabel:primaryGoal().label,progress:P.progressFrame,frame,stuck:P.stuckRecoveries,
-  finite:Number.isFinite(P.x)&&Number.isFinite(P.y)&&Number.isFinite(camY)
+  finite:Number.isFinite(P.x)&&Number.isFinite(P.y)&&Number.isFinite(camY),cycleBreaks:P.cycleBreaks
 });
 globalThis.__bmStoryRun=n=>{
-  let last=-1,stall=0,maxStall=0,maxDepth=0,maxTool=0;
+  let last=-1,stall=0,maxStall=0,maxDepth=0,maxTool=0,lastCell=key(P.cx,P.cy),segment=0;
+  const motionEvents=[{at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment}];
   for(let i=0;i<n;i++){
     step();
-    const progress=P.progressFrame;
+    const progress=P.progressFrame,cell=key(P.cx,P.cy);
+    if(cell!==lastCell){const dx=Math.abs(P.cx-keyX(lastCell)),dy=Math.abs(P.cy-keyY(lastCell));
+      if(dx+dy>2)segment++;motionEvents.push({at:frame,id:'miner',cx:P.cx,cy:P.cy,mode:P.aiMode,segment});lastCell=cell;}
     if(progress>last){last=progress;stall=0;}else{stall++;maxStall=Math.max(maxStall,stall);}
     if(deepest>maxDepth)maxDepth=deepest;
     if(P.tool>maxTool)maxTool=P.tool;
   }
-  return Object.assign({maxStall,maxDepth,maxTool},globalThis.__bmProbe());
+  return Object.assign({maxStall,maxDepth,maxTool,motionEvents},globalThis.__bmProbe());
 };
 `;
   // Fresh Function scope would be cleaner, but blockmine/engine expect the
@@ -106,6 +110,7 @@ function judge(p){
   if(p.goalsDone<LIMITS.goalsDone)fails.push(`only ${p.goalsDone} goals (limit ${LIMITS.goalsDone})`);
   if(p.lights<LIMITS.lights)fails.push(`only ${p.lights} torches (limit ${LIMITS.lights})`);
   if(p.builds<LIMITS.builds)fails.push(`only ${p.builds} builds (limit ${LIMITS.builds})`);
+  if(p.oscillationViolations)fails.push(`${p.oscillationViolations} prolonged local oscillation(s)`);
   return fails;
 }
 
@@ -113,6 +118,7 @@ function formatRun(seed,p,wallMs){
   return `seed 0x${(seed>>>0).toString(16)}: ${p.depth}m tool${p.tool} `+
     `${p.diamonds}◆ ${p.kills} kills ${p.goalsDone} goals ${p.deaths} deaths `+
     `${p.repaths} repaths maxStall ${(p.maxStall/60).toFixed(1)}s `+
+    `${p.oscillationViolations} oscillations ${p.cycleBreaks} cycleBreaks `+
     `(${(wallMs/1000).toFixed(1)}s wall)`;
 }
 
@@ -123,14 +129,19 @@ const seeds=flags.seed!==undefined
 console.log(`blockmine ${flags.minutes}-minute good-run search (${seeds.length} seed(s), ${FRAMES} frames each)`);
 console.log('limits:',JSON.stringify(LIMITS));
 
-let failed=false;
+let failed=false,hardInvariantFailed=false;
 const results=[];
 let winner=null;
 
 for(const seed of seeds){
   const t0=Date.now();
   boot(seed);
-  const p=globalThis.__bmStoryRun(FRAMES);
+  const story=globalThis.__bmStoryRun(FRAMES),oscillation=analyzeLocalOscillation(story.motionEvents);
+  const{motionEvents,...p}=story,worst=oscillation.violations.reduce((a,b)=>!a||b.observedFrames>a.observedFrames?b:a,null);
+  Object.assign(p,{oscillationViolations:oscillation.violations.length,
+    worstOscillationFrames:worst?worst.observedFrames:0,worstReversals:worst?worst.reversals:0,
+    firstOscillationWitness:oscillation.violations[0]||null});
+  if(oscillation.violations.length)hardInvariantFailed=true;
   const wallMs=Date.now()-t0;
   const fails=judge(p);
   const row={seed,seedHex:'0x'+(seed>>>0).toString(16),wallMs,...p,fails,ok:!fails.length};
@@ -149,6 +160,11 @@ fs.writeFileSync(reportPath,JSON.stringify({
   minutes:flags.minutes,frames:FRAMES,limits:LIMITS,results,winner
 },null,2));
 console.log('report:',reportPath);
+
+if(hardInvariantFailed){
+  console.log('\nEVAL FAILED: at least one sampled seed entered prolonged local oscillation');
+  process.exit(1);
+}
 
 if(winner){
   console.log('\nWINNER seed',winner.seedHex,'('+winner.seed+')');
