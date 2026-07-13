@@ -349,7 +349,8 @@ async function runWorkshopBrowserChecks({baseUrl,root,timeoutMs=15000,receiptDir
     const source=await fetchSource(siteUrl.href,timeoutMs);
     runAdversarialAudits(source);
     const puppeteer=require('puppeteer');
-    browser=await puppeteer.launch({headless:true});
+    const launchArgs=process.env.CI?['--no-sandbox','--disable-setuid-sandbox']:[];
+    browser=await puppeteer.launch({headless:true,args:launchArgs});
     const desktop=await runDesktop(browser,siteUrl.href,receiptDir,timeoutMs);
     const mobile390=await runMobile(browser,siteUrl.href,390,844,receiptDir,timeoutMs);
     const mobile360=await runMobile(browser,siteUrl.href,360,640,receiptDir,timeoutMs);
