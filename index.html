@@ -127,27 +127,70 @@
     .sf{--accent:#2de2e6}.wf{--accent:#c792ea}.hc{--accent:#ffd166}.bm{--accent:#58e08a}.ws{--accent:#8fc8ff}
     .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mb{--accent:#8aff5c}.gs{--accent:#7cf7d4}.wr{--accent:#ffd166}.gg{--accent:#8fe06f}.sk{--accent:#ffd166}.sv{--accent:#9bd1ff}.ng{--accent:#ff3ea5}.pc{--accent:#9fe36b}.fc{--accent:#9bea73}.tp{--accent:#ffd15c}.bb{--accent:#f2b84b}.rc{--accent:#f0b64a}.rr{--accent:#ffcb57}.cc{--accent:#ffb457}.hh{--accent:#caa7ff}.kc{--accent:#ff6b4a}.mv{--accent:#f4d06f}.de{--accent:#65d6d0}.cm{--accent:#63e0f5}
     .site-footer{
-      min-width:0;display:flex;align-items:center;gap:18px;min-height:42px;padding:8px clamp(16px,3vw,42px) calc(8px + env(safe-area-inset-bottom));
-      border-top:1px solid rgba(39,43,60,.68);color:var(--dim);font-size:8px;line-height:1.45;letter-spacing:.06em;
+      min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;
+      min-height:54px;padding:6px clamp(16px,3vw,42px) calc(6px + env(safe-area-inset-bottom));
+      border-top:1px solid rgba(39,43,60,.68);color:var(--dim);font-size:8px;line-height:1.35;letter-spacing:.06em;
     }
     .footer-status{white-space:nowrap;text-transform:uppercase}
-    .maker-promo{display:flex;align-items:center;gap:8px;white-space:nowrap;text-transform:uppercase}
-    .maker-credit{color:#747b8f}
-    .maker-credit strong{color:var(--ink);font-weight:800}
-    .maker-separator{color:#3d4257}
+    .workshop-dock{
+      position:relative;isolation:isolate;min-width:0;display:grid;
+      grid-template-columns:auto minmax(150px,1fr) auto auto;grid-template-areas:"brand copy scarcity cta";
+      align-items:center;gap:10px;overflow:hidden;padding:5px 6px 5px 7px;
+      border:1px solid rgba(45,226,230,.16);border-radius:6px;
+      background:linear-gradient(180deg,rgba(17,19,27,.94),rgba(12,14,20,.94));
+    }
+    .workshop-dock>:not(.workshop-fx-canvas):not(.workshop-scan){position:relative;z-index:2}
+    .workshop-fx-canvas{position:absolute;inset:0;z-index:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:screen}
+    .workshop-scan{
+      position:absolute;z-index:1;inset-block:0;left:-25%;width:18%;pointer-events:none;
+      background:linear-gradient(90deg,transparent,rgba(45,226,230,.18),transparent);transform:skewX(-18deg);
+    }
+    .workshop-brand{grid-area:brand;display:grid;grid-template-columns:38px auto;align-items:center;gap:5px;min-width:48px}
+    .workshop-eggo{
+      position:relative;width:38px;height:40px;touch-action:none;user-select:none;cursor:grab;
+    }
+    .workshop-eggo:active{cursor:grabbing}
+    .workshop-eggo img{display:block;width:38px;height:40px;object-fit:contain;pointer-events:none}
+    .workshop-eggo-canvas{
+      position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform:translate(-50%,-50%);
+    }
+    .workshop-eggo-canvas[hidden]{display:none}
+    .workshop-signal{display:flex;flex-direction:column;gap:3px}
+    .workshop-signal-cell{
+      width:5px;height:5px;border:1px solid #3d4257;background:#10121a;
+      transition:background 160ms ease,border-color 160ms ease,box-shadow 160ms ease;
+    }
+    [data-workshop-seen="1"] .workshop-signal-cell:nth-child(1),
+    [data-workshop-seen="2"] .workshop-signal-cell:nth-child(-n+2),
+    [data-workshop-seen="3"] .workshop-signal-cell{
+      border-color:var(--cyan);background:var(--cyan);box-shadow:0 0 7px rgba(45,226,230,.45);
+    }
+    .workshop-copy{grid-area:copy;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .workshop-state-label{overflow:hidden;color:#70788d;font-size:7px;letter-spacing:.13em;white-space:nowrap;text-overflow:ellipsis}
+    .workshop-state-earned{display:none}
+    [data-workshop-state="earned"]{border-color:rgba(45,226,230,.34)}
+    [data-workshop-state="earned"] .workshop-state-quiet{display:none}
+    [data-workshop-state="earned"] .workshop-state-earned{display:inline;color:var(--cyan)}
+    #workshop-title{overflow:hidden;margin:0;color:var(--ink);font-size:9px;line-height:1.1;letter-spacing:.1em;white-space:nowrap;text-overflow:ellipsis}
+    .workshop-authority{overflow:hidden;color:#747b8f;font-size:7px;white-space:nowrap;text-overflow:ellipsis}
+    .workshop-scarcity{grid-area:scarcity;color:#ffb16c;font-size:7px;font-weight:800;letter-spacing:.12em;white-space:nowrap}
     .workshop-link{
-      display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:4px 7px;border:1px solid rgba(255,138,42,.28);
-      border-radius:99px;background:rgba(255,138,42,.07);color:#ffb16c;text-decoration:none;font-weight:800;
-      letter-spacing:.08em;transition:color 150ms ease,border-color 150ms ease,background 150ms ease,box-shadow 150ms ease,transform 150ms ease;
+      grid-area:cta;display:inline-flex;min-height:36px;align-items:center;justify-content:center;gap:6px;
+      padding:5px 9px;border:1px solid rgba(255,138,42,.45);border-radius:4px;background:rgba(255,138,42,.09);
+      color:#ffd0a3;text-decoration:none;font-size:8px;font-weight:800;letter-spacing:.09em;white-space:nowrap;
+      transition:color 150ms ease,border-color 150ms ease,background 150ms ease,box-shadow 150ms ease,transform 150ms ease;
     }
-    .workshop-link:hover{
-      color:#fff;border-color:rgba(255,138,42,.72);background:rgba(255,138,42,.14);
-      box-shadow:0 0 18px rgba(255,138,42,.13);transform:translateY(-1px);
+    .workshop-link:hover,.workshop-link:focus-visible{
+      color:#fff;border-color:rgba(255,138,42,.82);background:rgba(255,138,42,.16);box-shadow:0 0 18px rgba(255,138,42,.15);
     }
-    .workshop-arrow{color:#ff8a2a;font-size:10px;line-height:1;transition:transform 150ms ease}
-    .workshop-link:hover .workshop-arrow{transform:translate(1px,-1px)}
-    .workshop-short{display:none}
-    .site-footer details{margin-left:auto;position:relative}
+    .workshop-link:hover{transform:translateY(-1px)}
+    .workshop-arrow{color:#ff8a2a;font-size:10px;line-height:1}
+    .workshop-cta-short{display:none}
+    .is-unlocking .workshop-scan{animation:workshop-scan 620ms var(--ease) 1}
+    [data-workshop-state="earned"] .workshop-link{animation:workshop-ticket-pulse 620ms var(--ease) 1}
+    @keyframes workshop-scan{to{left:110%}}
+    @keyframes workshop-ticket-pulse{50%{border-color:rgba(255,138,42,.9);box-shadow:0 0 0 1px rgba(255,138,42,.18),0 0 18px rgba(255,138,42,.18)}}
+    .site-footer details{position:relative}
     .site-footer summary{display:flex;align-items:center;min-height:30px;color:#b7bdcb;cursor:pointer;text-transform:uppercase;letter-spacing:.1em;list-style:none}
     .site-footer summary::-webkit-details-marker{display:none}
     .site-footer summary::before{content:"+ ";color:var(--cyan)}
@@ -168,6 +211,11 @@
       .open-hint{opacity:1;transform:none}
       .preview-viewport::after{opacity:0}
       .rail-toolbar p{white-space:normal}
+      .workshop-link{min-height:44px}
+    }
+    @media (max-width:1050px){
+      .site-footer{grid-template-columns:minmax(0,1fr) auto}
+      .footer-status{display:none}
     }
     @media (max-width:760px){
       body{min-height:500px}
@@ -181,7 +229,13 @@
       .open-hint{opacity:1;transform:none}
       .preview-viewport::after{opacity:0}
       .rail-toolbar{padding-bottom:8px}
+      .site-footer{grid-template-columns:minmax(0,1fr) auto;gap:7px;padding-inline:12px}
       .footer-status{display:none}
+      .workshop-dock{
+        grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;
+        grid-template-areas:"brand copy cta" "brand scarcity cta";gap:3px 7px;
+      }
+      .workshop-link{min-height:44px}
     }
     @media (max-width:430px){
       h1{font-size:15px}
@@ -191,14 +245,24 @@
       #clip label:first-child{display:none}
       #clip button{padding-inline:8px}
       .rail-toolbar,#game-track{padding-inline:12px;scroll-padding-inline:12px}
-      .site-footer{gap:9px;padding-inline:12px}
-      .maker-promo{gap:6px}
-      .workshop-wide{display:none}
-      .workshop-short{display:inline}
+      .site-footer{gap:7px;padding-inline:8px}
+      .workshop-dock{padding-left:5px;gap:3px 5px}
+      .workshop-brand{grid-template-columns:34px auto;min-width:42px}
+      .workshop-eggo,.workshop-eggo img{width:34px;height:36px}
+      .workshop-state-label{display:none}
+      .workshop-cta-wide{display:none}
+      .workshop-cta-short{display:inline}
+      #workshop-title{font-size:8px}
+      .workshop-authority,.workshop-scarcity{font-size:6.5px}
     }
     @media (prefers-reduced-motion:reduce){
       html{scroll-behavior:auto}
-      .game-card,.open-hint,.preview-viewport::after,.workshop-link,.workshop-arrow{transition:none!important}
+      .game-card,.open-hint,.preview-viewport::after{transition:none!important}
+      .workshop-dock,.workshop-link,.workshop-arrow,.workshop-signal-cell,.workshop-scan{
+        transition:none!important;animation:none!important;
+      }
+      .workshop-link:hover{transform:none}
+      .workshop-eggo-canvas,.workshop-fx-canvas{display:none!important}
     }
   </style>
 </head>
@@ -232,15 +296,36 @@
 
   <footer class="site-footer">
     <span class="footer-status">Self-playing previews · click any card to play</span>
-    <div class="maker-promo">
-      <span class="maker-credit">Built by <strong>John Lindquist</strong></span>
-      <span class="maker-separator" aria-hidden="true">·</span>
-      <a class="workshop-link" href="https://egghead.io/workshop/software-factory" target="_blank" rel="noopener noreferrer" title="Agentic Software Factory Workshop" aria-label="Check out my Agentic Software Factory workshop (opens in a new tab)">
-        <span class="workshop-wide">Check out my workshop</span>
-        <span class="workshop-short" aria-hidden="true">Workshop</span>
+    <aside id="workshop-dock" class="workshop-dock" data-workshop-state="quiet" data-workshop-seen="0" data-workshop-shader="disabled" aria-labelledby="workshop-title">
+      <canvas id="workshop-fx-canvas" class="workshop-fx-canvas" aria-hidden="true"></canvas>
+      <span class="workshop-scan" aria-hidden="true"></span>
+      <span class="workshop-brand">
+        <span id="workshop-eggo" class="workshop-eggo" role="img" aria-label="Eggo, the egghead.io mascot — grab to stretch" data-eggo-state="static">
+          <img id="workshop-eggo-fallback" src="eggo.svg" alt="" aria-hidden="true" draggable="false">
+          <canvas id="workshop-eggo-canvas" class="workshop-eggo-canvas" aria-hidden="true" hidden></canvas>
+        </span>
+        <span class="workshop-signal" aria-hidden="true">
+          <span class="workshop-signal-cell"></span>
+          <span class="workshop-signal-cell"></span>
+          <span class="workshop-signal-cell"></span>
+        </span>
+      </span>
+      <span class="workshop-copy">
+        <span class="workshop-state-label" aria-hidden="true">
+          <span class="workshop-state-quiet">YOU'RE WATCHING THE OUTPUT</span>
+          <span class="workshop-state-earned">FACTORY SIGNAL FOUND</span>
+        </span>
+        <h2 id="workshop-title">BUILD SOFTWARE WITH AGENTS</h2>
+        <span id="workshop-authority" class="workshop-authority">JOHN LINDQUIST · EGGHEAD CO-FOUNDER</span>
+      </span>
+      <span id="workshop-scarcity" class="workshop-scarcity">TICKETS ARE LIMITED</span>
+      <a id="workshop-cta" class="workshop-link" href="https://egghead.io/workshop/software-factory" target="_blank" rel="noopener noreferrer" aria-describedby="workshop-authority workshop-scarcity workshop-new-tab">
+        <span class="workshop-cta-wide">VIEW WORKSHOP TICKETS</span>
+        <span class="workshop-cta-short" aria-hidden="true">WORKSHOP TICKETS</span>
         <span class="workshop-arrow" aria-hidden="true">↗</span>
+        <span id="workshop-new-tab" class="sr-only">Opens in a new tab.</span>
       </a>
-    </div>
+    </aside>
     <details>
       <summary>play &amp; record</summary>
       <p>Open any game for full-speed play. Press <code>ENTER</code> for instructions, then <code>ENTER</code> again to start a scored run. The gallery plays previews at 30fps and pauses distant games. RECORD opens the selected game and turbo-renders an exact 60fps <code>.webm</code>; add <code>&amp;speed=1</code> to its URL for realtime capture.</p>
@@ -255,6 +340,8 @@
     const position=document.getElementById('position');
     const previous=document.getElementById('previous-game');
     const next=document.getElementById('next-game');
+    const workshopDock=document.getElementById('workshop-dock');
+    const workshopSeen=new Set();
     const cards=[];
     const frames=[];
     const intersections=new WeakMap();
@@ -298,9 +385,9 @@
       // animation can never cascade into another activation.
       card.addEventListener('pointermove',()=>{
         if(coarsePointer.matches||activeIndex===index)return;
-        setActive(index);
+        setActive(index,{source:'pointer'});
       });
-      card.addEventListener('focusin',()=>setActive(index,{reveal:true}));
+      card.addEventListener('focusin',()=>setActive(index,{reveal:true,source:'focus'}));
     });
 
     function setPreviewActive(frame,active){
@@ -320,10 +407,20 @@
       position.textContent=position.value;
       previous.disabled=activeIndex===0;next.disabled=activeIndex===cards.length-1;
     }
-    function setActive(index,{reveal=false,focus=false}={}){
+    function recordWorkshopAttention(index,source){
+      if(!workshopDock||source==='program')return;
+      workshopSeen.add(index);
+      const seen=Math.min(3,workshopSeen.size);
+      workshopDock.dataset.workshopSeen=String(seen);
+      if(seen<3||workshopDock.dataset.workshopState==='earned')return;
+      workshopDock.dataset.workshopState='earned';
+      workshopDock.classList.add('is-unlocking');
+    }
+    function setActive(index,{reveal=false,focus=false,source='program'}={}){
       const nextIndex=Math.max(0,Math.min(cards.length-1,index));
       cards.forEach((card,i)=>card.classList.toggle('is-active',i===nextIndex));
       activeIndex=nextIndex;select.value=SIDEQUEST_GAMES[nextIndex].id;updateControls();refreshPreviews();
+      recordWorkshopAttention(nextIndex,source);
       // Hover activation never scrolls the rail; only explicit navigation
       // (buttons, keys, focus, the CLIP select) reveals. Edge autoscroll below
       // is the one deliberate exception, and card activation stays safe under
@@ -350,14 +447,14 @@
       return best;
     }
 
-    previous.addEventListener('click',()=>setActive(activeIndex-1,{reveal:true,focus:true}));
-    next.addEventListener('click',()=>setActive(activeIndex+1,{reveal:true,focus:true}));
+    previous.addEventListener('click',()=>setActive(activeIndex-1,{reveal:true,focus:true,source:'button'}));
+    next.addEventListener('click',()=>setActive(activeIndex+1,{reveal:true,focus:true,source:'button'}));
     track.addEventListener('keydown',event=>{
       const key=event.key;
       if(!['ArrowLeft','ArrowRight','Home','End'].includes(key))return;
       event.preventDefault();
       const index=key==='Home'?0:key==='End'?cards.length-1:activeIndex+(key==='ArrowRight'?1:-1);
-      setActive(index,{reveal:true,focus:true});
+      setActive(index,{reveal:true,focus:true,source:'keyboard'});
     });
     track.addEventListener('wheel',event=>{
       if(coarsePointer.matches||Math.abs(event.deltaY)<=Math.abs(event.deltaX)||track.scrollWidth<=track.clientWidth)return;
@@ -365,7 +462,7 @@
     },{passive:false});
     track.addEventListener('scroll',()=>{
       clearTimeout(scrollTimer);
-      if(coarsePointer.matches||swipeLayout.matches)scrollTimer=setTimeout(()=>setActive(nearestToCenter()),110);
+      if(coarsePointer.matches||swipeLayout.matches)scrollTimer=setTimeout(()=>setActive(nearestToCenter(),{source:'swipe'}),110);
     },{passive:true});
 
     // Edge autoscroll: on fine pointers, parking the cursor near the left or
@@ -427,9 +524,10 @@
     });
     select.addEventListener('change',()=>{
       const index=SIDEQUEST_GAMES.findIndex(game=>game.id===select.value);
-      if(index>=0)setActive(index,{reveal:true});
+      if(index>=0)setActive(index,{reveal:true,source:'clip-select'});
     });
   })();
   </script>
+  <script src="workshop-fx.js"></script>
 </body>
 </html>
