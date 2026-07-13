@@ -3,8 +3,10 @@
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
+const{spawnSync}=require('child_process');
 const games=require('../games');
 const{ROOT,bootGame}=require('./harness');
+const{auditWorkshopMarkup}=require('./workshop-funnel-browser');
 
 let failed=false;
 const fail=m=>{console.error('  FAIL:',m);failed=true;};
@@ -16,6 +18,8 @@ for(const game of games)if(!/^[a-z0-9-]+$/.test(game.id)||!game.title||!game.lab
   fail(`malformed manifest entry: ${JSON.stringify(game)}`);
 
 const index=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+const workshopAudit=auditWorkshopMarkup(index);
+for(const error of workshopAudit.errors)fail(`[${error.code}] ${error.message}`);
 if(!index.includes('games.js'))fail('gallery does not load the shared manifest');
 if(!index.includes("sidequest:active"))fail('gallery does not manage preview visibility');
 if(!index.includes('Thirty tiny, self-playing retro games')||!index.includes('thirty tiny games'))
@@ -42,6 +46,12 @@ for(const [i,game]of games.entries()){
     console.log(`  ${game.id.padEnd(10)} ok · ${calls} canvas commands`);
   }catch(error){fail(`${game.id}: ${error.stack||error}`);}
 }
+
+console.log('gallery browser: workshop conversion path');
+const browserCheck=spawnSync(process.execPath,[path.join(__dirname,'workshop-funnel-browser.js'),'--root',ROOT],{
+  stdio:'inherit',env:process.env
+});
+if(browserCheck.status!==0)fail(`workshop browser check exited with ${browserCheck.status??'no status'}`);
 
 console.log(failed?'\nEVAL FAILED':'\nEVAL PASSED');
 process.exit(failed?1:0);
