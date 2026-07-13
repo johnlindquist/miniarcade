@@ -42,7 +42,8 @@ function clearSolids(){solids.clear();solidRows.clear();}
 const solid=(tx,ty)=>tx>=0&&tx<COLS&&!!((solidRows.get(ty)||0)&(1<<tx));
 const solidPx=(px,py)=>solid(Math.floor(px/T),Math.floor(py/T));
 let saws=[],stains=[],nodes=[],items=[],bandages=[],level=1,deaths=0,frame=0,camY=-230;
-let girl=null,lives=5,bandCt=0;
+let girl=null,lives=5,bandCt=0,deathStreak=null,rescue=null;
+const rescueStats={spawns:0,placementFails:0,maxStreak:0,contacts:0,landings:0,normalClears:0,flightDeaths:0,lastFlightCause:'',lastFlightRow:0,lastFlightX:0};
 
 // Payoff ladder only (design council: this game's climb is its own act
 // structure — add environment later only if footage shows lulls). frame is
@@ -400,7 +401,7 @@ function hopSolvable(a,b,rec,cands){
 
 // ---------- player ----------
 const P={x:0,y:0,vx:0,vy:0,onGround:false,wall:0,face:1,idx:0,wjCd:0,airLock:0,squash:0,trail:[],stall:0,stuck:0};
-function placeAt(n){P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;P.vx=0;P.vy=0;P.idx=0;P.best=0;P.stall=0;P.airLock=0;P.eFlip=false;P.waitT=0;P.rocketT=0;P.lostG=false;P.lostT=0;P.bounceCt=0;}
+function placeAt(n){P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;P.vx=0;P.vy=0;P.idx=0;P.best=0;P.stall=0;P.airLock=0;P.eFlip=false;P.waitT=0;P.rocketT=0;P.lostG=false;P.lostT=0;P.bounceCt=0;P.rescueFlight=null;P.rescueApproach=null;P.rescueIntent=0;}
 function startRun(){
   const base={tx:7,ty:0,w:6};
   plat(base.tx,base.ty,base.w);
@@ -413,6 +414,8 @@ function resetGame(){ // fresh tower for a new run (player or attract)
   clearSolids();bouncy.clear();icy.clear();spiky.clear();
   saws=[];stains=[];items=[];bandages=[];
   level=1;deaths=0;lives=5;bandCt=0;camY=-230;
+  deathStreak=null;rescue=null;
+  for(const k in rescueStats)rescueStats[k]=typeof rescueStats[k]==='string'?'':0;
   P.rocket=false;P.rocketT=0;
   bannerT=0;SHOW.reset(frame);
   startRun();
@@ -421,26 +424,111 @@ function blood(x,y,n){
   for(let i=0;i<n;i++){const a=R(0,6.28);
     spawn({x,y,vx:Math.cos(a)*R(0.4,2.2),vy:Math.sin(a)*R(0.4,2.2)-1,t:RI(30,70),c:'#c11c2a',drag:1,grav:0.14});}
 }
-function die(){
-  if(playing()){ // player run: lives instead of AI bookkeeping
-    deaths++;lives--;blood(P.x,P.y,26);
-    placeAt(nodes[0]);
-    if(lives<=0)gameOver('LVL '+level);
-    return;
+function clearRescue(){rescue=null;P.rescueFlight=null;P.rescueIntent=0;}
+function beginRescueRetire(kind){
+  if(!rescue||rescue.state==='retiring')return;
+  if(kind==='normal')rescueStats.normalClears++;
+  rescue.state='retiring';rescue.retireT=36;rescue.retireKind=kind;
+}
+function rescueBodyClear(x,y,w){
+  const half=w/2;
+  for(let tx=Math.floor((x-half-2)/T);tx<=Math.floor((x+half+2)/T);tx++)
+    for(let ty=Math.floor((y-15)/T);ty<=Math.floor((y+5)/T);ty++)if(solid(tx,ty))return false;
+  for(const b of bandages)if(!b.got&&Math.abs(b.x-x)<half+5&&Math.abs(b.y-y)<12)return false;
+  for(const it of items)if(!it.taken&&Math.abs(it.x-x)<half+5&&Math.abs(it.y-y)<12)return false;
+  for(const k of bouncy){const bx=keyX(k)*T+4,by=keyY(k)*T;if(Math.abs(bx-x)<half+6&&Math.abs(by-y)<10)return false;}
+  return x-half>=4&&x+half<=W-4;
+}
+function rescueTopClear(x,y,w){
+  const half=w/2;
+  for(let tx=Math.floor((x-half)/T);tx<=Math.floor((x+half)/T);tx++)
+    for(let ty=Math.floor((y-20)/T);ty<Math.floor(y/T);ty++)if(solid(tx,ty))return false;
+  return true;
+}
+function findRescuePlacement(from,to){
+  const a=nodes[from],b=nodes[to];if(!a||!b)return null;
+  const normalDir=Math.sign((b.tx+b.w/2)-(a.tx+a.w/2))||1,width=14;
+  const trace=[];hopSolvable(a,b,trace);
+  const targetX=(b.tx+b.w/2)*T;
+  for(const down of[14,20,26]){
+    const x=targetX,y=b.ty*T+down;
+    if(!rescueBodyClear(x,y,width))continue;
+    if(trace.some(p=>Math.abs(p[0]-x)<width/2+4&&Math.abs(p[1]-y)<6))continue;
+    return{x,y,width,launchVx:(Math.sign(targetX-x)||normalDir)*1.6,launchVy:-5.8};
   }
+  for(const side of[normalDir,-normalDir])for(const down of[12,16,20])for(const gap of[10,16,22]){
+    const edge=(side<0?a.tx*T:(a.tx+a.w)*T),x=edge+side*(gap+width/2),y=a.ty*T+down;
+    if(!rescueBodyClear(x,y,width))continue;
+    if(Math.abs(x-(nodes[0].tx+nodes[0].w/2)*T)<10&&Math.abs(y-nodes[0].ty*T)<10)continue;
+    if(trace.some(p=>Math.abs(p[0]-x)<width/2+4&&Math.abs(p[1]-y)<6))continue;
+    return{x,y,width,launchVx:(Math.sign(targetX-x)||normalDir)*1.6,launchVy:-5.8};
+  }
+  // Dense late towers may have no safe shelf below. Fold the rescue onto the
+  // mastered source ledge instead; one-way contact keeps the normal takeoff free.
+  const left=a.tx*T+width/2+2,right=(a.tx+a.w)*T-width/2-2;
+  for(const x of[normalDir>0?left:right,normalDir>0?right:left,(a.tx+a.w/2)*T]){
+    const y=a.ty*T;if(x-width/2<a.tx*T||x+width/2>(a.tx+a.w)*T)continue;
+    if(!rescueTopClear(x,y,width))continue;
+    return{x,y,width,onSource:true,launchVx:(Math.sign(targetX-x)||normalDir)*1.6,launchVy:-5.8};
+  }
+  const x=(a.tx+a.w/2)*T,y=a.ty*T;
+  return{x,y,width,onSource:true,launchVx:(Math.sign(targetX-x)||normalDir)*1.6,launchVy:-5.8};
+}
+function ensureRescue(hop,force){
+  if(!hop||hop.to>=nodes.length)return null;
+  if(rescue&&rescue.level===hop.level&&rescue.from===hop.from&&rescue.to===hop.to){
+    rescue.forceUse=rescue.forceUse||!!force;
+    if(rescue.state==='spent'){rescue.state='armed';rescue.usedAt=0;}
+    return rescue;
+  }
+  const spot=findRescuePlacement(hop.from,hop.to);if(!spot){rescueStats.placementFails++;return null;}
+  rescue={level:hop.level,from:hop.from,to:hop.to,cause:hop.cause||'unknown',
+    ...spot,state:'arming',bornAt:frame,armT:14,forceUse:!!force,contacts:0,compress:0};
+  rescueStats.spawns++;
+  SHOW.offer({id:'spring-ready',tier:2,at:frame,tag:hop.to});
+  showBanner('PLAN B READY','#57e389',55);
+  return rescue;
+}
+function noteFatalHop(hop){
+  if(!deathStreak||deathStreak.level!==hop.level||deathStreak.from!==hop.from||deathStreak.to!==hop.to)
+    deathStreak={level:hop.level,from:hop.from,to:hop.to,count:1,lastCause:hop.cause};
+  else{deathStreak.count++;deathStreak.lastCause=hop.cause;}
+  rescueStats.maxStreak=Math.max(rescueStats.maxStreak,deathStreak.count);
+  if(deathStreak.count>=2)ensureRescue(hop,deathStreak.count>=3);
+}
+function die(cause='unknown'){
+  const frontier=Math.min(P.best||P.idx,nodes.length-1);
+  const hop=frontier<nodes.length-1?{level,from:frontier,to:frontier+1,cause}:null;
+  if(P.rescueFlight){rescueStats.flightDeaths++;rescueStats.lastFlightCause=cause;}
   deaths++;blood(P.x,P.y,26);
-  const k=Math.min(P.idx+1,nodes.length-1);
-  nodes[k].err*=0.4;
-  for(let m=0;m<=Math.min(P.best||0,nodes.length-1);m++)nodes[m].err=0; // mastered ground stays mastered
-  nodes[k].fails=(nodes[k].fails||0)+1;
-  if(nodes[k].fails>=2){ // this jump keeps eating him — hop him past it
-    nodes[k].skipped=true; // a bailout, not a win: no NAILED IT for this one
-    placeAt(nodes[0]);P.idx=k;P.best=k;
-    const n=nodes[k];P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;
-    checkClear();}
-  else placeAt(nodes[0]);
+  if(hop){
+    const n=nodes[hop.to];n.err*=0.4;
+    for(let m=0;m<=Math.min(P.best||0,nodes.length-1);m++)nodes[m].err=0;
+    n.fails=(n.fails||0)+1;noteFatalHop(hop);
+  }
+  if(rescue&&P.rescueFlight&&rescue.level===level){rescue.state='armed';rescue.forceUse=true;rescue.usedAt=0;}
+  const retry=hop?hop.from:0;
+  placeAt(nodes[retry]);P.idx=retry;P.best=retry; // restore only physically mastered ground, never the failed target
+  if(playing()){
+    lives--;
+    if(lives<=0){clearRescue();gameOver('LVL '+level);}
+  }
 }
 
+function rescueContact(S,previousY){
+  if(!rescue||rescue.state!=='armed'||S.vy<=0)return false;
+  const half=rescue.width/2,previousBottom=previousY+3,nextBottom=S.y+3;
+  if(previousBottom>rescue.y||nextBottom<rescue.y)return false;
+  if(S.x+2.9<rescue.x-half||S.x-2.9>rescue.x+half)return false;
+  const target=nodes[rescue.to],tx=(target.tx+target.w/2)*T,ty=target.ty*T-3.01;
+  S.y=rescue.y-3.01;S.vx=rescue.launchVx;S.vy=rescue.launchVy;S.onGround=false;
+  P.squash=7;P.airLock=0;P.rocketT=0;P.rescueFlight={level:rescue.level,from:rescue.from,to:rescue.to,
+    frames:0,duration:48,sx:S.x,sy:S.y,tx,ty,apex:Math.max(30,Math.abs(ty-S.y)+18)};
+  rescue.state='spent';rescue.usedAt=frame;rescue.contacts++;rescue.compress=8;rescueStats.contacts++;
+  SHOW.offer({id:'spring-rescue',tier:2,at:frame,tag:rescue.to});
+  fxBurst(P.x,P.y+3,16,'#57e389',2.2);showBanner('PLAN B · BOING!','#57e389',55);
+  return true;
+}
 function physStep(S,input,jump){
   // ice underfoot: barely any grip; airborne: momentum carries (Mario rules)
   const supK=S.onGround?key(Math.floor(S.x/T),Math.floor((S.y+4)/T)):null;
@@ -465,7 +553,9 @@ function physStep(S,input,jump){
     if(S.vx<0&&solidPx(S.x-3,S.y+sy)){S.x=(Math.floor((S.x-3)/T)+1)*T+3.01;S.vx=0;}
   }
   // move Y
+  const previousY=S.y;
   S.y+=S.vy;S.onGround=false;
+  if(S===P&&rescueContact(S,previousY))return;
   for(const sx of[-2.9,2.9]){
     if(S.vy>0&&solidPx(S.x+sx,S.y+3)){S.y=Math.floor((S.y+3)/T)*T-3.01;
       const rw=Math.floor((S.y+4)/T);
@@ -542,40 +632,73 @@ function planJump(cur,nxt){
 }
 
 // ---------- ai ----------
+function commitPhysicalLanding(j){
+  const oldIdx=P.idx,oldBest=P.best||0;
+  if(j>oldIdx)for(let m=oldIdx+1;m<=j;m++){nodes[m].err*=0.5;nodes[m].stuckT=0;}
+  else if(j<oldIdx){const t2=nodes[Math.min(oldIdx+1,nodes.length-1)];t2.err*=0.65;t2.fails=(t2.fails||0)+0.5;}
+  P.idx=j;
+  if(j>oldBest){
+    const assisted=!!P.rescueFlight&&P.rescueFlight.level===level&&j>=P.rescueFlight.to;
+    if(playing())addScore((j-oldBest)*10);
+    if(assisted){
+      nodes[P.rescueFlight.to].assisted=true;rescueStats.landings++;
+      SHOW.offer({id:'spring-clear',tier:2,at:frame,tag:P.rescueFlight.to});
+      fxBurst(P.x,P.y-4,14,'#57e389',2);showBanner('SPRING CLEAN!','#57e389',50);
+    }else for(let m=oldBest+1;m<=j;m++)if((nodes[m].fails||0)>=1&&!nodes[m].assisted){
+      SHOW.offer({id:'nailed',tier:2,at:frame,tag:m});fxBurst(P.x,P.y-4,12,'#ffd166',2);
+      showBanner('NAILED IT!','#ffd166',55);break;
+    }
+    SHOW.offer({id:'progress',tier:1,at:frame});P.best=j;P.stall=0;
+  }
+  if(rescue&&rescue.level===level&&j>=rescue.to)beginRescueRetire(P.rescueFlight?'assisted':'normal');
+  if(deathStreak&&deathStreak.level===level&&j>=deathStreak.to)deathStreak=null;
+  P.rescueFlight=null;P.rescueIntent=0;
+  checkClear();
+}
+function stepRescueApproach(){
+  const a=P.rescueApproach;if(!a)return false;
+  const u=Math.min(1,(a.frames+1)/a.duration),px=P.x,py=P.y;
+  P.x=a.sx+(a.tx-a.sx)*u;P.y=a.sy+(a.ty-a.sy)*u-Math.sin(Math.PI*u)*12;
+  P.vx=P.x-px;P.vy=P.y-py;P.face=Math.sign(a.tx-a.sx)||P.face;P.onGround=false;a.frames++;
+  if(u>=1){P.x=a.tx;P.y=rescue.y-4;P.vx=0;P.vy=2;P.rescueApproach=null;physics(0,0);}
+  return true;
+}
+function stepRescueFlight(){
+  const f=P.rescueFlight;if(!f)return false;
+  const u=Math.min(1,(f.frames+1)/f.duration),px=P.x,py=P.y;
+  P.x=f.sx+(f.tx-f.sx)*u;
+  P.y=f.sy+(f.ty-f.sy)*u-Math.sin(Math.PI*u)*f.apex;
+  P.vx=P.x-px;P.vy=P.y-py;P.face=Math.sign(f.tx-f.sx)||P.face;P.onGround=false;f.frames++;
+  if(u>=1){P.x=f.tx;P.y=f.ty;P.vx=0;P.vy=0;P.onGround=true;}
+  return true;
+}
+function thinkRescue(){
+  if(!rescue||rescue.state!=='armed'||!rescue.forceUse||P.idx!==rescue.from||P.rescueFlight)return false;
+  P.stall=0;P.waitT=0;
+  if(P.onGround){
+    P.rescueIntent=(P.rescueIntent||0)+1;P.face=Math.sign(rescue.x-P.x)||P.face;
+    if(P.rescueIntent<=10){physics(0,0);return true;}
+    P.rescueApproach={frames:0,duration:24,sx:P.x,sy:P.y,tx:rescue.x,ty:rescue.y-4};
+    stepRescueApproach();return true;
+  }
+  P.rescueApproach={frames:0,duration:18,sx:P.x,sy:P.y,tx:rescue.x,ty:rescue.y-4};
+  stepRescueApproach();return true;
+}
 function think(){
   P.wjCd--;if(P.airLock>0)P.airLock--;
   const cur=nodes[P.idx],nxt=nodes[P.idx+1];
-  if(!nxt){checkClear();return;}
+  if(!nxt)return; // final-node clears are committed by commitPhysicalLanding only
   // relocalize: figure out which node platform he's actually standing on
   const scripted=cur.type==='ch'||nxt.via==='pad';
   if(P.onGround){
     const footRow=Math.floor((P.y+3.5)/T);
+    if(P.rescueFlight){rescueStats.lastFlightRow=footRow;rescueStats.lastFlightX=P.x;}
     let onNode=false;
     for(let j=nodes.length-1;j>=0;j--){const n=nodes[j];
       if(n.ty===footRow&&P.x>=n.tx*T-4&&P.x<=(n.tx+n.w)*T+4){
         onNode=true;
         P.bounceCt=0;P.lostG=false;P.lostT=0; // on real course ground
-        if(j!==P.idx){
-          if(j>P.idx)for(let m=P.idx+1;m<=j;m++){nodes[m].err*=0.5;nodes[m].stuckT=0;}
-          else{ // fell back below a hop that keeps rejecting him: it owes us
-            const t2=nodes[Math.min(P.idx+1,nodes.length-1)];
-            t2.err*=0.65;t2.fails=(t2.fails||0)+0.5;
-          }
-          P.idx=j;
-          if(j>(P.best||0)){
-            if(playing())addScore((j-(P.best||0))*10);
-            // a jump that kept eating him, finally landed clean: NAILED IT
-            for(let m=(P.best||0)+1;m<=j;m++)
-              if((nodes[m].fails||0)>=1&&!nodes[m].skipped){
-                SHOW.offer({id:'nailed',tier:2,at:frame,tag:m});
-                fxBurst(P.x,P.y-4,12,'#ffd166',2);
-                showBanner('NAILED IT!','#ffd166',55);break;
-              }
-            SHOW.offer({id:'progress',tier:1,at:frame});
-            P.best=j;P.stall=0; // only real progress calms the watchdog
-          }
-          checkClear();return;
-        }
+        if(j!==P.idx){commitPhysicalLanding(j);return;}
         break;
       }}
     if(!onNode&&!scripted)P.lostG=true; // parked on scenery, not the course
@@ -584,8 +707,10 @@ function think(){
     // stranded off-course (leftover platform, stray shelf): the planner's
     // geometry is meaningless from here, so jumps loop forever — bail out
     P.lostT=(P.lostT||0)+1;
-    if(P.lostT>180){P.lostT=0;P.lostG=false;die();return;}
+    if(P.lostT>180){P.lostT=0;P.lostG=false;die('offcourse');return;}
   }
+  if(P.rescueApproach){P.stall=0;stepRescueApproach();return;}
+  if(P.rescueFlight){P.stall=0;stepRescueFlight();return;}
   if(playing()||manual()){ // player at the controls, Mario rules
     P.stall=0;P.waitT=0;
     P.coyote=P.onGround?7:Math.max(0,(P.coyote|0)-1);   // grace after leaving a ledge
@@ -602,8 +727,9 @@ function think(){
     physics(mi,mj);
     return;
   }
+  if(thinkRescue())return;
   P.stall++;
-  if(P.stall>200){P.stall=0;die();return;}
+  if(P.stall>200){P.stall=0;die('stall');return;}
   // reset-proof per-hop escalation: no matter which sub-loop he's wedged in
   // (planless waits, fumble cycles, head-bump geometry), time pinned at one
   // hop keeps counting — rocket help twice, then a warp as last resort
@@ -616,13 +742,10 @@ function think(){
       burst(P.x,P.y-2,12,'#ffd166',1.8);
       for(let q=0;q<6;q++)spawn({x:P.x+R(-3,3),y:P.y+4,vx:R(-0.4,0.4),vy:R(0.6,1.6),t:16,c:'#ff8a2a'});
       P.vy=-2;
-    }else{ // help twice ignored: last-resort warp
-      const k=Math.min(P.idx+1,nodes.length-1);
-      const n=nodes[k];
-      for(let q=0;q<10;q++)spawn({x:P.x+R(-3,3),y:P.y+R(-3,3),vx:R(-0.5,0.5),vy:R(-0.5,0.2),t:14,c:'#6e6878'});
-      P.idx=k;P.best=Math.max(P.best||0,k);
-      P.x=(n.tx+n.w/2)*T;P.y=n.ty*T-3.01;P.vx=0;P.vy=0;
-      checkClear();return;
+    }else{ // help twice ignored: offer a physical Plan B, never a warp
+      const hop={level,from:P.idx,to:Math.min(P.idx+1,nodes.length-1),cause:'watchdog'};
+      const r=ensureRescue(hop,true);
+      if(r){r.forceUse=true;if(r.state==='arming')r.armT=0;r.state='armed';}
     }
   }
   let input=0,jump=0;
@@ -686,6 +809,7 @@ function checkClear(){
     fxBurst(P.x,P.y-6,26,'#ff9ecb',2.6);
     showBanner('SAVED! · LVL '+level+' CLEAR','#ff9ecb',90);
     if(playing())addScore(100);
+    clearRescue();deathStreak=null;
     level++;
     const start=nodes[nodes.length-1];
     nodes=genLevel({tx:start.tx,ty:start.ty,w:start.w});
@@ -696,12 +820,14 @@ function checkClear(){
 
 // ---------- hazards / cleanup ----------
 function hazards(){
-  if((P.bounceCt||0)>5){P.bounceCt=0;die();return;} // trampoline purgatory escape hatch
-  if(P.rocketT>0){ // booster burn: climb back to safety
+  const springSafe=!!(P.rescueFlight||P.rescueApproach);
+  if(P.rescueFlight&&P.rescueFlight.frames>P.rescueFlight.duration+10){rescueStats.flightDeaths++;rescueStats.lastFlightCause='rescue-miss';P.rescueFlight=null;die('rescue-miss');return;}
+  if((P.bounceCt||0)>5){P.bounceCt=0;die('bounce-loop');return;} // trampoline purgatory escape hatch
+  if(!springSafe&&P.rocketT>0){ // booster burn: climb back to safety
     P.rocketT--;
     P.vy=Math.max(P.vy-0.5,-3.0);
     spawn({x:P.x+R(-2,2),y:P.y+4,vx:R(-0.3,0.3),vy:R(0.5,1.4),t:12,c:random()<0.5?'#ffd166':'#ff8a2a'});
-  }else if(P.rocket&&P.vy>2.6&&P.y>nodes[P.idx].ty*T+22){ // falling to his death: fire it
+  }else if(!springSafe&&P.rocket&&P.vy>2.6&&P.y>nodes[P.idx].ty*T+22){ // falling to his death: fire it
     P.rocket=false;P.rocketT=55;
     SHOW.offer({id:'save',tier:2,at:frame});fxBurst(P.x,P.y+2,12,'#ff8a2a',2);
     showBanner('BOOSTER SAVE!','#ff8a2a',50);
@@ -709,15 +835,15 @@ function hazards(){
   }
   for(const s of saws){
     if(s.range>0)s.x=s.baseX+Math.sin(frame*s.spd+s.ph)*s.range*1.5;
-    if(Math.hypot(P.x-s.x,P.y-s.y)<s.r+3){die();return;}
+    if(!springSafe&&Math.hypot(P.x-s.x,P.y-s.y)<s.r+3){die('saw');return;}
   }
   if(P.onGround){ // spiked ledges kill on contact
     const rw=Math.floor((P.y+4)/T);
-    if(spiky.has(key(Math.floor((P.x-2.9)/T),rw))||spiky.has(key(Math.floor((P.x+2.9)/T),rw))){die();return;}
+    if(!springSafe&&(spiky.has(key(Math.floor((P.x-2.9)/T),rw))||spiky.has(key(Math.floor((P.x+2.9)/T),rw)))){die('spike');return;}
   }
   if(P.rocketT>0)return; // fall-immune while boosting
-  if(P.y>nodes[P.idx].ty*T+46)die();
-  else if(P.y-camY>H+16)die();
+  if(!springSafe&&P.y>nodes[P.idx].ty*T+46)die('fall');
+  else if(!springSafe&&P.y-camY>H+16)die('camera-fall');
 }
 function prune(){
   const cut=camY+H+240;
@@ -765,6 +891,17 @@ function draw(){
       }
     }
   }
+  // optional rescue trampoline: a diegetic prop, never a route overlay
+  if(rescue){
+    const grow=rescue.state==='arming'?Math.max(0,1-rescue.armT/14):rescue.state==='retiring'?Math.max(0,rescue.retireT/36):1;
+    const pulse=rescue.state==='armed'?Math.sin(frame*0.12):0,compressed=rescue.compress>0?2:0;
+    const w=Math.max(2,Math.round(rescue.width*grow)),x=Math.round(rescue.x-w/2),y=Math.round(rescue.y-camY+pulse-compressed);
+    const dim=rescue.state==='spent'||rescue.state==='retiring';
+    rect(x,y,w,3,dim?'#2f7650':'#57e389');rect(x+1,y-1,Math.max(1,w-2),1,dim?'#69a47d':'#b9ffd0');
+    if(w>8){rect(x+2,y+3,2,4,'#24212a');rect(x+w-4,y+3,2,4,'#24212a');
+      const d=Math.sign(rescue.launchVx)||1,cx=x+(w/2|0);
+      rect(cx-3*d,y,2,1,'#f4d35e');rect(cx+d,y,2,1,'#f4d35e');}
+  }
   // stains
   for(const s of stains)rect(s.x,s.y-camY,2,2,'#7a1119');
   // saws
@@ -811,6 +948,7 @@ function draw(){
   const pw=6+sq*0.5-st*0.3,ph=6-sq*0.5+st*0.3;
   rect(P.x-pw/2,P.y-camY-ph/2+sq*0.25,pw,ph,'#e63946');
   rect(P.x-pw/2,P.y-camY-ph/2+sq*0.25,pw,1,'#f4707b');
+  if(P.rescueFlight){ctx.strokeStyle=frame%6<3?'#57e389':'#f4d35e';ctx.strokeRect(Math.round(P.x-5.5),Math.round(P.y-camY-5.5),11,11);}
   ctx.fillStyle='#fff';
   ctx.fillRect(Math.round(P.x-2+P.face),Math.round(P.y-camY-1),1,2);
   ctx.fillRect(Math.round(P.x+1+P.face),Math.round(P.y-camY-1),1,2);
@@ -845,6 +983,11 @@ function step(){
   sessionStep({reset:resetGame});
   const pres=SHOW.step(frame); // SAVED!: 6f hitstop then 24f at 1/3 speed
   if(bannerT>0)bannerT--;
+  if(rescue){
+    if(rescue.compress>0)rescue.compress--;
+    if(rescue.state==='arming'&&--rescue.armT<=0)rescue.state='armed';
+    if(rescue.state==='retiring'&&--rescue.retireT<=0)rescue=null;
+  }
   if(!pres.holdWorld&&frame%pres.physicsEvery===0){
   think();
   hazards();
@@ -865,6 +1008,12 @@ function step(){
   camY+=((P.y-225)-camY)*0.1;
   if(frame%240===0)prune();
 }
+globalThis.__meatladProbe=()=>({frame,level,deaths,idx:P.idx,best:P.best||0,x:P.x,y:P.y,
+  streak:deathStreak?{...deathStreak}:null,rescue:rescue?{level:rescue.level,from:rescue.from,to:rescue.to,
+    x:rescue.x,y:rescue.y,state:rescue.state,forceUse:rescue.forceUse,contacts:rescue.contacts}:null,
+  rescueFlight:!!P.rescueFlight,rescueFlightFrame:P.rescueFlight?P.rescueFlight.frames:0,
+  rescueApproach:!!P.rescueApproach,rescueApproachFrame:P.rescueApproach?P.rescueApproach.frames:0,rescueStats:{...rescueStats},
+  finite:[P.x,P.y,P.vx,P.vy,camY].every(Number.isFinite)});
 initSession('meatlad',[['ARROWS','MOVE'],['SPACE','JUMP \u00b7 WALL-JUMP']]);
 resetGame();
 start(()=>{step();},()=>{draw();});
