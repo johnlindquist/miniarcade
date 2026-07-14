@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arcade-foundry-design-claim/v1",
+  "type": "object",
+  "required": ["schema", "id", "game", "evaluationEpoch", "inputManifestSha256", "predicate", "statement", "support", "validationTarget", "payloadSha256"],
+  "properties": {
+    "schema": {"const": "arcade-foundry-design-claim/v1"},
+    "game": {"const": "lantern-line"},
+    "evaluationEpoch": {"const": "lantern-line-discovery-v1"},
+    "predicate": {
+      "type": "object",
+      "required": ["field", "operator", "value"],
+      "properties": {"field": {"const": "clogLeadFrames"}, "operator": {"const": "equals"}, "value": {"const": 54}}
+    },
+    "support": {"type": "array", "minItems": 1},
+    "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": true
+}

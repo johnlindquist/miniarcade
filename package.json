@@ -2,12 +2,15 @@
   "name": "miniarcade",
   "version": "1.0.0",
   "private": true,
-  "description": "Thirty-one tiny, self-playing retro games at miniarcade.dev",
+  "description": "Thirty-two tiny, self-playing retro games at miniarcade.dev",
   "scripts": {
     "dev": "python3 -m http.server 8765",
     "test": "node evals/run-all.js",
     "test:gallery": "node evals/gallery-eval.js",
     "benchmark": "node evals/benchmark-cli.js",
+    "foundry:trial": "node factory/cli.js trial",
+    "foundry:verify": "node factory/factory-eval.js",
+    "foundry:export": "node factory/export-evidence.js export",
     "verify": "npm --prefix render test && npm test",
     "verify:release": "npm run verify && node evals/release-eval.js",
     "verify:live": "node evals/live-eval.js --base https://miniarcade.dev"

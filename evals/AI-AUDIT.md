@@ -1178,3 +1178,72 @@ This accounting layer does not upgrade the eleven debt games' visual quality by
 fiat, and it does not replace any game-specific behavior or native-pixel gate.
 Those migrations remain future work and must retire debt through real executable
 evidence plus explicit reviewed-montage preservation.
+
+## LANTERN LINE: source-bound optical workshop trial (2026-07-14)
+
+LANTERN LINE enters the catalog as the first new game admitted through the complete
+AEP v1 and ARCADE FOUNDRY sequence rather than being registered before proof. It is
+a fixed optical workshop with three independent vertical processing lanes: a
+persistent lightkeeper routes paired colored motes through authored prisms, coils,
+fusers, rework, and purge response stations while persistent sootlings scout, mark,
+wind up, clog, flee, and recover. Four permanent skyline districts and a final beacon
+provide the visible progression arc.
+
+The focused behavior proof uses deterministic 60 Hz simulation and one game-owned
+intent and mechanics path for human and bot control. Across the 9,000-frame natural
+panel it made 17..19 exact lanterns per seed, lit all four districts, produced
+222..234 valid AEP ledger entries, and exercised forecast, reactive scrub, purge,
+physical jam, misfire, imperfect-lantern, and exact-payoff sources. A deterministic
+live/control fixture binds one stable threat ID through its landed jam, armed misfire,
+identified production mote and commit, changed coil transform, and identified dim
+lantern; disabling only the misfire preserves the schedule and produces the exact light. Two 36,000-frame
+soaks completed 77 and 78 exact lanterns with 483 and 492 measured activity events;
+the shared motion contract measured three stable actors, a worst unexplained still
+streak of 20 frames, and no ordinary locomotion or replanning entertainment credit.
+Same-seed `__NO_PAYOFF_FX` and `__NO_EVIDENCE_LEDGER` twins remained identical in
+simulation, RNG, and statistics.
+
+The independent 12-seed clog-forecast benchmark retained 223 exact lanterns versus
+225 for the active reactive baseline while reducing jam frames from 7,983 to 1,257.
+It won safety on 12/12 seeds and retained throughput within one lantern on 11/12.
+The causal ablation first changed intent inside the telegraph window and left the
+baseline actively completing orders and reacting to landed clogs.
+
+The final source-bound Foundry replay evaluated the precommitted genomes
+`clogLeadFrames = 0, 18, 36, 54` over the exact discovery and confirmation epochs.
+The verifier now derives the incumbent from the shipping source instead of assuming
+genome zero, binds that incumbent through discovery, both confirmation arms, the
+experiment, and promotion, and rejects incumbent substitution. No candidate strictly
+Pareto-dominated the shipping genome on throughput, safety, and tactical-legibility
+proxy, so the honest decision was `retain-incumbent-no-strict-dominator` at genome
+36, source hash `264908bd768baed9239d147dff63b96c24e4c65c3570826f801aeb351cb941ac`.
+No durable claim was emitted and no memory savings were claimed. The verifier now
+requires exact unique discovery and confirmation genome sets, binds evaluated-genome
+lists and every child source manifest, re-derives top-level cost, and independently
+derives the immutable experiment record. The receipt must name the canonical ledger
+path for the verified payload; the ledger must be a distinct contained non-symlink
+regular file, and both records must exactly match independently derived fields.
+Export verification requires an exact normalized manifest closure and semantically
+replays the packaged experiment and ledger. Standalone promotion verification replays
+the experiment and exact marker transition. Artifact and causal replay passed; all 33
+experiment mutations, all eight promotion mutations, and both packaged ledger mutations
+were rejected. Falsey valid-JSON receipt and ledger substitutions are compared
+unconditionally against independently derived objects. The eight promotion mutations
+have a durable receipt. Experiment payload
+`afada20285fbc881fc83ccaae417f3abdae2dcfa1e977edf7352c00d6a9c11ce` is exported
+in a twelve-file evidence package with payload
+`8cdbf1ee1db1fdc076fd93308a644d7f9bf1cf482a2e3de26594ecc71308baa6`; the
+verified incumbent-retention receipt payload is
+`bf36213fda49e9bb26bb2f155bbd06181f634b5ffbf99631c768b6d06a335e13`.
+
+Native 160x360 review covered order read, lane choice, sootling scout, clog warning,
+keeper response, physical jam, the causally bound dim lantern, exact lantern, district
+light, and beacon apex against
+MACHINE HUNT and BLOCK MINE. Every executable scale, richness, detail, motion,
+warning/impact, skyline, payoff, route-ban, planner-contamination, and feedback gate
+passed. The natural feedback panel sampled 33 beats (26 good and 7 bad), including
+real jam, misfire, and wrong-transform consequences; its thinnest local changed region
+was 54 pixels. The explicitly preserved montage hash is
+`4f28e7588007f212018e66641a18d98f36ccb709d13472e413545182be71e37b`;
+the final 30-second H.264 review clip is 2,552,570 bytes with SHA-256
+`a453a94769a9ca5ce8836afd1a42cd34a357fd990531e20701f4a0c890cfd631`.

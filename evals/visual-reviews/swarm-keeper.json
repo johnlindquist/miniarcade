@@ -6,8 +6,8 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "08f7f14439d9d3648649ba3de53d98747ea3ee34ebdf9501c520083f196be004",
-  "reviewedAt": "2026-07-10",
+  "montageSha256": "80e86782f4c38b4d872b2fe2d7ad4474736632f442c545899b25bcadb0016ba8",
+  "reviewedAt": "2026-07-14",
   "reviewer": "Codex native-size reference review",
   "seed": "0x6500",
   "checkpoints": [
@@ -48,5 +48,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "bbdb84177ddc17d4a30d27a600a225bba0150ecdb824f9e507b9a7b359fdc86c"
+  "reviewIdentitySha256": "363dcf2ef813cdb9198b3d3771e6611ddd4aa1bc8d7960de636568cc2a311ac3"
 }

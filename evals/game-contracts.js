@@ -57,6 +57,7 @@ const contracts=Object.freeze([
   covered('dungeon-express','DUNGEON EXPRESS'),
   covered('crystal-mesa','CRYSTAL MESA'),
   covered('ricochet-foundry','RICOCHET FOUNDRY'),
+  covered('lantern-line','LANTERN LINE'),
 ]);
 
 module.exports=Object.freeze({

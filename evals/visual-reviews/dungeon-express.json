@@ -6,9 +6,9 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "77322627631cde4b659fa79c810c7435685a99f95701dd1459d80a643c8b70b2",
-  "reviewedAt": "2026-07-13",
-  "reviewer": "Claude native-size reference and autoplay-clip review",
+  "montageSha256": "ada69cbcb9ca264b4c5c692f78ca902a289ffe1f7417ad37735c5e2cfc31787f",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "seed": "0xded011",
   "checkpoints": [
     "puzzle-setup@8",
@@ -66,5 +66,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "19eb02fa6b0e0adafeae994416af5035493c52ee93d589162aa1e7b19279cc22"
+  "reviewIdentitySha256": "1b36206f5e39ed4898272e1b6bad3697deb7d94e6cd88a1f6f50d2001e13b113"
 }

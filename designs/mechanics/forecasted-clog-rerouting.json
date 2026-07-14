@@ -1,0 +1,11 @@
+{
+  "schema": "arcade-foundry-mechanic-capsule/v1",
+  "id": "forecasted-clog-rerouting",
+  "game": "lantern-line",
+  "hypothesis": "Extending a sootling clog forecast can improve readable anticipatory reroutes and workshop safety, but excessive lead can cause threat-driven abandonment of an unconsumed production plan or suppress lantern throughput.",
+  "parameters": {
+    "clogLeadFrames": {"min": 0, "max": 54, "step": 18}
+  },
+  "causalPair": {"control": 0, "intervention": 54},
+  "broadMechanicAblation": "__NO_CLOG_FORECAST"
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "arcade-foundry-game-design/v1",
+  "id": "lantern-line",
+  "viewerPromise": "A visible lightkeeper reads two-part lantern recipes, commits motes through a fixed optical workshop, anticipates persistent sootling sabotage, and permanently lights a four-district skyline.",
+  "authoredTopology": {
+    "lanes": 3,
+    "processingStages": ["prism", "coil", "fuser"],
+    "laneModel": "three-independent-vertical-routes",
+    "responseBranches": ["forecast-reroute", "rework", "purge-bait", "reactive-scrub"],
+    "recoveryLoop": "rework",
+    "sharedResponseStation": "purge"
+  },
+  "ownedPolicy": ["clogLeadFrames"],
+  "hardGates": ["finite", "progress", "lanterns", "districts", "safety", "deadAir", "evidence", "parameterActive"],
+  "humanGates": ["native-visual-review", "catalog-admission", "merge", "push", "deploy"]
+}

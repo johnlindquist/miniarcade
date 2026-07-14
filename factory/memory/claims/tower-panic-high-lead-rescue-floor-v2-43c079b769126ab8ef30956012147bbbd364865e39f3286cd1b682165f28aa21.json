@@ -1,0 +1,25 @@
+{
+  "evaluationEpoch": "tower-panic-discovery-v2",
+  "game": "tower-panic",
+  "id": "tower-panic-high-lead-rescue-floor-v2",
+  "inputManifestSha256": "e0a0e2f8c9783f77714d78e124b4c001231b5b914d993c12c67936f67fa78ea1",
+  "payloadSha256": "43c079b769126ab8ef30956012147bbbd364865e39f3286cd1b682165f28aa21",
+  "predicate": {
+    "field": "threatLeadFrames",
+    "operator": "equals",
+    "value": 36
+  },
+  "schema": "arcade-foundry-design-claim/v1",
+  "statement": "Skip threatLeadFrames=36 in a fresh confirmation epoch because discovery produced per-seed rescue-floor failures.",
+  "support": [
+    {
+      "failedGate": "rescues",
+      "rescues": 11,
+      "resultPayloadSha256": "90b4746d4e759dbe7ef74850e5d92a836287e453420cf06c27930ff0619f2154",
+      "seed": 31698
+    }
+  ],
+  "validationTarget": {
+    "threatLeadFrames": 36
+  }
+}

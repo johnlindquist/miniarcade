@@ -1,0 +1,9 @@
+{
+  "schema": "arcade-foundry-schema-lock/v1",
+  "versions": {
+    "experiment": "v2",
+    "designClaim": "v1",
+    "operatorStats": "v1",
+    "evaluationEpoch": "v1"
+  }
+}

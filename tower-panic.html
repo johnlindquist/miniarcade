@@ -73,7 +73,7 @@ const stats={rescues:0,extractions:0,hits:0,downs:0,deflections:0,nearMisses:0,c
   reroutes:0,smartPlans:0,baselinePlans:0,lapses:0,acts:0,barrels:0,floors:0,events:0,progress:0,
   maxEventLull:0,maxProgressLull:0,invisibleResets:0,plannerCalls:0,objectiveTransitions:0,
   objectiveCompletions:0,enemyActions:0,playerResponses:0,puzzleDecisions:0,threatDecisions:0,
-  responseDecisions:0,payoffDecisions:0,maxDecisionDeadAir:0};
+  responseDecisions:0,payoffDecisions:0,maxDecisionDeadAir:0,threatChecks:0,threatAnticipations:0};
 
 const mod=(n,d)=>((n%d)+d)%d;
 const node=(f,c)=>f*COLS+c;
@@ -182,6 +182,7 @@ function planRoute(force){
   route=next;const pending=workers.filter(w=>!w.rescued&&!w.done),target=pending.find(w=>w.node===route.at(-1));if(target)ensureWorkerSetup(target);planSerial=showFrame;return route;
 }
 function routeSafe(){if(!route.length)return false;let cur=hero.node;for(const n of route){if(!adjacent(cur,n))return false;cur=n}return true}
+const THREAT_LEAD_FRAMES=0; // @foundry threatLeadFrames
 function immediateDanger(frames){
   for(const b of barrels){const q=barrelAt(b,frames||0);if(q&&!q.falling&&q.floor===floorOf(hero.node)&&Math.abs(q.x-hero.x)<10)return true}
   return fires.some(f=>f.floor===floorOf(hero.node)&&Math.abs(X[f.col]-hero.x)<8&&fireActive(f,frames||0));
@@ -194,7 +195,7 @@ function rawBotIntent(){
   if(hero.stun>0)return idleIntent('SHAKE IT OFF');
   if(hero.moveT>0)return{dx:Math.sign(hero.x-nodePos(hero.from).x),dy:Math.sign(hero.y-nodePos(hero.from).y),brace:false,assist:smart,next:hero.to,tactic:hero.pose==='climb'?'CLIMB UNDER COVER':'MOVE THE CONVOY'};
   if(!routeSafe()||showFrame-planSerial>=72)planRoute();
-  if(smart&&immediateDanger(0))return{dx:0,dy:0,brace:true,assist:false,next:-1,tactic:'BRACE BEHIND RAIL'};
+  if(smart){stats.threatChecks++;const immediate=immediateDanger(0);let danger=immediate;for(let lead=6;!danger&&lead<=THREAT_LEAD_FRAMES;lead+=6)danger=immediateDanger(lead);if(danger&&!immediate)stats.threatAnticipations++;if(danger)return{dx:0,dy:0,brace:true,assist:false,next:-1,tactic:'BRACE BEHIND RAIL'}};
   const n=route[0];if(n===undefined)return idleIntent('SCAN FOR SURVIVORS');const p=nodePos(n),dx=Math.sign(p.x-hero.x),dy=Math.sign(p.y-hero.y);
   let tactic=dy<0?'CLIMB TO '+zone.code:dx?'CROSS THE GANTRY':'GUARD THE CONVOY';
   if(act.phase==='warn'&&smart)tactic='REROUTE BEFORE PURGE';
@@ -489,6 +490,7 @@ function soakProbe(){return{sig:[round(hero.x,1),round(hero.y,1),hero.pose,barre
 function entertainmentProbe(){const topology=topologyFixture();return{noVisiblePath:true,topology:{rooms:topology.rooms,branches:topology.branches,maxStraight:topology.maxStraight},puzzle:{transitions:stats.objectiveTransitions,completions:stats.objectiveCompletions},agency:{enemyActions:stats.enemyActions,playerResponses:stats.playerResponses},decisions:{puzzle:{count:stats.puzzleDecisions,source:'stats.puzzleDecisions'},threat:{count:stats.threatDecisions,source:'stats.threatDecisions'},response:{count:stats.responseDecisions,source:'stats.responseDecisions'},payoff:{count:stats.payoffDecisions,source:'stats.payoffDecisions'}},maxDeadAir:stats.maxDecisionDeadAir}}
 function ambientProbe(){const ledger=EVIDENCE.probe(),evidence=entertainmentProbe(),stateSignature=simSignature();return{protocol:'ambient-evidence/v1',schema:1,game:'tower-panic',frame:{run:runFrame,show:showFrame},showFrame,runFrame,stateSignature,stateDigest:stateSignature,finite:finite(),soak:soakProbe(),motion:motionProbe(),counters:{...stats},evidence,entertainment:evidence,ledger,serial:ledger.serial,events:ledger.events.slice()}}
 function intentFixture(){const ai=rawBotIntent(),old={left:keys.left,right:keys.right,up:keys.up,down:keys.down,a:keys.a,b:keys.b,c:keys.c};keys.right=true;const human=humanIntent();Object.assign(keys,old);return{ai,human,aiKeys:Object.keys(ai).sort(),humanKeys:Object.keys(human).sort()}}
+function foundryProbe(){return{showFrame,runFrame,intent:hero.intent&&{brace:hero.intent.brace,assist:hero.intent.assist,next:hero.intent.next,tactic:hero.intent.tactic},environment:{stage,act:[act.phase,act.warnAt,act.landAt,act.endAt,act.purgeCol],barrels:barrels.map(b=>[b.id,b.age,b.startDir]),fires:fires.map(f=>[f.id,f.phase,f.floor,f.col]),machines:machines.map(m=>[m.id,m.phase,m.floor,m.col])},activation:{threatChecks:stats.threatChecks,threatAnticipations:stats.threatAnticipations}}}
 function admireFixture(){const old=pres;pres={cue:{id:'fixture',tier:3},admire:true,holdWorld:false,physicsEvery:1};delete globalThis.__NO_ADMIRE;const admired=rawBotIntent();globalThis.__NO_ADMIRE=1;const gated=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired,gated}}
 function forceShow(tier,id){return offer(id||('fixture-'+tier),tier,hero.x,hero.y,'TIER '+tier)}
 
@@ -502,6 +504,7 @@ globalThis.__towerPanicPlannerFixture=plannerFixture;
 globalThis.__towerPanicPlannerContamination=plannerContamination;
 globalThis.__towerPanicTopologyFixture=topologyFixture;
 globalThis.__towerPanicIntentFixture=intentFixture;
+globalThis.__towerPanicFoundryProbe=foundryProbe;
 globalThis.__towerPanicAdmireFixture=admireFixture;
 globalThis.__towerPanicForceShow=forceShow;
 globalThis.__towerPanicFreezeShow=()=>{state='fixture';route=[];act.phase='calm';act.warnAt=showFrame+999999;SHOW.reset(showFrame)};

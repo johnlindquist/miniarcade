@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "d5512cafbe9754b13ba7fca0f60ab9a7efc55b46e403cbbd89b15a85ed5a61d5",
+  "montageSha256": "87e80eec7a2f94d5411840eac63db0180a0414ecb56eb19d0fbf16025e7357a0",
   "seed": "0x571a6001",
   "naturalSeed": "0x7907",
   "checkpoints": [
@@ -28,8 +28,8 @@
     "landingAftermath@natural",
     "apex@24"
   ],
-  "reviewedAt": "2026-07-12",
-  "reviewer": "Claude native-size natural-play review (feedback-legibility pass: gold/coral edge pulses, on-actor feather and gold/mint/coral bursts for launches, kisses, rams, cores, topples, bounces, rough landings, misses, and lapses; 17-beat montage re-inspected at 160x360 against both references plus native crops of danger, impact, forecast, touchdown, and apex beats)",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -64,5 +64,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "4817d3c4269cdc4c97aa60ee761effeb8221adfb871426ca0d50bc2ec1ad665b"
+  "reviewIdentitySha256": "8005d9a76dd89ed4aec93bb03b5e1b12fd89eec461d82e194ad279d9d9b1f24c"
 }

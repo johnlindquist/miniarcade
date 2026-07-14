@@ -1,0 +1,11 @@
+{
+  "artifact": ".artifacts/factory/tower-panic-v2/experiment.json",
+  "artifactFileSha256": "92018880fa9b7f953c8c8679240699a51b81e92f09175d1d492a298f9426ef5f",
+  "claimIds": [
+    "factory/memory/claims/tower-panic-high-lead-rescue-floor-v2-3dfdf62070f149f5ac0a87c89c4e98169f19ca93351ef681d4111249e1c4e759.json"
+  ],
+  "id": "tower-panic-cumulative-learning-v2",
+  "learningTrialOk": true,
+  "payloadSha256": "0418d3b05268e30fe3ddd827e06f72362ed280097ebe0cffe0c9873af871d12b",
+  "schema": "arcade-foundry-experiment-record/v1"
+}

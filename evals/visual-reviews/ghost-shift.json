@@ -6,24 +6,9 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "20a5743c67b9a23b6631f2b08dcd2dbc3cbaf56544f4bdd2bc249ee078571796",
-  "seed": "0x47534854",
-  "checkpoints": [
-    "opening@12",
-    "patrol@9",
-    "chase@9",
-    "sigilBefore@6",
-    "sigil@6",
-    "sigilSolve@6",
-    "relayBefore@6",
-    "relaySolve@6",
-    "pulse@6",
-    "later@12",
-    "lockdown@6",
-    "delivery@6"
-  ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
+  "montageSha256": "3ddc33826ce527b136b11887677f178fa98ae08f53a72b331a6d289701d5dee0",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -58,5 +43,20 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "582e51f71d454f2da2b460254651edd4e09fd91c6a36113d7abec18180c99141"
+  "reviewIdentitySha256": "cd647b941998c0aa95789bf953c714217379fbe46fc36bf567c0ce69ebe1dac6",
+  "seed": "0x47534854",
+  "checkpoints": [
+    "opening@12",
+    "patrol@9",
+    "chase@9",
+    "sigilBefore@6",
+    "sigil@6",
+    "sigilSolve@6",
+    "relayBefore@6",
+    "relaySolve@6",
+    "pulse@6",
+    "later@12",
+    "lockdown@6",
+    "delivery@6"
+  ]
 }

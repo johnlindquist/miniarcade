@@ -1,0 +1,359 @@
+{
+  "schema": 2,
+  "protocol": "ambient-evidence/v1",
+  "game": "lantern-line",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "4f28e7588007f212018e66641a18d98f36ccb709d13472e413545182be71e37b",
+  "gameSha256": "264908bd768baed9239d147dff63b96c24e4c65c3570826f801aeb351cb941ac",
+  "reviewIdentitySha256": "2ddc0fe5f78f1164628d828539cc9070ed91df3b9e7ed26e735b9bdc8343f25d",
+  "evidenceManifest": {
+    "protocol": "ambient-evidence/v1",
+    "kind": "visual-evidence",
+    "version": 1,
+    "game": "lantern-line",
+    "checkpoints": [
+      "order@8",
+      "route@8",
+      "scout@8",
+      "warning@8",
+      "reroute@12",
+      "jam@6",
+      "imperfect@6",
+      "exact@6",
+      "district@6",
+      "apex@6"
+    ],
+    "fixtures": {
+      "apex": {
+        "burst": [
+          1,
+          3,
+          6,
+          12
+        ],
+        "fixture": "beacon-apex",
+        "offset": 6
+      },
+      "district": {
+        "burst": [
+          1,
+          3,
+          6,
+          12
+        ],
+        "fixture": "district-lit",
+        "offset": 6
+      },
+      "exact": {
+        "burst": [
+          1,
+          3,
+          6,
+          12
+        ],
+        "fixture": "exact-lantern",
+        "offset": 6
+      },
+      "imperfect": {
+        "burst": [
+          1,
+          3,
+          6,
+          12
+        ],
+        "fixture": "imperfect-lantern",
+        "offset": 6
+      },
+      "jam": {
+        "burst": [
+          1,
+          3,
+          6,
+          10
+        ],
+        "fixture": "jam-impact",
+        "offset": 6
+      },
+      "order": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "order-read",
+        "offset": 8
+      },
+      "reroute": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "keeper-reroute",
+        "offset": 12
+      },
+      "route": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "route-choice",
+        "offset": 8
+      },
+      "scout": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "sootling-scout",
+        "offset": 8
+      },
+      "warning": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "clog-warning",
+        "offset": 8
+      }
+    },
+    "naturalSequence": {
+      "contract": "good/bad real-pixel lockstep",
+      "frames": 9000,
+      "seeds": [
+        6721,
+        6887
+      ]
+    },
+    "probeFields": [
+      "finite",
+      "fixture",
+      "actors",
+      "modules",
+      "districts",
+      "guidelines",
+      "layout.playfield"
+    ],
+    "crops": {
+      "feedbackRadius": 28,
+      "skyline": {
+        "height": 60,
+        "width": 160,
+        "x": 0,
+        "y": 0
+      },
+      "world": {
+        "height": 310,
+        "width": 160,
+        "x": 0,
+        "y": 0
+      }
+    },
+    "actors": {
+      "maxFootprint": 0.05,
+      "scaleCaps": {
+        "keeper": [
+          18,
+          27
+        ],
+        "mote": [
+          16,
+          16
+        ],
+        "sootling": [
+          18,
+          19
+        ]
+      },
+      "selector": "__LL_VISUAL_ONLY_SUBJECT"
+    },
+    "metrics": {
+      "bands": {
+        "apexFx": 0.006,
+        "apexFxGrid": 0.12,
+        "apexStructure": 0.08,
+        "burst": 0.01,
+        "colors": 88,
+        "districtChanged": 0.006,
+        "edge": 0.0203,
+        "entropy": 2.62,
+        "footprint": 0.05,
+        "largest": 0.49,
+        "luma": 0.125,
+        "richEach": 0.72,
+        "richMedian": 0.76,
+        "warningChanged": 0.065,
+        "warningGrid": 0.25
+      },
+      "feedbackRequired": [
+        "good:transform",
+        "good:exact-lantern",
+        "good:district-lit",
+        "good:purge-capture",
+        "bad:jam",
+        "bad:wrong-transform"
+      ],
+      "plannerContamination": "exact-pixel-no-op"
+    },
+    "references": [
+      "horizon",
+      "blockmine"
+    ]
+  },
+  "evidenceManifestSha256": "2e86deb4eb364796e4f44a1a55f7e15838e4ac9e37d7125ed122d4f04678a407",
+  "dependencyManifest": {
+    "protocol": "ambient-evidence/v1",
+    "kind": "visual-dependencies",
+    "version": 1,
+    "game": "lantern-line",
+    "files": {
+      "baselines": [],
+      "candidate": [
+        {
+          "path": "evals/lantern-line-visual-eval.js",
+          "sha256": "553bdcc94db50eb3c26f201037d55b29c4926d0599df9ac72afc9d0c191ea5c6"
+        },
+        {
+          "path": "lantern-line.html",
+          "sha256": "264908bd768baed9239d147dff63b96c24e4c65c3570826f801aeb351cb941ac"
+        }
+      ],
+      "capture": [
+        {
+          "path": "evals/harness.js",
+          "sha256": "eda4fd97c9af34e3a9393faa47d386f7155c95a7ff7cda78d69bec8bca269984"
+        },
+        {
+          "path": "evals/visual-harness.js",
+          "sha256": "def55f63edcaafcdf1e6d107be0fc9fcf52e53891b37e5d2399486fa502d77a0"
+        },
+        {
+          "path": "evals/visual-provenance.js",
+          "sha256": "f60f717572b60527666068bd940660369a8319861809f02885edf382618b9506"
+        }
+      ],
+      "references": [
+        {
+          "path": "blockmine.html",
+          "sha256": "da57598ed58906693ed1b6739baa8e9c3eb05c001891e74d02976934f7f97129"
+        },
+        {
+          "path": "horizon.html",
+          "sha256": "23712163a5529df28268bac6d62db6b2d852a2dcee977684f16cb3da4e5dabb0"
+        }
+      ],
+      "renderer": [
+        {
+          "path": "render/fonts/Silkscreen-Regular.ttf",
+          "sha256": "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8"
+        },
+        {
+          "path": "render/package-lock.json",
+          "sha256": "d0ac9f3d9523c84e62880fd8e4560f7697a1e3b905d8f8a7cd0258e567a4a9a7"
+        },
+        {
+          "path": "render/package.json",
+          "sha256": "8acd4479b8d32207c06a1df34b9b37c41c127e795127337ae1c9f94996a7397f"
+        },
+        {
+          "path": "render/render.js",
+          "sha256": "2f2879345b55dfa85bb0f9cb9fd1a81ea6188f26118721c771a56caf9a309bce"
+        }
+      ],
+      "runtime": [
+        {
+          "path": "autoplay.js",
+          "sha256": "1acff4bb4050ff9aa4bd9e753fdd697add9776edcf1f5cce5eeaa60bd4014e97"
+        },
+        {
+          "path": "engine.js",
+          "sha256": "a73d506c3ea8390c7b46e2cf43b6c20db764bf3a07c1483ec91229268417b376"
+        },
+        {
+          "path": "game-source.js",
+          "sha256": "c79e2a126c6c85b649c0a1fb695fd89cfded6313bc10d2046226f36b03c0bf5f"
+        },
+        {
+          "path": "render/runtime.js",
+          "sha256": "faaf22c505bb97082afda669809873a48303fb449c9cc831b1f1d11c51e295e5"
+        },
+        {
+          "path": "word-puzzle.js",
+          "sha256": "90b792cf865f9e01b7d3e1a7fdc62ef94f28a2753ad11bc59f2add45fd634636"
+        }
+      ]
+    }
+  },
+  "dependencyManifestSha256": "65fd9ee9d3ad642784c3346ce80d6ad3ac4fdd2d5fc1ca60ef30745a7914c2d9",
+  "seed": "0x1a47",
+  "checkpoints": [
+    "order@8",
+    "route@8",
+    "scout@8",
+    "warning@8",
+    "reroute@12",
+    "jam@6",
+    "imperfect@6",
+    "exact@6",
+    "district@6",
+    "apex@6"
+  ],
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude native-size reference review, fixed-board optical workshop pass; ten authored fixtures including the causally bound dim-lantern aftermath and the final 30-second autoplay clip inspected at 160x360 against Machine Hunt and Block Mine",
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native size the lightkeeper reads as a constructed worker rather than a cursor: helmet, bright visor, coat, backpack/tool assembly, separated arms, legs, boots, shadow, and station-working pose remain legible. Persistent sootlings use compact dark bodies, bright eyes, directional movement, warning rings, windup, clog, flee, and recovery silhouettes; yellow, cyan, and magenta motes retain distinct glass-color identities. The isolated-pixel scale proof caps the keeper at 18x27, sootlings at 18x19, and motes at 16x16, matching the small-cast discipline of both references."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The 160x360 board is an authored brass-and-steel optical workshop, not a corridor or pathfinding surface: three independent lane panels contain intake rails, prisms, coils, fusers, rework and purge response stations, drainage sockets, rivets, ducts, structural grids, and a skyline ledger. All nine beats exceed the executable richness, contrast, entropy, and multiscale-detail bands, while exact clean-plate comparisons prove the machinery and permanent skyline progression exist independently of actors and payoff FX."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Variety comes from consequential machine state rather than camera travel: order read, lane choice, sootling scout, target warning, keeper response, physical jam, exact-lantern launch, district illumination, and final beacon each materially alter composition. The montage shows threats occupying different modules, good and bad outcomes at distinct locations, changing order colors, permanent district windows, and an apex beacon; executable skyline structure and pixel-delta gates reject mere label or palette swaps."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The native fixtures and autoplay clip show motes traversing and transforming through machinery, the keeper moving to and orbiting work stations, sootlings scouting and winding up before a clog, warning-to-impact follow-through, jam-triggered misfire rings, imperfect lantern consequence, exact lantern launch, district activation, and beacon payoff. Burst gates cover route, scout, warning, exact, and apex motion; event-local rings and sparks plus mint/coral edge pulses make impact readable without washing out the board."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The fixed board reads top-to-bottom: skyline and district progress, three independent intake and processing lanes, recipe-colored prisms, rework and purge controls, keeper, and the compact order ledger. Warning rings identify a local sootling target; jam coral, misfire rings, successful mint/gold, imperfect lantern, exact launch, permanent district light, and beacon state are visually distinct. The source ban, zero-guideline probes, and exact planner-contamination pixel no-op prove there is no computed future-route overlay, while natural-play evidence covers required good and bad categories with every sampled beat locally visible."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Stained-glass cyan, magenta, and gold are consistently reserved for optical material and recipes; brass marks workshop hardware, teal marks operable machinery, soot and coral communicate sabotage, mint communicates successful intervention, and deep navy unifies the stage, skyline, and HUD. The keeper construction, sootling threat grammar, local feedback signatures, edge pulses, district windows, and beacon all reuse that palette and pixel vocabulary, producing one deliberate optical-workshop fiction rather than disconnected UI panels."
+    }
+  },
+  "renderReceipt": {
+    "seed": "0x1a47",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 2552570,
+    "sha256": "a453a94769a9ca5ce8836afd1a42cd34a357fd990531e20701f4a0c890cfd631",
+    "command": "node render/render.js lantern-line 30 .artifacts/visual/lantern-line/lantern-line-30s.mp4 --seed 0x1a47 --probe --fps 30"
+  },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true
+}

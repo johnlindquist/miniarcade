@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#08090d">
-  <meta name="description" content="Thirty-one tiny, self-playing retro games. Browse the arcade, open a game, or record a perfect gameplay loop.">
+  <meta name="description" content="Thirty-two tiny, self-playing retro games. Browse the arcade, open a game, or record a perfect gameplay loop.">
   <link rel="canonical" href="https://miniarcade.dev/">
   <title>MINI/ARCADE — tiny games, big side quests</title>
   <style>
@@ -125,7 +125,7 @@
     .game-card.is-active .open-hint,.game-card:focus-within .open-hint{opacity:1;transform:none}
     .hz{--accent:#41e8ff}.ml{--accent:#e63946}.rk{--accent:#ff8a2a}.sg{--accent:#ff70a6}
     .sf{--accent:#2de2e6}.wf{--accent:#c792ea}.hc{--accent:#ffd166}.bm{--accent:#58e08a}.ws{--accent:#8fc8ff}
-    .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mb{--accent:#8aff5c}.gs{--accent:#7cf7d4}.wr{--accent:#ffd166}.gg{--accent:#8fe06f}.sk{--accent:#ffd166}.sv{--accent:#9bd1ff}.ng{--accent:#ff3ea5}.pc{--accent:#9fe36b}.fc{--accent:#9bea73}.tp{--accent:#ffd15c}.bb{--accent:#f2b84b}.rc{--accent:#f0b64a}.rr{--accent:#ffcb57}.cc{--accent:#ffb457}.hh{--accent:#caa7ff}.kc{--accent:#ff6b4a}.mv{--accent:#f4d06f}.de{--accent:#65d6d0}.cm{--accent:#63e0f5}.rf{--accent:#ff8a45;--accent2:#63dfe5;--panel:#171c22}
+    .dd{--accent:#ffd75a}.ss{--accent:#2de2e6}.mb{--accent:#8aff5c}.gs{--accent:#7cf7d4}.wr{--accent:#ffd166}.gg{--accent:#8fe06f}.sk{--accent:#ffd166}.sv{--accent:#9bd1ff}.ng{--accent:#ff3ea5}.pc{--accent:#9fe36b}.fc{--accent:#9bea73}.tp{--accent:#ffd15c}.bb{--accent:#f2b84b}.rc{--accent:#f0b64a}.rr{--accent:#ffcb57}.cc{--accent:#ffb457}.hh{--accent:#caa7ff}.kc{--accent:#ff6b4a}.mv{--accent:#f4d06f}.de{--accent:#65d6d0}.cm{--accent:#63e0f5}.rf{--accent:#ff8a45;--accent2:#63dfe5;--panel:#171c22}.ll{--accent:#79f2d0;--accent2:#ffc857;--panel:#121923}
     .site-footer{
       min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;
       min-height:54px;padding:6px clamp(16px,3vw,42px) calc(6px + env(safe-area-inset-bottom));
@@ -154,7 +154,7 @@
     .workshop-eggo:disabled{opacity:1;cursor:default}
     .workshop-eggo:focus-visible{outline:1px solid var(--cyan);outline-offset:2px;border-radius:4px}
     .workshop-eggo img{display:block;width:38px;height:40px;object-fit:contain;pointer-events:none}
-    .workshop-eggo img[hidden]{display:none}
+    .workshop-eggo img[hidden],.workshop-eggo:not(:disabled) img{display:none!important}
     .workshop-eggo-canvas{
       position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform:translate(-50%,-50%);
     }
@@ -192,8 +192,12 @@
     .workshop-cta-short{display:none}
     .is-unlocking .workshop-scan{animation:workshop-scan 620ms var(--ease) 1}
     [data-workshop-state="earned"] .workshop-link{animation:workshop-ticket-pulse 620ms var(--ease) 1}
+    .workshop-link.is-eggo-arrival{animation:workshop-eggo-arrival 640ms var(--ease) 1}
     @keyframes workshop-scan{to{left:110%}}
     @keyframes workshop-ticket-pulse{50%{border-color:rgba(255,138,42,.9);box-shadow:0 0 0 1px rgba(255,138,42,.18),0 0 18px rgba(255,138,42,.18)}}
+    @keyframes workshop-eggo-arrival{
+      38%{color:#fff;border-color:rgba(255,166,82,.96);background:rgba(255,138,42,.2);box-shadow:0 0 0 1px rgba(45,226,230,.28),0 0 20px rgba(255,138,42,.34),0 0 30px rgba(45,226,230,.12)}
+    }
     .site-footer details{position:relative}
     .site-footer summary{display:flex;align-items:center;min-height:30px;color:#b7bdcb;cursor:pointer;text-transform:uppercase;letter-spacing:.1em;list-style:none}
     .site-footer summary::-webkit-details-marker{display:none}
@@ -262,7 +266,7 @@
     @media (prefers-reduced-motion:reduce){
       html{scroll-behavior:auto}
       .game-card,.open-hint,.preview-viewport::after{transition:none!important}
-      .workshop-dock,.workshop-link,.workshop-arrow,.workshop-signal-cell,.workshop-scan{
+      .workshop-dock,.workshop-link,.workshop-link.is-eggo-arrival,.workshop-arrow,.workshop-signal-cell,.workshop-scan{
         transition:none!important;animation:none!important;
       }
       .workshop-link:hover{transform:none}
@@ -274,7 +278,7 @@
   <header class="site-header">
     <div class="brand">
       <h1>MINI<span>/</span>ARCADE</h1>
-      <p>thirty-one tiny games · always playing · open one and take over</p>
+      <p>thirty-two tiny games · always playing · open one and take over</p>
     </div>
     <form id="clip">
       <label for="clip-game">CLIP</label>
@@ -290,7 +294,7 @@
       <p id="browse-label">Hover to reveal · click anywhere on a card to play</p>
       <div class="rail-controls">
         <button class="nav-button" id="previous-game" type="button" aria-label="Previous game" aria-controls="game-track">‹</button>
-        <output id="position" aria-live="polite">01 / 31</output>
+        <output id="position" aria-live="polite">01 / 32</output>
         <button class="nav-button" id="next-game" type="button" aria-label="Next game" aria-controls="game-track">›</button>
       </div>
     </div>
@@ -336,7 +340,7 @@
     </details>
   </footer>
 
-  <script src="games.js?v=17a381fd"></script>
+  <script src="games.js?v=6491cc30"></script>
   <script>
   (()=>{
     const track=document.getElementById('game-track');

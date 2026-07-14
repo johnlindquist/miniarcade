@@ -6,8 +6,8 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "70c4d8b851c27f28bd93b17a395b65b23f8e8abaa8e545ca5bcefe8cb5de2205",
-  "gameSha256": "30309a8b6ed4a1d2800d1de5344a2056d1ff1a89fcffbfa4c3cfedeab55f9570",
+  "montageSha256": "83d020499e7fa076c1c9570d2f520ad66d43bf9f98e93187a6815605711365d3",
+  "gameSha256": "01887f04d8b4462d2fba7e5503abf0680676451bef560bf55ca7092a55be97d4",
   "seed": "0x745052",
   "checkpoints": [
     "opening@12",
@@ -20,8 +20,8 @@
     "later@12",
     "apex@12"
   ],
-  "reviewedAt": "2026-07-11",
-  "reviewer": "Claude native-size reference review, 2026-07-11 character-scale rescue",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -66,5 +66,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "09b8b4332fca7c110861750528dc29d2f8e69d08b64336e4e1400087c8f69674"
+  "reviewIdentitySha256": "fb27b1c58fd76871f26446f3f922f59ae75432dcf765f223bdd255e86b0f5431"
 }

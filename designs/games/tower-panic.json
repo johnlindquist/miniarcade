@@ -1,0 +1,8 @@
+{
+  "schema": "arcade-foundry-game-design/v1",
+  "id": "tower-panic",
+  "viewerPromise": "A rescue rigger reads telegraphed industrial hazards, commits to authored routes, and visibly protects a growing convoy.",
+  "ownedPolicy": ["threatLeadFrames"],
+  "hardGates": ["finite", "progress", "rescues", "extractions", "hits", "deadAir", "evidence", "parameterActive"],
+  "humanGates": ["native-visual-review", "catalog-admission", "merge", "push", "deploy"]
+}

@@ -579,6 +579,25 @@ function drawRoadBase(p){
   // cats-eyes stud the lane seams between dashes, and hash-placed manholes
   // vent slow steam so the widened avenue reads built, not empty.
   for(const x of[65,95])for(let y=23+mod(Math.floor(player.y),24);y<H;y+=24){ctx.globalAlpha=.55;rect(x,y,2,1,'#ffe9b0');ctx.globalAlpha=1;}
+  // High-contrast curb gutters and lamp pools keep the long avenue from
+  // reading as one asphalt value: deep ink seams beside cream/neon spill so
+  // native frames hold BLOCK MINE-class luma range without flat filler noise.
+  for(const x of[ROAD_L+5,ROAD_R-7]){
+    rect(x,28,3,H-28,mix(p.road,INK,.72));
+    rect(x+1,28,1,H-28,mix(p.curb,CREAM,.55));
+    for(let y=8+mod(Math.floor(player.y),18);y<H;y+=18){
+      rect(x-2,y,7,4,mix(p.road,INK,.82));
+      rect(x-1,y+1,5,1,mix(CREAM,p.light,.45));
+      rect(x,y,2,1,mix(p.accent,CREAM,.55));
+    }
+  }
+  for(let i=0;i<10;i++){
+    const y=22+mod(i*37+Math.floor(player.y),H-30),
+      x=ROAD_L+10+((hash(i,worldSeed*17)*(ROAD_R-ROAD_L-24))|0);
+    rect(x,y,9,5,mix(p.road,INK,.68));
+    rect(x+1,y+1,7,1,mix(CREAM,p.light,.5));
+    ctx.globalAlpha=.35;rect(x-2,y-3,13,2,mix(p.accent,CREAM,.4));ctx.globalAlpha=1;
+  }
   const mb0=currentBlock()-1,mb1=currentBlock()+3;
   for(let b=mb0;b<=mb1;b++){
     const mx=LANES[mod(b*5+worldSeed,3)]+(((hash(b,worldSeed*11)-.5)*10)|0),

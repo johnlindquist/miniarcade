@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arcade-foundry-experiment/v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "status", "source", "discovery", "memoryAware", "memoryOff", "causal", "acceptance", "selection", "cost", "payloadSha256"],
+  "properties": {
+    "schema": {"const": "arcade-foundry-experiment/v2"},
+    "id": {"const": "tower-panic-cumulative-learning-v2"},
+    "status": {"type": "object", "required": ["learningTrialOk", "humanVisualGate", "releaseEligible"]},
+    "source": {"type": "object", "required": ["baselineCommit", "currentHead", "dirtyInputHash", "inputManifest", "protectedManifest", "runtime"]},
+    "discovery": {"$ref": "#/$defs/artifactReference"},
+    "memoryAware": {"$ref": "#/$defs/artifactReference"},
+    "memoryOff": {"$ref": "#/$defs/artifactReference"},
+    "causal": {"type": "object", "required": ["control", "intervention", "pairs", "ok", "seedRuns", "seedFrames"]},
+    "acceptance": {"type": "object", "minProperties": 9},
+    "selection": {"type": "object", "required": ["genome", "candidateSourceHash", "reason"]},
+    "cost": {"type": "object", "required": ["productionCandidateEvaluations", "controlCandidateEvaluations", "totalExecutedCandidateEvaluations", "productionSeedRuns", "controlSeedRuns", "causalSeedRuns", "totalSeedFrames"]},
+    "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "$defs": {
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "payloadSha256", "fileSha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "fileSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

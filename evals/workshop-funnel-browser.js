@@ -70,8 +70,8 @@ function auditWorkshopMarkup(html,fxSource=''){
     'EGGO_A11Y','Eggo must begin as a labeled disabled button until its interactive mesh is ready');
   addError(errors,attribute(fallbackTag,'src')==='eggo.svg'&&attribute(fallbackTag,'alt')===''&&attribute(fallbackTag,'draggable')==='false',
     'EGGO_FALLBACK','Eggo needs the exact local static fallback');
-  addError(errors,/\.workshop-eggo img\[hidden\]\s*\{[^}]*display\s*:\s*none\b[^}]*\}/.test(html),
-    'EGGO_LAYER','the static Eggo fallback must be removed from rendering while hidden');
+  addError(errors,/\.workshop-eggo img\[hidden\],\.workshop-eggo:not\(:disabled\) img\s*\{[^}]*display\s*:\s*none!important\b[^}]*\}/.test(html),
+    'EGGO_LAYER','the static Eggo fallback must be removed from rendering whenever the mesh is interactive');
   addError(errors,attribute(fxCanvasTag,'aria-hidden')==='true'&&attribute(eggoCanvasTag,'aria-hidden')==='true',
     'CANVAS_A11Y','workshop canvases must be hidden from assistive technology');
   addError(errors,count(html,/<script\b[^>]*src=["']workshop-fx\.js["'][^>]*><\/script>/gi)===1,
@@ -106,9 +106,12 @@ function auditWorkshopMarkup(html,fxSource=''){
     addError(errors,html.includes(`source:'${source}'`),'SOURCE',`missing deliberate activation source: ${source}`);
   addError(errors,/\.is-unlocking \.workshop-scan\{animation:workshop-scan 620ms var\(--ease\) 1\}/.test(html)&&
     /\[data-workshop-state="earned"\] \.workshop-link\{animation:workshop-ticket-pulse 620ms var\(--ease\) 1\}/.test(html)&&
-    !/(?:workshop-scan|workshop-ticket-pulse)[^;}]*infinite/i.test(html),
-    'BOUNDED_ANIMATION','unlock scan and pulse must each run once');
+    /\.workshop-link\.is-eggo-arrival\{animation:workshop-eggo-arrival 640ms var\(--ease\) 1\}/.test(html)&&
+    /@keyframes workshop-eggo-arrival\{[^}]*38%\{[^}]*border-color:[^}]*background:[^}]*box-shadow:[^}]*\}/.test(html)&&
+    !/(?:workshop-scan|workshop-ticket-pulse|workshop-eggo-arrival)[^;}]*infinite/i.test(html),
+    'BOUNDED_ANIMATION','unlock, ticket, and Eggo-arrival pulses must each run once');
   addError(errors,/@media \(prefers-reduced-motion:reduce\)/.test(html)&&
+    /\.workshop-dock,\.workshop-link,\.workshop-link\.is-eggo-arrival,[^{]*\{[^}]*animation:none!important/.test(html)&&
     /\.workshop-eggo-canvas,\.workshop-fx-canvas\{display:none!important\}/.test(html)&&
     /\.workshop-link:hover\{transform:none\}/.test(html),
     'REDUCED_MOTION','reduced motion must disable workshop animation and canvases');
@@ -138,8 +141,28 @@ function auditWorkshopMarkup(html,fxSource=''){
       compactFx.includes("constkey=keyboardActivations.has(keyboardSource)?keyboardSource:''")&&
       compactFx.includes("keyboardSource=remaining[remaining.length-1]||''")&&
       compactFx.includes("source=key?'keyboard':'semantic'")&&
-      compactFx.includes('e.detail>0&&performance.now()-lastPointerRelease<700'),
-      'BOOP_PHYSICS','Eggo boop must use release-aware tap slop and one non-repeating native click path with interruption-safe source attribution');
+      compactFx.includes('e.detail>0&&performance.now()-lastPointerRelease<700')&&
+      compactFx.includes('oscillator.frequency.setValueAtTime(340,t)')&&
+      compactFx.includes('oscillator.frequency.exponentialRampToValueAtTime(150,t+0.09)')&&
+      compactFx.includes("newCustomEvent('miniarcade:boop',{detail:{source}})"),
+      'BOOP_PHYSICS','Eggo boop must use release-aware tap slop, the mdflow tone, and one non-repeating native click path with interruption-safe source attribution');
+    addError(errors,compactFx.includes('letlaunchCtaSignal=null;')&&
+      compactFx.includes('constsignalCta=source=>{if(reduce.matches||document.hidden||!launchCtaSignal)return;launchCtaSignal(source);}')&&
+      count(compactFx,/signalCta\(source\)/g)===1&&
+      compactFx.includes("if(reason==='pointerup'&&gestureDistance>=tapSlop)signalCta('drag');")&&
+      compactFx.includes('launchCtaSignal=launchSignal;')&&
+      compactFx.includes('if(launchCtaSignal===launchSignal)launchCtaSignal=null;'),
+      'CTA_SIGNAL_ROUTING','boops and completed drags must share one lifecycle-owned CTA signal without routing cancellation or long press');
+    addError(errors,compactFx.includes('uniformvec2u_signalStart;')&&compactFx.includes('uniformvec2u_signalEnd;')&&
+      compactFx.includes('uniformfloatu_signalProgress;')&&compactFx.includes('uniformfloatu_signalActive;')&&
+      compactFx.includes('uniformfloatu_ctaExcite;')&&compactFx.includes('vec2signalPosition=mix(u_signalStart,u_signalEnd,signalEase)')&&
+      compactFx.includes('color+=u_signalActive*')&&compactFx.includes('halo+=u_ctaExcite*')&&
+      compactFx.includes('constsignalDuration=500;')&&compactFx.includes('debug.captureSignalFrames=()=>')&&
+      compactFx.includes("cta.classList.add('is-eggo-arrival')")&&compactFx.includes("cta.classList.remove('is-eggo-arrival')"),
+      'CTA_SIGNAL_SHADER','dock shader must render a bounded Eggo projectile, excite the CTA, and expose source-bound signal pixels');
+    addError(errors,compactFx.includes("signalActive=false;signalProgress=0;ctaExcite=0;")&&
+      compactFx.includes('debug.captureSignalFrames=null;')&&compactFx.includes('if(arrivalTimer)clearTimeout(arrivalTimer);'),
+      'CTA_SIGNAL_CLEANUP','signal flight, debug capture, CSS pulse, and callback must be cleared with the shader lifecycle');
     addError(errors,compactFx.includes('vec2toCta=u_cta.xy-u_mouse')&&
       /(?:spotlightSide\+spotlightWobble|spotlightWobble\+spotlightSide)/.test(compactFx)&&
       compactFx.includes('uniformfloatu_spotlightWobble;')&&compactFx.includes('u_spotlightWobble*min(')&&
@@ -187,7 +210,7 @@ function runAdversarialAudits(html,fxSource){
     ['non-button mascot',()=>[html.replace('<button id="workshop-eggo"','<span id="workshop-eggo"'),fxSource]],
     ['missing button type',()=>[html.replace('class="workshop-eggo" type="button"','class="workshop-eggo"'),fxSource]],
     ['enabled static mascot',()=>[html.replace('data-eggo-state="static" disabled','data-eggo-state="static"'),fxSource]],
-    ['visible fallback layer',()=>[html.replace(/\.workshop-eggo img\[hidden\]\s*\{\s*display\s*:\s*none\s*\}/,'.workshop-eggo img[hidden]{display:block}'),fxSource]],
+    ['visible fallback layer',()=>[html.replace(/\.workshop-eggo img\[hidden\],\.workshop-eggo:not\(:disabled\) img\s*\{\s*display\s*:\s*none!important\s*\}/,'.workshop-eggo img[hidden],.workshop-eggo:not(:disabled) img{display:block!important}'),fxSource]],
     ['remote mascot',()=>[html.replace('src="eggo.svg"','src="https://egghead.io/eggo.svg"'),fxSource]],
     ['interactive shader',()=>[html.replace('pointer-events:none;mix-blend-mode','pointer-events:auto;mix-blend-mode'),fxSource]],
     ['missing pointer capture',()=>[html,fxSource.replace(/eggo\.setPointerCapture\(\s*pointerId\s*\)/,'eggo.hasPointerCapture(pointerId)')]],
@@ -200,8 +223,20 @@ function runAdversarialAudits(html,fxSource){
     ['drops overlapping key',()=>[html,fxSource.replace(/keyboardSource\s*=\s*remaining\[remaining\.length\s*-\s*1\]\s*\|\|\s*''\s*;/,"keyboardSource='';")]],
     ['stale keyboard modality',()=>[html,fxSource.replace(/eggo\.addEventListener\(\s*'blur'\s*,\s*resetKeyboardActivation\s*\)/,"eggo.addEventListener('blur',()=>{})")]],
     ['enabled fallback control',()=>[html,fxSource.replace(/eggo\.disabled\s*=\s*true/,'eggo.disabled=false')]],
+    ['missing boop tone',()=>[html,fxSource.replace(/oscillator\.frequency\.setValueAtTime\(\s*340\s*,\s*t\s*\)/,'oscillator.frequency.setValueAtTime(1,t)')]],
+    ['missing boop signal',()=>[html,fxSource.replace(/new CustomEvent\(\s*'miniarcade:boop'/,"new CustomEvent('miniarcade:no-boop'")]],
+    ['missing boop CTA route',()=>[html,fxSource.replace(/signalCta\(\s*source\s*\)\s*;/,'signalCta=null;')]],
+    ['missing drag CTA route',()=>[html,fxSource.replace(/if\(reason==='pointerup'&&gestureDistance>=tapSlop\)signalCta\('drag'\);/,"if(false)signalCta('drag');")]],
+    ['drag CTA route on cancellation',()=>[html,fxSource.replace(/reason==='pointerup'&&gestureDistance>=tapSlop/,"reason!=='pointerdown'&&gestureDistance>=tapSlop")]],
+    ['wrong drag CTA threshold',()=>[html,fxSource.replace(/gestureDistance>=tapSlop/, 'gestureDistance>=0')]],
+    ['stale CTA callback',()=>[html,fxSource.replace(/if\(launchCtaSignal===launchSignal\)launchCtaSignal=null;/,'launchCtaSignal=launchSignal;')]],
     ['unscaled boop impulse',()=>[html,fxSource.replace(/540\s*\*\s*Math\.min\(\s*artW\s*,\s*artH\s*\)\s*\/\s*124/,'540*Math.min(artW,artH)/1')]],
     ['discarded Eggo framebuffer',()=>[html,fxSource.replace(/premultipliedAlpha\s*:\s*true\s*,\s*preserveDrawingBuffer\s*:\s*true/,'premultipliedAlpha:true,preserveDrawingBuffer:false')]],
+    ['unbounded Eggo arrival pulse',()=>[html.replace('animation:workshop-eggo-arrival 640ms var(--ease) 1','animation:workshop-eggo-arrival 640ms var(--ease) infinite'),fxSource]],
+    ['reduced-motion Eggo pulse',()=>[html.replace('.workshop-link.is-eggo-arrival,.workshop-arrow','.workshop-arrow'),fxSource]],
+    ['missing signal projectile',()=>[html,fxSource.replace(/color\s*\+=\s*u_signalActive\s*\*/,'color+=0.0*')]],
+    ['missing CTA excitation',()=>[html,fxSource.replace(/halo\s*\+=\s*u_ctaExcite\s*\*/,'halo+=0.0*')]],
+    ['missing signal capture',()=>[html,fxSource.replace(/debug\.captureSignalFrames\s*=\s*\(\)\s*=>/,'debug.captureSignalFrames=null||(()=>')]],
     ['missing spotlight',()=>[html,fxSource.replace(/color\s*\+=\s*u_spotlight\s*\*\s*spotlight/,'color+=0.0*spotlight')]],
     ['missing spotlight bend',()=>[html,fxSource.replace(/\*\s*u_spotlightWobble\s*\*\s*min\s*\(\s*16(?:\.0*)?\s*,\s*u_resolution\.y\s*\*\s*(?:0?\.24)\s*\)/,'*0.0*min(16.0,u_resolution.y*0.24)')]],
     ['static spotlight bend',()=>[html,fxSource.replace(/noise\s*\(\s*vec2\s*\(\s*spotlightT\s*\*\s*7(?:\.0*)?\s*-\s*u_wobbleTime\s*\*\s*1\.4\s*,\s*13\.1\s*\)\s*\)/,'0.0')]],
@@ -437,6 +472,73 @@ function spotlightEvidence(pair,later){
     temporalShiftBins:temporalBins,maxTemporalShift:+maxTemporalShift.toFixed(3)};
 }
 
+function signalEvidence(frames){
+  const names=['baseline','early','middle','late','arrival','decayed'];
+  assert(frames&&names.every(name=>Array.isArray(frames[name])&&frames[name].length===frames.width*frames.height*4),
+    'source-bound signal capture is unavailable');
+  const vx=frames.end.x-frames.start.x,vy=frames.end.y-frames.start.y,length=Math.max(1,Math.hypot(vx,vy)),length2=length*length;
+  const summarize=name=>{
+    const render=frames[name];let weight=0,xWeight=0,yWeight=0,changed=0,side2=0;
+    for(let pixel=0;pixel<frames.width*frames.height;pixel++){
+      const offset=pixel*4;
+      const value=Math.max(0,render[offset]-frames.baseline[offset])+
+        Math.max(0,render[offset+1]-frames.baseline[offset+1])+
+        Math.max(0,render[offset+2]-frames.baseline[offset+2]);
+      if(value<2)continue;
+      const x=pixel%frames.width,y=Math.floor(pixel/frames.width);
+      const side=((x-frames.start.x)*vy-(y-frames.start.y)*vx)/length;
+      weight+=value;xWeight+=x*value;yWeight+=y*value;side2+=side*side*value;changed++;
+    }
+    const x=weight?xWeight/weight:0,y=weight?yWeight/weight:0;
+    let radius2=0;
+    for(let pixel=0;pixel<frames.width*frames.height;pixel++){
+      const offset=pixel*4;
+      const value=Math.max(0,render[offset]-frames.baseline[offset])+
+        Math.max(0,render[offset+1]-frames.baseline[offset+1])+
+        Math.max(0,render[offset+2]-frames.baseline[offset+2]);
+      if(value<2)continue;
+      const px=pixel%frames.width,py=Math.floor(pixel/frames.width);
+      radius2+=((px-x)*(px-x)+(py-y)*(py-y))*value;
+    }
+    return{name,weight,changed,x,y,progress:((x-frames.start.x)*vx+(y-frames.start.y)*vy)/length2,
+      distance:Math.hypot(x-frames.end.x,y-frames.end.y),sideRms:weight?Math.sqrt(side2/weight):0,
+      radiusRms:weight?Math.sqrt(radius2/weight):0};
+  };
+  const travel=['early','middle','late'].map(summarize);
+  assert(travel.every(item=>item.weight>1500&&item.changed>8),`signal projectile lacks visible energy (${JSON.stringify(travel)})`);
+  assert(travel[0].progress<travel[1].progress&&travel[1].progress<travel[2].progress&&travel[0].progress>0.04&&travel[2].progress<0.98,
+    `signal centroid did not advance monotonically (${JSON.stringify(travel)})`);
+  assert(travel[0].distance>travel[1].distance&&travel[1].distance>travel[2].distance,
+    `signal centroid did not approach the CTA (${JSON.stringify(travel)})`);
+  const maxChanged=Math.max(...travel.map(item=>item.changed));
+  const maxSideRms=Math.max(...travel.map(item=>item.sideRms));
+  const maxRadiusRms=Math.max(...travel.map(item=>item.radiusRms));
+  assert(maxChanged<frames.width*frames.height*0.06&&maxRadiusRms<20,
+    `signal energy spread into a corridor (${JSON.stringify({maxChanged,maxRadiusRms,area:frames.width*frames.height})})`);
+  const ctaEnergy=name=>{
+    const render=frames[name];let energy=0,changed=0;
+    const left=Math.max(0,Math.floor(frames.cta.x-frames.cta.w-24));
+    const right=Math.min(frames.width-1,Math.ceil(frames.cta.x+frames.cta.w+24));
+    const bottom=Math.max(0,Math.floor(frames.cta.y-frames.cta.h-24));
+    const top=Math.min(frames.height-1,Math.ceil(frames.cta.y+frames.cta.h+24));
+    for(let y=bottom;y<=top;y++)for(let x=left;x<=right;x++){
+      const offset=(y*frames.width+x)*4;
+      const value=Math.max(0,render[offset]-frames.baseline[offset])+
+        Math.max(0,render[offset+1]-frames.baseline[offset+1])+
+        Math.max(0,render[offset+2]-frames.baseline[offset+2]);
+      energy+=value;if(value>=2)changed++;
+    }
+    return{energy,changed};
+  };
+  const arrival=ctaEnergy('arrival'),decayed=ctaEnergy('decayed');
+  assert(arrival.energy>8000&&arrival.changed>20&&arrival.energy>decayed.energy*2,
+    `CTA excitation did not peak and decay (${JSON.stringify({arrival,decayed})})`);
+  return{travel:travel.map(item=>({progress:+item.progress.toFixed(3),distance:+item.distance.toFixed(2),
+      changedPixels:item.changed,sideRms:+item.sideRms.toFixed(2),radiusRms:+item.radiusRms.toFixed(2)})),
+    compact:{maxChangedPixels:maxChanged,maxSideRms:+maxSideRms.toFixed(2),maxRadiusRms:+maxRadiusRms.toFixed(2)},
+    cta:{arrivalEnergy:arrival.energy,decayedEnergy:decayed.energy,arrivalPixels:arrival.changed}};
+}
+
 async function exerciseEggo(page){
   await page.waitForFunction(()=>['ready','idle'].includes(document.getElementById('workshop-eggo').dataset.eggoState));
   await page.waitForFunction(()=>window.__workshopFx&&!window.__workshopFx.eggoRafActive);
@@ -451,7 +553,7 @@ async function exerciseEggo(page){
       disabled:eggo.disabled,label:eggo.getAttribute('aria-label'),
       layers:{fallbackHidden:fallback.hidden,fallbackDisplay:getComputedStyle(fallback).display,fallbackWidth:fallbackRect.width,
         canvasHidden:canvas.hidden,canvasDisplay:getComputedStyle(canvas).display,canvasWidth:canvasRect.width},
-      events:{...window.__workshopFx.events}};
+      events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal}};
   });
   assert(beforeState.layers.fallbackHidden&&beforeState.layers.fallbackDisplay==='none'&&beforeState.layers.fallbackWidth===0,
     `static Eggo is still visible beneath the mesh (${JSON.stringify(beforeState.layers)})`);
@@ -467,9 +569,18 @@ async function exerciseEggo(page){
   await page.mouse.up();
   assert(await page.evaluate(()=>document.activeElement?.id==='workshop-eggo'),'pointer activation did not preserve native Eggo focus');
   await page.waitForFunction(count=>window.__workshopFx.events.pointerBoop===count+1,{},beforeState.events.pointerBoop);
+  await page.waitForFunction(count=>window.__workshopFx.signal.launches===count+1&&window.__workshopFx.signal.source==='pointer',{},beforeState.signal.launches);
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='booping');
   await delay(45);
   const booped=await captureEggoPixels(page);
+  await page.waitForFunction(count=>window.__workshopFx.signal.arrivals===count+1,{},beforeState.signal.arrivals);
+  const arrivalPulse=await page.evaluate(()=>{
+    const cta=document.getElementById('workshop-cta'),style=getComputedStyle(cta);
+    return{classed:cta.classList.contains('is-eggo-arrival'),animationName:style.animationName,
+      animationIterations:style.animationIterationCount,excite:window.__workshopFx.signal.ctaExcite};
+  });
+  assert(arrivalPulse.classed&&arrivalPulse.animationName==='workshop-eggo-arrival'&&arrivalPulse.animationIterations==='1'&&arrivalPulse.excite>0,
+    `pointer signal did not light the CTA with one bounded pulse (${JSON.stringify(arrivalPulse)})`);
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
   await page.waitForFunction(()=>!window.__workshopFx.eggoRafActive);
   await page.evaluate(()=>document.activeElement?.blur());
@@ -484,9 +595,22 @@ async function exerciseEggo(page){
   await delay(430);
   await page.mouse.up();
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
-  const afterLongPress=await page.evaluate(()=>({...window.__workshopFx.events}));
-  assert(afterLongPress.pointerBoop===boopsAfterTap&&afterLongPress.longPressRejected===beforeState.events.longPressRejected+1,
-    'long press incorrectly triggered a boop');
+  const afterLongPress=await page.evaluate(()=>({events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal}}));
+  assert(afterLongPress.events.pointerBoop===boopsAfterTap&&afterLongPress.events.longPressRejected===beforeState.events.longPressRejected+1&&
+    afterLongPress.signal.launches===beforeState.signal.launches+1,
+    'long press incorrectly triggered a boop or CTA signal');
+
+  await page.evaluate(point=>{
+    const eggo=document.getElementById('workshop-eggo');
+    const fire=(type,pointerId,x)=>eggo.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId,pointerType:'mouse',isPrimary:true,
+      button:0,clientX:x,clientY:point.y}));
+    fire('pointerdown',72,point.x);fire('pointermove',72,point.x+24);fire('pointercancel',72,point.x+24);
+    fire('pointerdown',73,point.x);fire('pointermove',73,point.x+24);fire('lostpointercapture',73,point.x+24);
+  },beforeState.rect);
+  await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
+  const afterCancelled=await page.evaluate(()=>({events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal}}));
+  assert(afterCancelled.events.cancel===beforeState.events.cancel+2&&afterCancelled.signal.launches===beforeState.signal.launches+1,
+    'pointer cancellation or lost capture incorrectly launched a CTA signal');
 
   await page.evaluate(point=>{
     const eggo=document.getElementById('workshop-eggo');
@@ -500,9 +624,10 @@ async function exerciseEggo(page){
     }));
   },beforeState.rect);
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
-  const afterDroppedMove=await page.evaluate(()=>({...window.__workshopFx.events}));
-  assert(afterDroppedMove.pointerBoop===boopsAfterTap&&afterDroppedMove.dragRelease===beforeState.events.dragRelease+1,
-    'pointerup displacement without pointermove incorrectly triggered a boop');
+  const afterDroppedMove=await page.evaluate(()=>({events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal}}));
+  assert(afterDroppedMove.events.pointerBoop===boopsAfterTap&&afterDroppedMove.events.dragRelease===beforeState.events.dragRelease+1&&
+    afterDroppedMove.signal.launches===beforeState.signal.launches+2&&afterDroppedMove.signal.source==='drag',
+    'pointerup displacement without pointermove did not emit exactly one drag CTA signal');
 
   await page.mouse.move(beforeState.rect.x,beforeState.rect.y);
   await page.mouse.down();
@@ -514,13 +639,14 @@ async function exerciseEggo(page){
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
   await waitForPresentation(page);
   const settled=await captureEggoPixels(page);
-  const afterDrag=await page.evaluate(()=>({events:{...window.__workshopFx.events},
+  const afterDrag=await page.evaluate(()=>({events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal},
     active:document.querySelector('.game-card.is-active')?.dataset.index,
     position:document.getElementById('position').textContent.trim(),scroll:document.getElementById('game-track').scrollLeft,
     footer:document.querySelector('.site-footer').getBoundingClientRect().height}));
   assert(afterDrag.events.pointerBoop===boopsAfterTap&&afterDrag.events.dragRelease===beforeState.events.dragRelease+2&&
-    afterDrag.events.semanticBoop===beforeState.events.semanticBoop,
-    'pointer gesture double-fired semantic activation or stretch drag incorrectly triggered a boop');
+    afterDrag.events.semanticBoop===beforeState.events.semanticBoop&&afterDrag.signal.launches===beforeState.signal.launches+3&&
+    afterDrag.signal.source==='drag',
+    'pointer drag must emit one CTA signal without double-firing semantic activation or a boop');
   assert(beforeState.active===afterDrag.active&&beforeState.position===afterDrag.position,'pointer Eggo interaction changed gallery selection');
   assert(Math.abs(beforeState.scroll-afterDrag.scroll)<1,'pointer Eggo interaction moved the gallery rail');
   assert(Math.abs(beforeState.footer-afterDrag.footer)<1,'pointer Eggo interaction changed footer height');
@@ -543,18 +669,21 @@ async function exerciseEggo(page){
   assert(focus.style!=='none'&&focus.width>=1,'Eggo boop button lacks a visible focus outline');
   const keyboardStart=afterDrag.events.keyboardBoop;
   const semanticStart=afterDrag.events.semanticBoop;
+  const keyboardSignalStart=afterDrag.signal.launches;
   const keyboardRest=await captureEggoPixels(page);
   await page.keyboard.down('Enter');
-  await page.waitForFunction(count=>window.__workshopFx.events.keyboardBoop===count+1&&window.__eggoNativeClicks===1,{},keyboardStart);
+  await page.waitForFunction((boops,signals)=>window.__workshopFx.events.keyboardBoop===boops+1&&window.__eggoNativeClicks===1&&
+    window.__workshopFx.signal.launches===signals+1&&window.__workshopFx.signal.source==='keyboard',{},keyboardStart,keyboardSignalStart);
   await page.keyboard.down('Enter');
   await delay(45);
   const enterRepeat=await page.evaluate(()=>({
     keyboard:window.__workshopFx.events.keyboardBoop,
     semantic:window.__workshopFx.events.semanticBoop,
-    clicks:window.__eggoNativeClicks
+    clicks:window.__eggoNativeClicks,signals:window.__workshopFx.signal.launches
   }));
-  assert(enterRepeat.keyboard===keyboardStart+1&&enterRepeat.semantic===semanticStart&&enterRepeat.clicks===1,
-    'repeated Enter keydown emitted an extra native click or boop');
+  assert(enterRepeat.keyboard===keyboardStart+1&&enterRepeat.semantic===semanticStart&&enterRepeat.clicks===1&&
+    enterRepeat.signals===keyboardSignalStart+1,
+    'repeated Enter keydown emitted an extra native click, boop, or CTA signal');
   await page.keyboard.up('Enter');
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='booping');
   const enterBoop=await captureEggoPixels(page);
@@ -562,11 +691,13 @@ async function exerciseEggo(page){
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='idle');
   await page.keyboard.down('Space');
   await delay(45);
-  const spaceDown=await page.evaluate(()=>({boops:window.__workshopFx.events.keyboardBoop,clicks:window.__eggoNativeClicks}));
-  assert(spaceDown.boops===keyboardStart+1&&spaceDown.clicks===1,
-    'Space activated Eggo on keydown instead of the native keyup click');
+  const spaceDown=await page.evaluate(()=>({boops:window.__workshopFx.events.keyboardBoop,clicks:window.__eggoNativeClicks,
+    signals:window.__workshopFx.signal.launches}));
+  assert(spaceDown.boops===keyboardStart+1&&spaceDown.clicks===1&&spaceDown.signals===keyboardSignalStart+1,
+    'Space activated Eggo or the CTA signal on keydown instead of the native keyup click');
   await page.keyboard.up('Space');
-  await page.waitForFunction(count=>window.__workshopFx.events.keyboardBoop===count+2&&window.__eggoNativeClicks===2,{},keyboardStart);
+  await page.waitForFunction((boops,signals)=>window.__workshopFx.events.keyboardBoop===boops+2&&window.__eggoNativeClicks===2&&
+    window.__workshopFx.signal.launches===signals+2&&window.__workshopFx.signal.source==='keyboard',{},keyboardStart,keyboardSignalStart);
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='booping');
   await delay(45);
   const spaceBoop=await captureEggoPixels(page);
@@ -604,13 +735,15 @@ async function exerciseEggo(page){
   const interrupted=await page.evaluate(()=>({
     keyboard:window.__workshopFx.events.keyboardBoop,
     semantic:window.__workshopFx.events.semanticBoop,
-    clicks:window.__eggoNativeClicks
+    clicks:window.__eggoNativeClicks,signals:window.__workshopFx.signal.launches
   }));
-  assert(interrupted.keyboard===keyboardAfterOverlap&&interrupted.semantic===semanticStart&&interrupted.clicks===nativeAfterOverlap,
-    'interrupted Space activation emitted a click or retained keyboard activation');
+  assert(interrupted.keyboard===keyboardAfterOverlap&&interrupted.semantic===semanticStart&&interrupted.clicks===nativeAfterOverlap&&
+    interrupted.signals===keyboardSignalStart+4,
+    'interrupted Space activation emitted a click, CTA signal, or retained keyboard activation');
   await page.evaluate(()=>document.getElementById('workshop-eggo').click());
-  await page.waitForFunction((count,native)=>window.__workshopFx.events.semanticBoop===count+1&&window.__eggoNativeClicks===native+1,
-    {},semanticStart,nativeAfterOverlap);
+  await page.waitForFunction((count,native,signals)=>window.__workshopFx.events.semanticBoop===count+1&&window.__eggoNativeClicks===native+1&&
+    window.__workshopFx.signal.launches===signals+5&&window.__workshopFx.signal.source==='semantic',
+    {},semanticStart,nativeAfterOverlap,keyboardSignalStart);
   await page.waitForFunction(()=>document.getElementById('workshop-eggo').dataset.eggoState==='booping');
   await delay(45);
   const semanticBoop=await captureEggoPixels(page);
@@ -621,8 +754,8 @@ async function exerciseEggo(page){
     active:document.querySelector('.game-card.is-active')?.dataset.index,
     position:document.getElementById('position').textContent.trim(),scroll:document.getElementById('game-track').scrollLeft,
     footer:document.querySelector('.site-footer').getBoundingClientRect().height,
-    raf:window.__workshopFx.eggoRafActive,events:{...window.__workshopFx.events},
-    ctaClicks:window.__eggoCtaClicks,nativeClicks:window.__eggoNativeClicks
+    raf:window.__workshopFx.eggoRafActive,events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal},
+    ctaClicks:window.__eggoCtaClicks,nativeClicks:window.__eggoNativeClicks,activeElement:document.activeElement?.id||''
   }));
   await page.evaluate(()=>document.activeElement?.blur());
   await waitForPresentation(page);
@@ -632,13 +765,16 @@ async function exerciseEggo(page){
   assert(hash(rest)===hash(settled)&&hash(rest)===hash(finalRest),
     `Eggo did not return to its exact rest pixels (${JSON.stringify({rest:hash(rest),settled:hash(settled),final:hash(finalRest)})})`);
   assert(afterState.events.keyboardBoop===keyboardAfterOverlap&&afterState.events.semanticBoop===semanticStart+1&&
-    afterState.nativeClicks===nativeAfterOverlap+1&&afterState.ctaClicks===0,
-  'keyboard and semantic activation must converge on exactly one native Eggo click without triggering the CTA');
+    afterState.nativeClicks===nativeAfterOverlap+1&&afterState.ctaClicks===0&&
+    afterState.signal.launches===keyboardSignalStart+5&&afterState.signal.source==='semantic'&&afterState.activeElement!=='workshop-cta',
+  'keyboard and semantic activation must emit one CTA signal per native Eggo click without activating or focusing the CTA');
   assert(!afterState.raf,'Eggo retained an animation frame after settling');
   return{singleLayer:true,pointerBoop:true,keyboardBoops:afterState.events.keyboardBoop-keyboardStart,
     semanticBoop:true,nativeClickActivations:afterState.nativeClicks,
     repeatSuppressed:true,overlappingKeys:true,interruptedSourceReset:true,droppedMoveSuppressed:true,
-    dragSuppressed:true,longPressSuppressed:true,keyboardPixels:true,restored:true,events:afterState.events};
+    dragSuppressed:true,longPressSuppressed:true,keyboardPixels:true,restored:true,events:afterState.events,
+    signal:{launches:afterState.signal.launches-beforeState.signal.launches,arrivals:afterState.signal.arrivals-beforeState.signal.arrivals,
+      finalSource:afterState.signal.source,ctaUntouched:afterState.ctaClicks===0&&afterState.activeElement!=='workshop-cta'}};
 }
 
 async function exerciseShader(page){
@@ -661,6 +797,8 @@ async function exerciseShader(page){
   await delay(600);
   const spotlightLater=await page.evaluate(()=>window.__workshopFx.captureSpotlightPair());
   const spotlight=spotlightEvidence(spotlightPair,spotlightLater);
+  const signalFrames=await page.evaluate(()=>window.__workshopFx.captureSignalFrames());
+  const signal=signalEvidence(signalFrames);
   const debug=await page.evaluate(()=>{
     const dock=document.getElementById('workshop-dock'),canvas=document.getElementById('workshop-fx-canvas');
     [...dock.children].filter(child=>child!==canvas).forEach(child=>{child.style.opacity=child.dataset.evalOpacity||'';delete child.dataset.evalOpacity;});
@@ -671,7 +809,7 @@ async function exerciseShader(page){
     `mouse shader did not track separated pointer positions (${JSON.stringify({leftPointer,debug})})`);
   assert(geometry.canvasWidth<=Math.ceil(geometry.width*.75)+1&&geometry.canvasHeight<=Math.ceil(geometry.height*.75)+1,
     'mouse shader backing buffer exceeds its resolution cap');
-  return{responsive:true,spotlight:{proved:true,...spotlight},draws:debug.draws,
+  return{responsive:true,spotlight:{proved:true,...spotlight},signal:{proved:true,...signal},draws:debug.draws,
     resolution:{width:geometry.canvasWidth,height:geometry.canvasHeight}};
 }
 async function exerciseContextLoss(page){
@@ -692,7 +830,9 @@ async function exerciseContextLoss(page){
       document.getElementById('workshop-eggo-fallback').hidden===false&&
       document.getElementById('workshop-eggo-canvas').hidden===true&&
       document.getElementById('workshop-dock').dataset.workshopShader==='failed'&&
-      window.__workshopFx.captureEggoPixels===null&&window.__workshopFx.captureSpotlightPair===null;
+      window.__workshopFx.captureEggoPixels===null&&window.__workshopFx.captureSpotlightPair===null&&
+      window.__workshopFx.captureSignalFrames===null&&!window.__workshopFx.signal.active&&
+      !document.getElementById('workshop-cta').classList.contains('is-eggo-arrival');
   });
   return{meshFallback:true,shaderFailed:true,controlDisabled:true};
 }
@@ -826,11 +966,12 @@ async function runMobile(browser,baseUrl,width,height,receiptDir,timeoutMs){
     await touchDrag(page);
     await touchCancel(page);
     const stableAfter=await waitForGalleryStable(page);
-    const galleryAfter=await page.evaluate(stable=>({...stable,events:{...window.__workshopFx.events}}),stableAfter);
+    const galleryAfter=await page.evaluate(stable=>({...stable,events:{...window.__workshopFx.events},signal:{...window.__workshopFx.signal}}),stableAfter);
     const earned=await stateOf(page);const after=await layoutState(page);
     assert(earned.state==='earned'&&earned.seen===3,`${width}x${height} did not earn after three Next activations`);
     assert(!earned.eggoDisabled&&/tap to boop, grab to stretch/i.test(earned.eggoLabel),`${width}x${height} interactive Eggo is disabled or mislabeled`);
-    assert(earned.shader==='disabled',`${width}x${height} should disable the mouse shader`);
+    assert(earned.shader==='disabled'&&galleryAfter.signal.launches===0&&!galleryAfter.signal.active,
+      `${width}x${height} should disable the dock shader and Eggo CTA projectile`);
     assert(galleryAfter.events.pointerBoop>=1&&galleryAfter.events.dragRelease>=1&&galleryAfter.events.cancel>=1&&
       galleryAfter.events.semanticBoop===0,`${width}x${height} did not distinguish touch tap, drag, cancel, and synthetic click suppression`);
     assert(galleryBefore.position===galleryAfter.position&&Math.abs(galleryBefore.scroll-galleryAfter.scroll)<1,
@@ -894,10 +1035,12 @@ async function runReducedMotion(browser,baseUrl,receiptDir,timeoutMs){
       fallback:!document.getElementById('workshop-eggo-fallback').hidden,
       mesh:document.getElementById('workshop-eggo-canvas').hidden,
       capture:window.__workshopFx.captureEggoPixels,
-      spotlight:window.__workshopFx.captureSpotlightPair
+      spotlight:window.__workshopFx.captureSpotlightPair,signalCapture:window.__workshopFx.captureSignalFrames,
+      signal:{...window.__workshopFx.signal},arrivalClass:document.getElementById('workshop-cta').classList.contains('is-eggo-arrival')
     }));
-    assert(liveTransition.fallback&&liveTransition.mesh&&liveTransition.capture===null&&liveTransition.spotlight===null,
-      'live reduced-motion transition retained an interactive canvas or debug capture');
+    assert(liveTransition.fallback&&liveTransition.mesh&&liveTransition.capture===null&&liveTransition.spotlight===null&&
+      liveTransition.signalCapture===null&&!liveTransition.signal.active&&!liveTransition.arrivalClass,
+      'live reduced-motion transition retained an interactive canvas, CTA signal, or debug capture');
     const keyboard=await focusAndActivateCta(page);
     assert(requests.filter(isEgghead).length===0,'reduced-motion keyboard interception contacted egghead');
     assert(!errors.length,`reduced-motion page errors: ${errors.join('; ')}`);
@@ -919,11 +1062,13 @@ async function runWebglFailure(browser,baseUrl,receiptDir,timeoutMs){
         fallbackVisible:!fallback.hidden&&getComputedStyle(fallback).display!=='none'&&fallback.getBoundingClientRect().width>0,
         meshHidden:mesh.hidden&&getComputedStyle(mesh).display==='none',
         ctaVisible:document.getElementById('workshop-cta').getBoundingClientRect().width>0,
+        signalCapture:window.__workshopFx.captureSignalFrames,signal:{...window.__workshopFx.signal},
         cards:document.querySelectorAll('.game-card').length};
     });
     assert(state.eggo==='static'&&state.eggoDisabled&&!/tap to boop/i.test(state.eggoLabel)&&state.fallbackVisible&&state.meshHidden,
       'WebGL failure did not reveal a disabled static Eggo');
-    assert(state.shader==='failed','WebGL failure did not disable the dock shader');
+    assert(state.shader==='failed'&&state.signalCapture===null&&state.signal.launches===0&&!state.signal.active,
+      'WebGL failure did not disable the dock shader and CTA signal');
     assert(state.ctaVisible&&state.cards===GAME_COUNT,'WebGL failure broke the CTA or gallery');
     assert(!errors.length,`WebGL failure produced page errors: ${errors.join('; ')}`);
     if(receiptDir)await page.screenshot({path:path.join(receiptDir,'webgl-failure.png')});
@@ -951,11 +1096,12 @@ async function runWorkshopBrowserChecks({baseUrl,root,timeoutMs=20000,receiptDir
     const mobile360=await runMobile(browser,siteUrl.href,360,640,receiptDir,timeoutMs);
     const reducedMotion=await runReducedMotion(browser,siteUrl.href,receiptDir,timeoutMs);
     const webglFailure=await runWebglFailure(browser,siteUrl.href,receiptDir,timeoutMs);
-    const receipt={schema:6,surface:'workshop-funnel',baseOrigin:siteUrl.origin,gameCount:GAME_COUNT,eggoHash:EGGO_HASH,
+    const receipt={schema:7,surface:'workshop-funnel',baseOrigin:siteUrl.origin,gameCount:GAME_COUNT,eggoHash:EGGO_HASH,
       viewports:[{name:'desktop',width:1440,height:900},{name:'mobile-390x844',width:390,height:844},
         {name:'mobile-360x640',width:360,height:640},{name:'reduced-motion',width:1440,height:900},{name:'webgl-failure',width:1440,height:900}],
       initialState:desktop.initial,progression:desktop.progression,earnedState:desktop.earnedState,activePosition:desktop.activePosition,
       outbound:desktop.outbound,keyboard:desktop.keyboard,stretch:desktop.stretch,shader:desktop.shader,
+      signal:{interactions:desktop.stretch.signal,pixels:desktop.shader.signal},
       mobile:{tap:mobile390.touchBoop&&mobile360.touchBoop,drag:mobile390.touchStretch&&mobile360.touchStretch,
         cancel:mobile390.touchCancel&&mobile360.touchCancel,events390:mobile390.events,events360:mobile360.events},
       reducedMotion:{earned:reducedMotion.earned,eggo:reducedMotion.eggo,shader:reducedMotion.shader,
