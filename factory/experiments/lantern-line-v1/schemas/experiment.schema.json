@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arcade-foundry-lantern-line-experiment/v1",
+  "type": "object",
+  "required": ["schema", "id", "incumbentGenome", "status", "source", "discovery", "memoryAware", "memoryOff", "causal", "acceptance", "selection", "cost", "payloadSha256"],
+  "properties": {
+    "schema": {"const": "arcade-foundry-lantern-line-experiment/v1"},
+    "id": {"const": "lantern-line-foundry-v1"},
+    "incumbentGenome": {"type": "object", "required": ["clogLeadFrames"]},
+    "status": {
+      "type": "object",
+      "required": ["learningTrialOk", "claimEmitted", "memorySavingsClaimed", "humanVisualGate", "releaseEligible"],
+      "properties": {
+        "learningTrialOk": {"type": "boolean"},
+        "claimEmitted": {"type": "boolean"},
+        "memorySavingsClaimed": {"type": "boolean"},
+        "humanVisualGate": {"enum": ["pending", "approved", "rejected"]},
+        "releaseEligible": {"type": "boolean"}
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": ["genome", "candidateSourceHash", "reason"],
+      "properties": {"genome": {"type": "object", "required": ["clogLeadFrames"]}}
+    },
+    "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": true
+}

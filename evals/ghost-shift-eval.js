@@ -7,6 +7,7 @@ const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
 const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
 const{assertEntertainment}=require('./entertainment');
+const AEP=require('./evidence');
 let failed=false;
 const fail=message=>{console.error('  FAIL:',message);failed=true};
 const source=fs.readFileSync(path.join(__dirname,'..','ghost-shift.html'),'utf8');
@@ -62,6 +63,20 @@ console.log('1b) payoff FX no-op, shared intent schema, and hidden computed path
   console.log('  FX signature identical; intent keys '+botKeys+'; computed route has no render/HUD consumer');
 }
 
+console.log('1c) ambient evidence is additive, RNG-inert, and signature-neutral');
+{
+  const a=bootGame('ghost-shift',{seed:0x6503}),b=bootGame('ghost-shift',{seed:0x6503,footer:'globalThis.__NO_EVIDENCE_LEDGER=true;'});
+  a.frames(18000,false);b.frames(18000,false);
+  const signature=a.sandbox.__ghostShiftSignature(),offSignature=b.sandbox.__ghostShiftSignature();
+  const pa=a.sandbox.__ghostShiftProbe(),pb=b.sandbox.__ghostShiftProbe(),ambient=a.sandbox.__ambientProbe(),off=b.sandbox.__ambientProbe();
+  if(signature!==offSignature)fail('evidence ledger changed same-seed simulation signature');
+  if(JSON.stringify(pa.stats)!==JSON.stringify(pb.stats)||pa.events!==pb.events||pa.progress!==pb.progress)fail('evidence ledger changed natural counters');
+  if(a.engine.random()!==b.engine.random())fail('evidence ledger changed engine RNG state');
+  if(ambient.stateDigest!==signature||off.stateDigest!==offSignature)fail('ambient state digest diverged from existing signature');
+  if(off.ledger.enabled||off.ledger.events.length||off.ledger.serial!==0)fail('__NO_EVIDENCE_LEDGER did not expose an empty disabled ledger');
+  console.log('  signatures, RNG, stats, event/progress counters identical; disabled ledger empty');
+}
+
 console.log('2) ten-minute authored-room soak: puzzles, pressure, choices, no dead air');
 for(const seed of[0x6510,0x6511]){
   const{game,samples}=runSoak('ghost-shift',{seed,minutes:10}),soak=analyzeSoak(samples),p=game.sandbox.__ghostShiftProbe();
@@ -75,6 +90,24 @@ for(const seed of[0x6510,0x6511]){
     decisions:{puzzle:{count:p.stats.puzzleSteps,source:'stats.puzzleSteps'},threat:{count:p.stats.engagements,source:'stats.engagements'},response:{count:p.stats.pulses+p.stats.dodges,source:'stats.pulses+stats.dodges'},combat:{count:p.stats.stuns,source:'stats.stuns'},payoff:{count:p.stats.loot+p.stats.escapes,source:'stats.loot+stats.escapes'}},
     maxDeadAir:p.stats.maxInertFrames
   };
+  const ambient=game.sandbox.__ambientProbe(),ledger=ambient.ledger,ledgerReport=AEP.validateEvidence(ledger);
+  if(ambient.protocol!==AEP.PROTOCOL||ambient.schema!==1||ambient.game!=='ghost-shift'||ambient.frame.run!==p.runFrame||ambient.frame.show!==p.showFrame||ambient.showFrame!==p.showFrame||ambient.runFrame!==p.runFrame||!ambient.finite)fail(seed.toString(16)+': ambient probe envelope drifted');
+  if(ambient.stateSignature!==game.sandbox.__ghostShiftSignature()||ambient.stateDigest!==ambient.stateSignature)fail(seed.toString(16)+': ambient signature aliases differ from the existing simulation signature');
+  if(JSON.stringify(ambient.counters)!==JSON.stringify(p.stats)||ambient.serial!==ledger.serial||JSON.stringify(ambient.events)!==JSON.stringify(ledger.events))fail(seed.toString(16)+': ambient counter or ledger aliases drifted');
+  if(JSON.stringify(evidence)!==JSON.stringify(ambient.evidence)||JSON.stringify(ambient.entertainment)!==JSON.stringify(evidence))fail(seed.toString(16)+': existing entertainment evidence differs from ambient declaration');
+  if(JSON.stringify(ambient.motion)!==JSON.stringify(game.sandbox.__motionProbe())||JSON.stringify(ambient.soak)!==JSON.stringify(game.sandbox.__soakProbe()))fail(seed.toString(16)+': ambient probe changed motion/soak adapters');
+  if(JSON.stringify(ambient.topology)!==JSON.stringify(evidence.topology))fail(seed.toString(16)+': ambient topology differs from entertainment topology');
+  if(!ledgerReport.ok)fail(seed.toString(16)+': ambient ledger invalid '+ledgerReport.reasons.join(','));
+  const bySerial=new Map(ledger.events.map(event=>[event.serial,event])),responses=ledger.events.filter(event=>event.kind==='response'),commits=ledger.events.filter(event=>event.kind==='commit'),payoffs=ledger.events.filter(event=>event.kind==='payoff'),threats=ledger.events.filter(event=>event.kind==='threat');
+  if(!responses.length||!commits.length||!payoffs.length||!threats.length)fail(seed.toString(16)+': ambient ledger omitted a causal evidence category');
+  if(responses.some(event=>event.actorId!=='courier'||!event.setupSerial||bySerial.get(event.causeSerial)?.kind!=='threat'))fail(seed.toString(16)+': response identity or threat causality drifted');
+  if(commits.some(event=>event.actorId!=='courier'||bySerial.get(event.setupSerial)?.kind!=='setup'))fail(seed.toString(16)+': commit identity or setup causality drifted');
+  if(payoffs.some(event=>bySerial.get(event.setupSerial)?.kind!=='setup'||!['commit','response'].includes(bySerial.get(event.commitSerial)?.kind)))fail(seed.toString(16)+': payoff causal chain drifted');
+  if(threats.some(event=>!/^shift:\d+:drone:\d+$/.test(event.actorId)))fail(seed.toString(16)+': sentry appearance identity drifted');
+  const motionIds=ambient.motion.actors.map(actor=>actor.id);
+  if(!motionIds.includes('courier')||motionIds.some(id=>id!=='courier'&&!/^drone-\d+$/.test(id)))fail(seed.toString(16)+': motion role IDs changed '+motionIds.join(','));
+  const locomotionKinds=new Set(['locomotion','movement','walk','turn','replan','replanning','navigation','path']);
+  if(ledger.sources.some(source=>locomotionKinds.has(source.kind))||ledger.events.some(event=>locomotionKinds.has(event.kind)))fail(seed.toString(16)+': ordinary locomotion/replanning received evidence credit');
   const entertainment=assertEntertainment(seed.toString(16),evidence,{
     minRooms:3,minBranches:70,maxStraight:9,minPuzzleTransitions:190,minPuzzleCompletions:28,
     minEnemyActions:350,minPlayerResponses:600,requiredDecisionKinds:['puzzle','threat','response','combat','payoff'],

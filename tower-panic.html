@@ -16,7 +16,7 @@
 <script>
 'use strict';
 const{ctx,W,H,random,RI,hash,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,keys,manual,
-  initSession,sessionStep,drawSession,playing,addScore,createShow,fxBurst,fxDust}=E;
+  initSession,sessionStep,drawSession,playing,addScore,createShow,createEvidence,fxBurst,fxDust}=E;
 const{controllerMux,skillProfile,createRng}=AI;
 
 const TAU=Math.PI*2,INK='#070b12',CREAM='#fff1cf',GOLD='#ffd15c',MINT='#66e0ba',CYAN='#5bd9e8',
@@ -51,18 +51,29 @@ const GAP_PATTERNS=[
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
   1:{frames:12},2:{frames:46,minGap:90},3:{frames:92,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:48}
 }});
+const EVIDENCE=createEvidence({limit:2400,sources:[
+  {id:'worker-ready',kind:'setup'},
+  {id:'hazard-tell',kind:'threat'},
+  {id:'hero-response',kind:'response',actorId:'hero',stableActor:true},
+  {id:'hero-commit',kind:'commit',actorId:'hero',stableActor:true},
+  {id:'objective-payoff',kind:'payoff'},
+  {id:'extraction-ready',kind:'setup'},
+  {id:'tower-reversal',kind:'environment'},
+  {id:'hazard-consequence',kind:'environment'}
+]});
 
 let showFrame=0,runFrame=0,worldSeed=1,stage=0,state='climb',extractT=0,zone=ZONES[0],layout=null;
 let hero=null,workers=[],barrels=[],fires=[],machines=[],route=[],planSerial=0;
 let history=[],persona=PERSONAS[0],profile=null,pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 let act={phase:'calm',warnAt:1500,landAt:1740,endAt:2280,index:0,purgeCol:3,notes:[]};
 let texts=[],eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastDecisionFrame=0,barrelSerial=0;
+let workerSetups=new Map(),extractionSetupSerial=null,cascadeThreat=null;
 let visualFixture='',visualExtraction=false;
 const stats={rescues:0,extractions:0,hits:0,downs:0,deflections:0,nearMisses:0,convoyScares:0,
   reroutes:0,smartPlans:0,baselinePlans:0,lapses:0,acts:0,barrels:0,floors:0,events:0,progress:0,
   maxEventLull:0,maxProgressLull:0,invisibleResets:0,plannerCalls:0,objectiveTransitions:0,
   objectiveCompletions:0,enemyActions:0,playerResponses:0,puzzleDecisions:0,threatDecisions:0,
-  responseDecisions:0,payoffDecisions:0,maxDecisionDeadAir:0};
+  responseDecisions:0,payoffDecisions:0,maxDecisionDeadAir:0,threatChecks:0,threatAnticipations:0};
 
 const mod=(n,d)=>((n%d)+d)%d;
 const node=(f,c)=>f*COLS+c;
@@ -78,6 +89,13 @@ const alpha=(a,fn)=>{const old=ctx.globalAlpha;ctx.globalAlpha=a;fn();ctx.global
 function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);lastEventFrame=showFrame;if(score&&playing())addScore(score)}
 function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);lastProgressFrame=showFrame;if(score&&playing())addScore(score)}
 function markDecision(kind){const key=kind+'Decisions';if(!(key in stats))throw new Error('unknown decision kind '+kind);stats.maxDecisionDeadAir=Math.max(stats.maxDecisionDeadAir,showFrame-lastDecisionFrame);lastDecisionFrame=showFrame;stats[key]++}
+function recordEvidence(source,data){const event=EVIDENCE.record(source,Object.assign({frame:showFrame,showFrame,runFrame,stage},data));return event&&event.serial}
+function ledgerId(kind,serial){return'stage:'+stage+':'+kind+':'+serial}
+function resetEvidenceStage(){workerSetups=new Map();extractionSetupSerial=null}
+function resetEvidenceRun(){EVIDENCE.reset();cascadeThreat=null;resetEvidenceStage()}
+function workerLedgerId(w){return ledgerId('worker',w.id.slice('worker-'.length))}
+function ensureWorkerSetup(w){let serial=workerSetups.get(w.id);if(serial!==undefined)return serial;serial=recordEvidence('worker-ready',{actorId:workerLedgerId(w),role:'worker',objective:'rescue',workerType:WORKER_STYLES[w.type].name,x:w.x,y:w.y});workerSetups.set(w.id,serial);return serial}
+function observeHazard(kind,serial,x,y,phase){const actorId=ledgerId(kind,serial);return{actorId,serial:recordEvidence('hazard-tell',{actorId,role:'hazard',hazard:kind,phase:phase||'active',x,y})}}
 function say(s,c,x,y,t){texts.push({s,c:c||CREAM,x:x===undefined?hero.x:x,y:y===undefined?hero.y-15:y,t:t||70});if(texts.length>8)texts.shift()}
 function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+40})}
 
@@ -121,10 +139,10 @@ function resetRun(full){
   worldSeed=RI(1,0x7fffff);stage=0;state='climb';extractT=0;showFrame=Math.max(0,showFrame);runFrame=0;
   for(const k in stats)stats[k]=0;eventSerial=progressSerial=0;lastEventFrame=lastProgressFrame=lastDecisionFrame=showFrame;texts=[];history=[];route=[];planSerial=0;
   persona=PERSONAS[worldSeed%PERSONAS.length];profile=skillProfile({rng:createRng(worldSeed^0x54a77e),skill:.82,precision:persona.precision,risk:persona.risk,recovery:.9,reactionFrames:[2,5],lapseChance:.0018,lapseFrames:[10,22]});
-  buildLayout();hero=makeHero();buildWorkers();buildHazards();resetAct();if(full)SHOW.reset(showFrame);planRoute(true);history.push({x:hero.x,y:hero.y});
+  resetEvidenceRun();buildLayout();hero=makeHero();buildWorkers();buildHazards();resetAct();if(full)SHOW.reset(showFrame);planRoute(true);history.push({x:hero.x,y:hero.y});
 }
 function nextTower(){
-  stage++;state='climb';extractT=0;route=[];history=[];buildLayout();hero=makeHero();buildWorkers();buildHazards();planRoute(true);history.push({x:hero.x,y:hero.y});markProgress(250);say(zone.name,zone.accent,80,178,120);
+  stage++;state='climb';extractT=0;route=[];history=[];resetEvidenceStage();buildLayout();hero=makeHero();buildWorkers();buildHazards();planRoute(true);history.push({x:hero.x,y:hero.y});markProgress(250);say(zone.name,zone.accent,80,178,120);
 }
 
 const BARREL_SPEED=.72,ROLL_FRAMES=Math.round((RIGHT-LEFT)/BARREL_SPEED),DROP_FRAMES=48,BARREL_SEG=ROLL_FRAMES+DROP_FRAMES;
@@ -134,7 +152,7 @@ function barrelAt(b,extra){
   if(phase<=ROLL_FRAMES)return{x:from+(to-from)*(phase/ROLL_FRAMES),y:Y[floor]-5,floor,falling:false,dir};
   const u=(phase-ROLL_FRAMES)/DROP_FRAMES;return{x:to,y:Y[floor]+(Y[Math.max(0,floor-1)]-Y[floor])*u-5,floor,falling:true,dir};
 }
-function spawnBarrel(dir,age){const b={id:'barrel-'+barrelSerial++,startDir:dir||1,age:age||0,x:0,y:0,floor:5,falling:false,dir:dir||1,hitAt:-9999,nearAt:-9999};const q=barrelAt(b,0);if(q)Object.assign(b,q);barrels.push(b);stats.barrels++;stats.enemyActions++;markDecision('threat');markEvent();return b}
+function spawnBarrel(dir,age){const serial=barrelSerial++,b={id:'barrel-'+serial,startDir:dir||1,age:age||0,x:0,y:0,floor:5,falling:false,dir:dir||1,hitAt:-9999,nearAt:-9999};const q=barrelAt(b,0);if(q)Object.assign(b,q);const threat=observeHazard('barrel',serial,b.x,b.y+8,b.falling?'falling':'rolling');b.evidenceId=threat.actorId;b.threatSerial=threat.serial;barrels.push(b);stats.barrels++;stats.enemyActions++;markDecision('threat');markEvent();return b}
 function fireActive(f,extra){if(f.suppressedUntil!==undefined&&runFrame+(extra||0)<f.suppressedUntil)return false;if(f.force)return true;return mod(runFrame+(extra||0)+f.phase,420)<112}
 function machineReach(m,extra){if(m.force)return 1;const t=mod(runFrame+(extra||0)+m.phase,300)/300;return t<.18?Math.sin(t/.18*Math.PI):0}
 function nodeRisk(n,eta){
@@ -160,10 +178,11 @@ function routeIdentity(r){return r.slice(0,8).join('-')}
 function planRoute(force){
   const smart=typeof globalThis.__NO_CASCADE_LOOKAHEAD==='undefined',old=route.slice(),next=findPath(hero.node,goalNodes(),smart);
   stats.plannerCalls++;if(smart)stats.smartPlans++;else stats.baselinePlans++;
-  if(old.length&&next.length&&routeIdentity(old)!==routeIdentity(next)&&showFrame-planSerial>80){stats.reroutes++;markEvent();if(stats.reroutes%3===1)offer('reroute',2,hero.x,hero.y,'PURGE DODGE')}
-  route=next;planSerial=showFrame;return route;
+  if(old.length&&next.length&&routeIdentity(old)!==routeIdentity(next)&&showFrame-planSerial>80){stats.reroutes++;markEvent();recordEvidence('tower-reversal',{actorId:'hero',role:'hero',action:'hazard-reroute',from:routeIdentity(old),to:routeIdentity(next),x:hero.x,y:hero.y});if(stats.reroutes%3===1)offer('reroute',2,hero.x,hero.y,'PURGE DODGE')}
+  route=next;const pending=workers.filter(w=>!w.rescued&&!w.done),target=pending.find(w=>w.node===route.at(-1));if(target)ensureWorkerSetup(target);planSerial=showFrame;return route;
 }
 function routeSafe(){if(!route.length)return false;let cur=hero.node;for(const n of route){if(!adjacent(cur,n))return false;cur=n}return true}
+const THREAT_LEAD_FRAMES=0; // @foundry threatLeadFrames
 function immediateDanger(frames){
   for(const b of barrels){const q=barrelAt(b,frames||0);if(q&&!q.falling&&q.floor===floorOf(hero.node)&&Math.abs(q.x-hero.x)<10)return true}
   return fires.some(f=>f.floor===floorOf(hero.node)&&Math.abs(X[f.col]-hero.x)<8&&fireActive(f,frames||0));
@@ -176,7 +195,7 @@ function rawBotIntent(){
   if(hero.stun>0)return idleIntent('SHAKE IT OFF');
   if(hero.moveT>0)return{dx:Math.sign(hero.x-nodePos(hero.from).x),dy:Math.sign(hero.y-nodePos(hero.from).y),brace:false,assist:smart,next:hero.to,tactic:hero.pose==='climb'?'CLIMB UNDER COVER':'MOVE THE CONVOY'};
   if(!routeSafe()||showFrame-planSerial>=72)planRoute();
-  if(smart&&immediateDanger(0))return{dx:0,dy:0,brace:true,assist:false,next:-1,tactic:'BRACE BEHIND RAIL'};
+  if(smart){stats.threatChecks++;const immediate=immediateDanger(0);let danger=immediate;for(let lead=6;!danger&&lead<=THREAT_LEAD_FRAMES;lead+=6)danger=immediateDanger(lead);if(danger&&!immediate)stats.threatAnticipations++;if(danger)return{dx:0,dy:0,brace:true,assist:false,next:-1,tactic:'BRACE BEHIND RAIL'}};
   const n=route[0];if(n===undefined)return idleIntent('SCAN FOR SURVIVORS');const p=nodePos(n),dx=Math.sign(p.x-hero.x),dy=Math.sign(p.y-hero.y);
   let tactic=dy<0?'CLIMB TO '+zone.code:dx?'CROSS THE GANTRY':'GUARD THE CONVOY';
   if(act.phase==='warn'&&smart)tactic='REROUTE BEFORE PURGE';
@@ -219,12 +238,13 @@ function arriveNode(){
   if(workers.every(w=>w.rescued||w.done)&&hero.node===node(5,stage%2?1:4))beginExtraction();else planRoute(true);
 }
 function rescueWorker(w){
-  w.rescued=true;w.join=workers.filter(v=>v.rescued).length-1;w.x=hero.x;w.y=hero.y;stats.rescues++;stats.objectiveTransitions++;markDecision('puzzle');markProgress(35);offer('rescue',1,hero.x,hero.y,w.type);fxBurst(hero.x,hero.y-4,9,WORKER_STYLES[w.type].helmet,1.2,.025);say(WORKER_STYLES[w.type].name+' JOINS',MINT,hero.x,hero.y-15,62);
+  const setupSerial=ensureWorkerSetup(w);w.rescued=true;w.join=workers.filter(v=>v.rescued).length-1;w.x=hero.x;w.y=hero.y;const commitSerial=recordEvidence('hero-commit',{actorId:'hero',role:'hero',action:'secure-worker',objectiveId:workerLedgerId(w),x:hero.x,y:hero.y});recordEvidence('objective-payoff',{actorId:workerLedgerId(w),role:'worker',objective:'rescue',setupSerial,commitSerial,x:w.x,y:w.y});stats.rescues++;stats.objectiveTransitions++;markDecision('puzzle');markProgress(35);offer('rescue',1,hero.x,hero.y,w.type);fxBurst(hero.x,hero.y-4,9,WORKER_STYLES[w.type].helmet,1.2,.025);say(WORKER_STYLES[w.type].name+' JOINS',MINT,hero.x,hero.y-15,62);
   if(workers.filter(v=>v.rescued).length===3){offer('convoy',2,hero.x,hero.y,'THREE HELMETS');markEvent()}
+  if(workers.every(v=>v.rescued||v.done)&&extractionSetupSerial===null)extractionSetupSerial=recordEvidence('extraction-ready',{actorId:ledgerId('extraction',0),role:'objective',objective:'rooftop-extraction',x:X[stage%2?1:4],y:Y[5]});
 }
 function extractionFx(){for(let i=0;i<6;i++){const x=40+i*16,y=66+(i%2)*9;fxBurst(x,y,16,i%3===0?GOLD:i%3===1?MINT:CREAM,2.4,.025)}}
 function beginExtraction(){
-  if(state!=='climb')return;state='extract';extractT=180;visualExtraction=true;hero.extractFromX=hero.x;hero.extractFromY=hero.y;stats.extractions++;stats.objectiveCompletions++;markDecision('payoff');markProgress(180);offer('extraction',3,80,58,'ALL HANDS CLEAR');extractionFx();shake(7);say('ALL HANDS CLEAR',GOLD,80,96,120);
+  if(state!=='climb')return;if(extractionSetupSerial===null)extractionSetupSerial=recordEvidence('extraction-ready',{actorId:ledgerId('extraction',0),role:'objective',objective:'rooftop-extraction',x:hero.x,y:hero.y});const commitSerial=recordEvidence('hero-commit',{actorId:'hero',role:'hero',action:'board-extraction',objectiveId:ledgerId('extraction',0),x:hero.x,y:hero.y});recordEvidence('objective-payoff',{actorId:ledgerId('extraction',0),role:'objective',objective:'tower-cleared',setupSerial:extractionSetupSerial,commitSerial,x:80,y:59});state='extract';extractT=180;visualExtraction=true;hero.extractFromX=hero.x;hero.extractFromY=hero.y;stats.extractions++;stats.objectiveCompletions++;markDecision('payoff');markProgress(180);offer('extraction',3,80,58,'ALL HANDS CLEAR');extractionFx();shake(7);say('ALL HANDS CLEAR',GOLD,80,96,120);
 }
 function cageY(){if(state!=='extract')return 59;const t=180-extractT;if(t<=60){const u=clamp(t/60,0,1);return 54+15*u*u*(3-2*u)}const u=clamp((t-60)/120,0,1);return 69-38*u*u*(3-2*u)}
 function stepExtraction(){
@@ -238,17 +258,17 @@ function updateHistory(){
   }
 }
 
-function hitHero(kind,x,y){
+function hitHero(kind,x,y,causeSerial,hazardId){
   if(hero.hitFlash>0)return;const braced=hero.intent&&((hero.intent.brace&&hero.braceT>2)||hero.intent.assist);hero.hitFlash=96;
-  if(braced){stats.deflections++;stats.playerResponses++;markDecision('response');markEvent(8);offer('deflect',1,x,y,'RAIL HOLDS');fxBurst(x,y,9,CYAN,1.6,.03);shake(2);return true}
-  stats.hits++;hero.health--;hero.stun=48;hero.pose='hurt';markEvent();offer('hit',1,x,y,kind.toUpperCase());fxBurst(hero.x,hero.y,11,CORAL,1.8,.04);shake(4);say(kind==='fire'?'TOO HOT':'BARREL CLANG',CORAL,hero.x,hero.y-16,52);
+  if(braced){recordEvidence('hero-response',{actorId:'hero',role:'hero',action:hero.intent.brace?'brace-deflection':'assisted-deflection',brace:!!hero.intent.brace,assist:!!hero.intent.assist,hazardId,causeSerial,x:hero.x,y:hero.y});stats.deflections++;stats.playerResponses++;markDecision('response');markEvent(8);offer('deflect',1,x,y,'RAIL HOLDS');fxBurst(x,y,9,CYAN,1.6,.03);shake(2);return true}
+  recordEvidence('hazard-consequence',{actorId:'hero',role:'hero',consequence:'hit',hazard:kind,hazardId,causeSerial,x:hero.x,y:hero.y});stats.hits++;hero.health--;hero.stun=48;hero.pose='hurt';markEvent();offer('hit',1,x,y,kind.toUpperCase());fxBurst(hero.x,hero.y,11,CORAL,1.8,.04);shake(4);say(kind==='fire'?'TOO HOT':'BARREL CLANG',CORAL,hero.x,hero.y-16,52);
   if(hero.health<=0){hero.health=3;hero.stun=132;stats.downs++;markProgress();offer('down',2,hero.x,hero.y,'CONVOY COVERS');say('CONVOY COVERS',GOLD,hero.x,hero.y-18,80)}return false
 }
 function collideHazards(){
-  for(const b of barrels){const d=Math.hypot(hero.x-b.x,hero.y-b.y);if(d<7&&showFrame-b.hitAt>70){b.hitAt=showFrame;if(hitHero('barrel',b.x,b.y+8))b.age+=34}else if(d>=8&&d<15&&showFrame-b.nearAt>120){b.nearAt=showFrame;stats.nearMisses++;markEvent();offer('near',1,b.x,b.y+8,'CLOSE CALL')}
+  for(const b of barrels){const d=Math.hypot(hero.x-b.x,hero.y-b.y);if(d<7&&showFrame-b.hitAt>70){b.hitAt=showFrame;if(hitHero('barrel',b.x,b.y+8,b.threatSerial,b.evidenceId))b.age+=34}else if(d>=8&&d<15&&showFrame-b.nearAt>120){b.nearAt=showFrame;stats.nearMisses++;markEvent();offer('near',1,b.x,b.y+8,'CLOSE CALL')}
     for(const w of workers)if(w.rescued&&w.panicT<=0&&Math.hypot(w.x-b.x,w.y-b.y)<7){w.panicT=55;stats.convoyScares++;markEvent();fxDust(w.x,w.y,5,WORKER_STYLES[w.type].helmet)}}
-  for(const f of fires)if(fireActive(f)&&Math.hypot(hero.x-X[f.col],hero.y-(Y[f.floor]-5))<7)if(hitHero('fire',X[f.col],Y[f.floor]-5))f.suppressedUntil=runFrame+150;
-  for(const m of machines){const reach=machineReach(m);if(reach>.72&&floorOf(hero.node)===m.floor&&Math.abs(hero.x-X[m.col])<8)hitHero('machine',X[m.col],Y[m.floor]-5)}
+  for(const f of fires)if(fireActive(f)&&Math.hypot(hero.x-X[f.col],hero.y-(Y[f.floor]-5))<7&&hero.hitFlash<=0){const threat=observeHazard('fire',f.id.slice('fire-'.length),X[f.col],Y[f.floor]-5,'flare');if(hitHero('fire',X[f.col],Y[f.floor]-5,threat.serial,threat.actorId))f.suppressedUntil=runFrame+150}
+  for(const m of machines){const reach=machineReach(m);if(reach>.72&&floorOf(hero.node)===m.floor&&Math.abs(hero.x-X[m.col])<8&&hero.hitFlash<=0){const threat=observeHazard('machine',m.id.slice('machine-'.length),X[m.col],Y[m.floor]-5,'strike');hitHero('machine',X[m.col],Y[m.floor]-5,threat.serial,threat.actorId)}}
 }
 function stepHazards(){
   if(runFrame%252===0)spawnBarrel(((runFrame/252+stage)|0)%2?1:-1,0);
@@ -257,10 +277,10 @@ function stepHazards(){
 }
 function stepAct(){
   if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return}
-  if(act.phase==='calm'&&showFrame>=act.warnAt){act.phase='warn';act.purgeCol=route.find(n=>floorOf(n)!==floorOf(hero.node))!==undefined?colOf(route.find(n=>floorOf(n)!==floorOf(hero.node))):mod(stage+2,6);act.landAt=showFrame+240;act.endAt=act.landAt+540;route=[];
+  if(act.phase==='calm'&&showFrame>=act.warnAt){act.phase='warn';act.purgeCol=route.find(n=>floorOf(n)!==floorOf(hero.node))!==undefined?colOf(route.find(n=>floorOf(n)!==floorOf(hero.node))):mod(stage+2,6);act.landAt=showFrame+240;act.endAt=act.landAt+540;route=[];cascadeThreat=observeHazard('cascade',act.index,X[act.purgeCol],Y[hero.maxFloor],'warning');recordEvidence('tower-reversal',{actorId:'hero',role:'hero',action:'purge-reroute',hazardId:cascadeThreat.actorId,causeSerial:cascadeThreat.serial,purgeCol:act.purgeCol,x:hero.x,y:hero.y});
     const n={kind:'act-warning',id:'overload-cascade',at:showFrame,landsAt:showFrame+240,tag:showFrame};act.notes.push(n);SHOW.note(n);say('OVERLOAD // REROUTE',CORAL,80,98,150)}
-  else if(act.phase==='warn'&&showFrame>=act.landAt){act.phase='live';stats.acts++;spawnBarrel(1,0);spawnBarrel(-1,72);spawnBarrel(1,144);const n={kind:'act-land',id:'overload-cascade',at:showFrame,tag:showFrame};act.notes.push(n);SHOW.note(n);offer('cascade',2,80,105,'CASCADE LANDS');markEvent();shake(5)}
-  else if(act.phase==='live'&&showFrame>=act.endAt){act.phase='calm';act.index++;act.warnAt=showFrame+3300;act.landAt=act.warnAt+240;act.endAt=act.landAt+540}
+  else if(act.phase==='warn'&&showFrame>=act.landAt){act.phase='live';stats.acts++;spawnBarrel(1,0);spawnBarrel(-1,72);spawnBarrel(1,144);recordEvidence('hazard-consequence',{actorId:cascadeThreat&&cascadeThreat.actorId,role:'hazard',consequence:'cascade-land',causeSerial:cascadeThreat&&cascadeThreat.serial,purgeCol:act.purgeCol,x:X[act.purgeCol],y:Y[5]});const n={kind:'act-land',id:'overload-cascade',at:showFrame,tag:showFrame};act.notes.push(n);SHOW.note(n);offer('cascade',2,80,105,'CASCADE LANDS');markEvent();shake(5)}
+  else if(act.phase==='live'&&showFrame>=act.endAt){act.phase='calm';act.index++;cascadeThreat=null;act.warnAt=showFrame+3300;act.landAt=act.warnAt+240;act.endAt=act.landAt+540}
 }
 function stepWorld(){
   runFrame++;if(state==='climb'){hero.intent=controller();applyIntent(hero.intent);updateHistory();stepHazards()}
@@ -430,7 +450,7 @@ function probe(){return{showFrame,runFrame,stage,state,zone:zone.name,persona:pe
 
 function setHeroNode(n){const p=nodePos(n);Object.assign(hero,{node:n,from:n,to:n,moveT:0,moveDur:0,x:p.x,y:p.y,lastX:p.x,lastY:p.y,extractFromX:p.x,extractFromY:p.y,stun:0,hitFlash:0,pose:'idle'})}
 function clearVisualOverrides(){visualExtraction=false;for(const w of workers){w.visualX=null;w.visualY=null;w.done=false;w.panicT=0}for(const f of fires)f.force=false;for(const m of machines)m.force=false}
-function setStageVisual(s){stage=s;state='climb';buildLayout();hero=makeHero();buildWorkers();buildHazards();history=[];history.push({x:hero.x,y:hero.y});route=[];texts=[];clearVisualOverrides();SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};act.phase='calm';act.warnAt=999999;planRoute(true)}
+function setStageVisual(s){stage=s;state='climb';resetEvidenceStage();buildLayout();hero=makeHero();buildWorkers();buildHazards();history=[];history.push({x:hero.x,y:hero.y});route=[];texts=[];clearVisualOverrides();SHOW.reset(showFrame);pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};act.phase='calm';act.warnAt=999999;planRoute(true)}
 function setVisualBeat(name){
   const allowed=['opening','objective','climb','cascade','purge-response','rescue','convoy','later','danger','warning-calm','warning','land','apex','scale-contract'];if(!allowed.includes(name))return false;visualFixture=name;const desiredZone=name==='later'||name==='land'?2:name==='apex'?3:0;setStageVisual(name==='later'||name==='land'?2:name==='apex'?3:0);zone=ZONES[desiredZone];
   if(name==='opening'||name==='objective'){setHeroNode(node(0,0));planRoute(true)}
@@ -466,7 +486,11 @@ function plannerFixture(){const before=simSignature(),a=findPath(hero.node,goalN
 function plannerContamination(){if(route.length<2)planRoute(true);const first=route[0];route=[first,node(5,0),node(4,5),node(3,0),node(2,5)];planSerial=showFrame;return true}
 function topologyFixture(){let branches=0,maxStraight=1;for(let n=0;n<COLS*6;n++)if(neighbors(n).length>=3)branches++;for(let f=0;f<6;f++){let run=1;for(let c=0;c<COLS-1;c++){if(hasGap(f,c))run=1;else{run++;maxStraight=Math.max(maxStraight,run)}}}return{rooms:6,nodes:COLS*6,branches,maxStraight}}
 function motionProbe(){const thinking=hero.intent&&hero.intent.tactic==='SECOND-GUESS',emote=thinking?'thinking':pres.admire?'admire':hero.stun>12?'hurt':hero.pose==='brace'?'brace':'';return{frame:showFrame,actors:[{id:'hero',kind:'rigger',x:hero.x,y:hero.y,emote,action:state==='extract'?'extract':hero.pose}],finite:finite()}}
+function soakProbe(){return{sig:[round(hero.x,1),round(hero.y,1),hero.pose,barrels.length,barrels.reduce((n,b)=>n+Math.round(b.x+b.y),0),workers.filter(w=>w.rescued).length,state].join('|'),events:eventSerial,progress:progressSerial,finite:finite()}}
+function entertainmentProbe(){const topology=topologyFixture();return{noVisiblePath:true,topology:{rooms:topology.rooms,branches:topology.branches,maxStraight:topology.maxStraight},puzzle:{transitions:stats.objectiveTransitions,completions:stats.objectiveCompletions},agency:{enemyActions:stats.enemyActions,playerResponses:stats.playerResponses},decisions:{puzzle:{count:stats.puzzleDecisions,source:'stats.puzzleDecisions'},threat:{count:stats.threatDecisions,source:'stats.threatDecisions'},response:{count:stats.responseDecisions,source:'stats.responseDecisions'},payoff:{count:stats.payoffDecisions,source:'stats.payoffDecisions'}},maxDeadAir:stats.maxDecisionDeadAir}}
+function ambientProbe(){const ledger=EVIDENCE.probe(),evidence=entertainmentProbe(),stateSignature=simSignature();return{protocol:'ambient-evidence/v1',schema:1,game:'tower-panic',frame:{run:runFrame,show:showFrame},showFrame,runFrame,stateSignature,stateDigest:stateSignature,finite:finite(),soak:soakProbe(),motion:motionProbe(),counters:{...stats},evidence,entertainment:evidence,ledger,serial:ledger.serial,events:ledger.events.slice()}}
 function intentFixture(){const ai=rawBotIntent(),old={left:keys.left,right:keys.right,up:keys.up,down:keys.down,a:keys.a,b:keys.b,c:keys.c};keys.right=true;const human=humanIntent();Object.assign(keys,old);return{ai,human,aiKeys:Object.keys(ai).sort(),humanKeys:Object.keys(human).sort()}}
+function foundryProbe(){return{showFrame,runFrame,intent:hero.intent&&{brace:hero.intent.brace,assist:hero.intent.assist,next:hero.intent.next,tactic:hero.intent.tactic},environment:{stage,act:[act.phase,act.warnAt,act.landAt,act.endAt,act.purgeCol],barrels:barrels.map(b=>[b.id,b.age,b.startDir]),fires:fires.map(f=>[f.id,f.phase,f.floor,f.col]),machines:machines.map(m=>[m.id,m.phase,m.floor,m.col])},activation:{threatChecks:stats.threatChecks,threatAnticipations:stats.threatAnticipations}}}
 function admireFixture(){const old=pres;pres={cue:{id:'fixture',tier:3},admire:true,holdWorld:false,physicsEvery:1};delete globalThis.__NO_ADMIRE;const admired=rawBotIntent();globalThis.__NO_ADMIRE=1;const gated=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;return{admired,gated}}
 function forceShow(tier,id){return offer(id||('fixture-'+tier),tier,hero.x,hero.y,'TIER '+tier)}
 
@@ -480,13 +504,15 @@ globalThis.__towerPanicPlannerFixture=plannerFixture;
 globalThis.__towerPanicPlannerContamination=plannerContamination;
 globalThis.__towerPanicTopologyFixture=topologyFixture;
 globalThis.__towerPanicIntentFixture=intentFixture;
+globalThis.__towerPanicFoundryProbe=foundryProbe;
 globalThis.__towerPanicAdmireFixture=admireFixture;
 globalThis.__towerPanicForceShow=forceShow;
 globalThis.__towerPanicFreezeShow=()=>{state='fixture';route=[];act.phase='calm';act.warnAt=showFrame+999999;SHOW.reset(showFrame)};
 globalThis.__towerPanicReset=()=>resetRun(true);
 globalThis.__towerPanicNextRandom=()=>random();
 globalThis.__motionProbe=motionProbe;
-globalThis.__soakProbe=()=>({sig:[round(hero.x,1),round(hero.y,1),hero.pose,barrels.length,barrels.reduce((n,b)=>n+Math.round(b.x+b.y),0),workers.filter(w=>w.rescued).length,state].join('|'),events:eventSerial,progress:progressSerial,finite:finite()});
+globalThis.__soakProbe=soakProbe;
+globalThis.__ambientProbe=ambientProbe;
 
 initSession('tower-panic',[["ARROWS / WASD","CHOOSE A GANTRY OR LADDER"],["SPACE / X","BRACE BEHIND THE RAIL"],["READ THE HAZARDS","LEAD EVERY WORKER TO THE ROOF"]]);
 resetRun(true);start(step,render);

@@ -6,6 +6,7 @@
 const fs=require('fs');
 const path=require('path');
 const vm=require('vm');
+const{inlineScript,needsAutoplay,needsWordPuzzle,gameSource:discoverGameSource,executeScripts}=require('../game-source');
 
 let canvasApi;
 try{
@@ -32,21 +33,6 @@ function seededRandom(seed){
   let s=(Number(seed)>>>0)||1;
   return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);
     t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
-}
-
-function inlineScript(html,name){
-  const blocks=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
-  const hit=blocks.find(m=>m[1].includes("'use strict'"))||blocks.at(-1);
-  if(!hit)throw new Error('No inline game script found in '+name+'.html');
-  return hit[1];
-}
-
-function needsAutoplay(html){
-  return /src=["']autoplay\.js/i.test(html)||/\bAI\./.test(html);
-}
-
-function needsWordPuzzle(html){
-  return /src=["']word-puzzle\.js/i.test(html);
 }
 
 function ensurePixelFont(){
@@ -144,17 +130,28 @@ function encodeRgbaPng(frame){
   return rgbaToCanvas(frame,{smoothText:true}).encodeSync('png');
 }
 
-function gameSource(name,root){
-  if(!/^[a-z0-9-]+$/.test(name))throw new Error('Invalid game id: '+name);
-  root=root||GAME_ROOT;
-  const page=path.join(root,name+'.html');
-  const html=fs.readFileSync(page,'utf8');
-  const files=[path.join(root,'engine.js')];
-  if(needsAutoplay(html))files.push(path.join(root,'autoplay.js'));
-  if(needsWordPuzzle(html))files.push(path.join(root,'word-puzzle.js'));
-  const parts=files.map(file=>fs.readFileSync(file,'utf8'));
-  parts.push(inlineScript(html,name));
-  return{html,page,files:[...files,page],source:parts.join('\n')};
+function gameSource(name,root){return discoverGameSource(name,root||GAME_ROOT);}
+
+function eventTarget(){
+  const listeners=new Map();
+  function addEventListener(type,listener){
+    if(typeof listener!=='function'&&!(listener&&typeof listener.handleEvent==='function'))return;
+    const list=listeners.get(type)||[];
+    if(!list.includes(listener)){list.push(listener);listeners.set(type,list);}
+  }
+  function removeEventListener(type,listener){
+    const list=listeners.get(type);if(!list)return;
+    const index=list.indexOf(listener);if(index>=0)list.splice(index,1);
+  }
+  function dispatch(target,type,event){
+    event=event||{};
+    for(const listener of[...(listeners.get(type)||[])]){
+      if(!(listeners.get(type)||[]).includes(listener))continue;
+      if(typeof listener==='function')listener.call(target,event);
+      else listener.handleEvent.call(listener,event);
+    }
+  }
+  return{listeners,addEventListener,removeEventListener,dispatch};
 }
 
 function bootRenderedGame(name,options){
@@ -166,16 +163,14 @@ function bootRenderedGame(name,options){
   const seed32=seed>>>0;
   const canvas=makeGameCanvas(options.width||DEVICE_WIDTH,options.height||DEVICE_HEIGHT,
     {smoothText:!!options.smoothText});
-  const listeners=new Map(),storage=new Map();
-  const addListener=(type,fn)=>{const list=listeners.get(type)||[];list.push(fn);listeners.set(type,list);};
-  const removeListener=(type,fn)=>{const list=listeners.get(type)||[],i=list.indexOf(fn);if(i>=0)list.splice(i,1);};
+  const documentEvents=eventTarget(),windowEvents=eventTarget(),storage=new Map();
   const element=()=>({style:{},remove(){},click(){},addEventListener(){},removeEventListener(){},
     set src(value){this._src=value;},get src(){return this._src;}});
   const document={
     hidden:false,title:name,
     getElementById:()=>canvas,
     createElement:tag=>tag==='canvas'?makeGameCanvas(DEVICE_WIDTH,DEVICE_HEIGHT,{smoothText:!!options.smoothText}):element(),
-    addEventListener:addListener,removeEventListener:removeListener,
+    addEventListener:documentEvents.addEventListener,removeEventListener:documentEvents.removeEventListener,
     body:{appendChild(){}},head:{appendChild(node){if(node&&node.onload)node.onload();}}
   };
   const sandbox={
@@ -188,15 +183,15 @@ function bootRenderedGame(name,options){
     Math:Object.create(Math),
     requestAnimationFrame:()=>1,cancelAnimationFrame:()=>{},
     setTimeout:options.setTimeout||(()=>0),clearTimeout:()=>{},setInterval:()=>0,clearInterval:()=>{},
-    Blob:global.Blob,URL:global.URL
+    Blob:global.Blob,URL:global.URL,
+    addEventListener:windowEvents.addEventListener,removeEventListener:windowEvents.removeEventListener
   };
   sandbox.Math.random=seededRandom(seed32);
-  sandbox.globalThis=sandbox;
+  sandbox.globalThis=sandbox;sandbox.window=sandbox;sandbox.self=sandbox;
   if(options.noUi!==false)sandbox.__NO_UI=1;
-  const footer='\n;globalThis.__engine=E;\n'+(options.footer||'');
-  vm.createContext(sandbox);
-  vm.runInContext(loaded.source.replace(/'use strict';/g,'')+footer,sandbox,
-    {filename:name+'.render.js'});
+  executeScripts(loaded,sandbox);
+  executeScripts([],sandbox,{footer:'globalThis.__engine=E;',footerFilename:name+'.engine-export.js'});
+  if(options.footer)executeScripts([],sandbox,{footer:options.footer,footerFilename:name+'.render-footer.js'});
   const engine=sandbox.__engine;
   if(!engine||typeof engine.runFrames!=='function')
     throw new Error('Engine E.runFrames unavailable for '+name+'; did the game call E.start?');
@@ -232,13 +227,13 @@ function bootRenderedGame(name,options){
   }
   function capturePng(snapshotOptions){return encodeRgbaPng(snapshot(snapshotOptions));}
   function captureRgba(snapshotOptions){return snapshot(snapshotOptions).rgba;}
-  function key(type,code){for(const fn of listeners.get(type)||[])fn({code,preventDefault(){}});}
+  function key(type,code){documentEvents.dispatch(document,type,{code,preventDefault(){}});}
   function evaluate(source){return vm.runInContext(source,sandbox,{filename:name+'.visual-footer.js'});}
   function probe(probeName,...args){const value=sandbox[probeName];return typeof value==='function'?value(...args):value;}
 
   return{
-    name,seed:seed32,canvas,sandbox,engine,sourceFiles:loaded.files,pixelFontReady:!!ensurePixelFont(),
-    advance,advanceTo,snapshot,captureFrame:snapshot,captureRgba,capturePng,key,evaluate,probe,
+    name,seed:seed32,canvas,sandbox,engine,sourceFiles:loaded.files,dependencyFiles:loaded.dependencyFiles,
+    pixelFontReady:!!ensurePixelFont(),advance,advanceTo,snapshot,captureFrame:snapshot,captureRgba,capturePng,key,evaluate,probe,
     get frame(){return frame;},get lastRenderedFrame(){return lastRenderedFrame;}
   };
 }

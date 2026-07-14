@@ -10,8 +10,10 @@
     shaderEnergy:0,
     shaderPointer:{x:0,y:0},
     events:{pointerBoop:0,keyboardBoop:0,semanticBoop:0,dragRelease:0,cancel:0,longPressRejected:0},
+    signal:{launches:0,arrivals:0,active:false,progress:0,source:'',start:{x:0,y:0},end:{x:0,y:0},ctaExcite:0},
     captureEggoPixels:null,
-    captureSpotlightPair:null
+    captureSpotlightPair:null,
+    captureSignalFrames:null
   }:null;
   if(debug)window.__workshopFx=debug;
 
@@ -60,7 +62,13 @@
     const wide=matchMedia('(min-width: 768px)');
     let meshCleanup=null;
     let shaderCleanup=null;
+    let launchCtaSignal=null;
     let boopAudio=null;
+
+    const signalCta=source=>{
+      if(reduce.matches||document.hidden||!launchCtaSignal)return;
+      launchCtaSignal(source);
+    };
 
     const playBoop=()=>{
       const AudioContext=window.AudioContext||window.webkitAudioContext;
@@ -306,6 +314,7 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
         }
         playBoop();
         window.dispatchEvent(new CustomEvent('miniarcade:boop',{detail:{source}}));
+        signalCta(source);
         if(debug)debug.events[source==='keyboard'?'keyboardBoop':source==='semantic'?'semanticBoop':'pointerBoop']++;
         lastTime=0;
         setEggoState('booping');
@@ -369,6 +378,7 @@ void main(){gl_FragColor=texture2D(u_tex,v_uv);}`;
         if(reason!=='lost')try{eggo.releasePointerCapture(releasedPointer);}catch(_error){}
         pointerId=-1;pullX=0;pullY=0;lastTime=0;
         if(cleanTap){boop(grabX,grabY,'pointer');return;}
+        if(reason==='pointerup'&&gestureDistance>=tapSlop)signalCta('drag');
         if(debug){
           if(reason==='cancel'||reason==='lost')debug.events.cancel++;
           else if(gestureDistance<tapSlop&&elapsed>=400)debug.events.longPressRejected++;
@@ -491,6 +501,11 @@ uniform float u_wobbleTime;
 uniform float u_spotlight;
 uniform float u_spotlightWobble;
 uniform vec4 u_cta;
+uniform vec2 u_signalStart;
+uniform vec2 u_signalEnd;
+uniform float u_signalProgress;
+uniform float u_signalActive;
+uniform float u_ctaExcite;
 float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float noise(vec2 p){
   vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
@@ -513,6 +528,26 @@ void main(){
   vec3 orange=vec3(1.0,0.43,0.12);
   vec3 cyan=vec3(0.18,0.80,0.92);
   vec3 color=comet*mix(orange,cyan,clamp(grain*0.7+speed*0.0003,0.0,1.0));
+
+  vec2 signalVector=u_signalEnd-u_signalStart;
+  float signalLength=max(length(signalVector),1.0);
+  vec2 signalDirection=signalVector/signalLength;
+  vec2 signalNormal=vec2(-signalDirection.y,signalDirection.x);
+  float signalT=clamp(u_signalProgress,0.0,1.0);
+  float signalEase=signalT*signalT*(3.0-2.0*signalT);
+  float signalEnvelope=sin(signalEase*3.14159265);
+  float signalArc=min(16.0,signalLength*0.12)*signalEnvelope;
+  float signalWobble=sin(signalEase*18.0-u_time*9.0)*2.2*signalEnvelope;
+  vec2 signalPosition=mix(u_signalStart,u_signalEnd,signalEase)+signalNormal*(signalArc+signalWobble);
+  vec2 signalDelta=p-signalPosition;
+  float signalAlong=clamp(dot(signalDelta,-signalDirection),0.0,18.0);
+  float signalTrailDistance=length(signalDelta+signalDirection*signalAlong);
+  float signalRadius2=dot(signalDelta,signalDelta);
+  float signalCore=exp(-signalRadius2/5.0);
+  float signalGlow=exp(-signalRadius2/72.0);
+  float signalTrail=exp(-signalTrailDistance*signalTrailDistance/10.0)*(1.0-signalAlong/20.0);
+  color+=u_signalActive*(signalCore+signalGlow*0.16+signalTrail*0.38)
+    *mix(orange,cyan,clamp(signalAlong/18.0+signalT*0.35,0.0,1.0));
 
   vec2 toCta=u_cta.xy-u_mouse;
   float targetDistance=length(toCta);
@@ -540,7 +575,8 @@ void main(){
   float mouseNear=exp(-length(u_mouse-u_cta.xy)/180.0);
   float breathe=0.76+0.24*sin(u_time*2.2);
   float halo=(edge*0.34+bloom*0.07)*(0.55+mouseNear*(0.75+u_energy)*breathe);
-  color+=halo*orange;
+  halo+=u_ctaExcite*(edge*0.92+bloom*0.24);
+  color+=halo*mix(orange,cyan,u_ctaExcite*0.28);
 
   float alpha=clamp(max(max(color.r,color.g),color.b)*1.55,0.0,0.72);
   gl_FragColor=vec4(color,alpha);
@@ -578,11 +614,19 @@ void main(){
       const uSpotlight=gl.getUniformLocation(program,'u_spotlight');
       const uSpotlightWobble=gl.getUniformLocation(program,'u_spotlightWobble');
       const uCta=gl.getUniformLocation(program,'u_cta');
+      const uSignalStart=gl.getUniformLocation(program,'u_signalStart');
+      const uSignalEnd=gl.getUniformLocation(program,'u_signalEnd');
+      const uSignalProgress=gl.getUniformLocation(program,'u_signalProgress');
+      const uSignalActive=gl.getUniformLocation(program,'u_signalActive');
+      const uCtaExcite=gl.getUniformLocation(program,'u_ctaExcite');
       let disposed=false;
-      let timer=0,raf=0,lastDraw=0,lastMove=0;
+      let timer=0,raf=0,lastDraw=0,lastMove=0,arrivalTimer=0;
       let scale=0.75;
       let mouseX=0,mouseY=0,velocityX=0,velocityY=0,energy=0;
-      let ctaX=0,ctaY=0,ctaW=1,ctaH=1;
+      let eggoX=0,eggoY=0,ctaX=0,ctaY=0,ctaW=1,ctaH=1;
+      let signalStartX=0,signalStartY=0,signalEndX=0,signalEndY=0;
+      let signalStartedAt=0,signalProgress=0,signalActive=false,signalSource='',ctaExcite=0;
+      const signalDuration=500;
 
       const resize=()=>{
         const rect=dock.getBoundingClientRect();
@@ -596,17 +640,55 @@ void main(){
         }
         fxCanvas.style.width='100%';
         fxCanvas.style.height='100%';
+        const source=eggo.getBoundingClientRect();
         const target=cta.getBoundingClientRect();
+        eggoX=(source.left-rect.left+source.width/2)*scale;
+        eggoY=(rect.bottom-source.top-source.height/2)*scale;
         ctaX=(target.left-rect.left+target.width/2)*scale;
         ctaY=(rect.bottom-target.top-target.height/2)*scale;
         ctaW=Math.max(1,target.width/2*scale);
         ctaH=Math.max(1,target.height/2*scale);
+        if(signalActive){signalStartX=eggoX;signalStartY=eggoY;signalEndX=ctaX;signalEndY=ctaY;}
         if(!lastMove){mouseX=width/2;mouseY=height/2;}
       };
       const clearSchedule=()=>{
         if(timer)clearTimeout(timer);
         if(raf)cancelAnimationFrame(raf);
         timer=0;raf=0;
+      };
+      const syncSignalDebug=()=>{
+        if(!debug)return;
+        Object.assign(debug.signal,{active:signalActive,progress:signalProgress,source:signalSource,ctaExcite,
+          start:{x:signalStartX,y:signalStartY},end:{x:signalEndX,y:signalEndY}});
+      };
+      const pulseCta=()=>{
+        if(arrivalTimer)clearTimeout(arrivalTimer);
+        cta.classList.remove('is-eggo-arrival');
+        void cta.offsetWidth;
+        cta.classList.add('is-eggo-arrival');
+        arrivalTimer=setTimeout(()=>{arrivalTimer=0;cta.classList.remove('is-eggo-arrival');},680);
+      };
+      const render=(time,values={})=>{
+        const signalOn=values.signalActive??signalActive;
+        const progress=values.signalProgress??signalProgress;
+        const excite=values.ctaExcite??ctaExcite;
+        gl.clearColor(0,0,0,0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.uniform2f(uResolution,fxCanvas.width,fxCanvas.height);
+        gl.uniform2f(uMouse,values.mouseX??mouseX,values.mouseY??mouseY);
+        gl.uniform2f(uVelocity,values.velocityX??velocityX,values.velocityY??velocityY);
+        gl.uniform1f(uEnergy,values.energy??Math.min(1,energy));
+        gl.uniform1f(uTime,time);
+        gl.uniform1f(uWobbleTime,values.wobbleTime??time);
+        gl.uniform1f(uSpotlight,values.spotlight??1);
+        gl.uniform1f(uSpotlightWobble,values.spotlightWobble??1);
+        gl.uniform4f(uCta,ctaX,ctaY,ctaW,ctaH);
+        gl.uniform2f(uSignalStart,signalStartX,signalStartY);
+        gl.uniform2f(uSignalEnd,signalEndX,signalEndY);
+        gl.uniform1f(uSignalProgress,progress);
+        gl.uniform1f(uSignalActive,signalOn?1:0);
+        gl.uniform1f(uCtaExcite,excite);
+        gl.drawArrays(gl.TRIANGLES,0,3);
       };
       const queue=(delay,replace)=>{
         if(disposed||document.hidden)return;
@@ -625,21 +707,20 @@ void main(){
         energy*=Math.exp(-dt*2.5);
         velocityX*=Math.exp(-dt*3.8);
         velocityY*=Math.exp(-dt*3.8);
-        if(debug)debug.shaderEnergy=energy;
-        gl.clearColor(0,0,0,0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.uniform2f(uResolution,fxCanvas.width,fxCanvas.height);
-        gl.uniform2f(uMouse,mouseX,mouseY);
-        gl.uniform2f(uVelocity,velocityX,velocityY);
-        gl.uniform1f(uEnergy,Math.min(1,energy));
-        gl.uniform1f(uTime,now/1000);
-        gl.uniform1f(uWobbleTime,now/1000);
-        gl.uniform1f(uSpotlight,1);
-        gl.uniform1f(uSpotlightWobble,1);
-        gl.uniform4f(uCta,ctaX,ctaY,ctaW,ctaH);
-        gl.drawArrays(gl.TRIANGLES,0,3);
+        ctaExcite*=Math.exp(-dt*4.2);
+        if(signalActive){
+          signalProgress=Math.min(1,(now-signalStartedAt)/signalDuration);
+          if(signalProgress>=1){
+            signalActive=false;
+            ctaExcite=1;
+            if(debug)debug.signal.arrivals++;
+            pulseCta();
+          }
+        }
+        if(debug){debug.shaderEnergy=energy;syncSignalDebug();}
+        render(now/1000);
         if(debug)debug.drawCounters.shader++;
-        const active=energy>0.035||now-lastMove<900;
+        const active=energy>0.035||now-lastMove<900||signalActive||ctaExcite>0.02;
         queue(active?1000/30:1000/10,false);
       };
       const wake=()=>{
@@ -647,6 +728,19 @@ void main(){
         const remaining=Math.max(0,1000/30-(now-lastDraw));
         queue(remaining,true);
       };
+      const launchSignal=source=>{
+        if(disposed||document.hidden||reduce.matches)return;
+        resize();
+        signalStartX=eggoX;signalStartY=eggoY;
+        signalEndX=ctaX;signalEndY=ctaY;
+        signalStartedAt=performance.now();signalProgress=0;signalActive=true;signalSource=source;
+        ctaExcite=0;
+        cta.classList.remove('is-eggo-arrival');
+        if(arrivalTimer){clearTimeout(arrivalTimer);arrivalTimer=0;}
+        if(debug){debug.signal.launches++;syncSignalDebug();}
+        wake();
+      };
+      launchCtaSignal=launchSignal;
       if(debug)debug.captureSpotlightPair=()=>{
         clearSchedule();
         const probeDistance=Math.min(180,fxCanvas.width*0.28);
@@ -668,6 +762,11 @@ void main(){
           gl.uniform1f(uSpotlight,spotlight);
           gl.uniform1f(uSpotlightWobble,wobble);
           gl.uniform4f(uCta,ctaX,ctaY,ctaW,ctaH);
+          gl.uniform2f(uSignalStart,signalStartX,signalStartY);
+          gl.uniform2f(uSignalEnd,signalEndX,signalEndY);
+          gl.uniform1f(uSignalProgress,0);
+          gl.uniform1f(uSignalActive,0);
+          gl.uniform1f(uCtaExcite,0);
           gl.drawArrays(gl.TRIANGLES,0,3);
           gl.finish();
           const pixels=new Uint8Array(fxCanvas.width*fxCanvas.height*4);
@@ -681,12 +780,39 @@ void main(){
         gl.uniform1f(uSpotlightWobble,liveWobble);
         gl.uniform1f(uTime,liveTime);
         gl.uniform1f(uWobbleTime,liveWobbleTime);
+        gl.uniform1f(uSignalProgress,signalProgress);
+        gl.uniform1f(uSignalActive,signalActive?1:0);
+        gl.uniform1f(uCtaExcite,ctaExcite);
         lastDraw=0;
         queue(0,true);
         return{off,straight,bent,on:bent,
           live:{spotlight:liveSpotlight,wobble:liveWobble,time:liveWobbleTime,ambientTime:liveTime},
           width:fxCanvas.width,height:fxCanvas.height,
           mouse:{x:probeX,y:probeY},cta:{x:ctaX,y:ctaY}};
+      };
+      if(debug)debug.captureSignalFrames=()=>{
+        clearSchedule();
+        resize();
+        signalStartX=eggoX;signalStartY=eggoY;signalEndX=ctaX;signalEndY=ctaY;
+        const capture=(progress,active,excite)=>{
+          render(2.25,{mouseX:fxCanvas.width/2,mouseY:fxCanvas.height/2,velocityX:0,velocityY:0,
+            energy:0,spotlight:0,spotlightWobble:0,signalProgress:progress,signalActive:active,ctaExcite:excite});
+          gl.finish();
+          const pixels=new Uint8Array(fxCanvas.width*fxCanvas.height*4);
+          gl.readPixels(0,0,fxCanvas.width,fxCanvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+          return Array.from(pixels);
+        };
+        const baseline=capture(0,false,0);
+        const early=capture(0.18,true,0);
+        const middle=capture(0.5,true,0);
+        const late=capture(0.82,true,0);
+        const arrival=capture(1,false,1);
+        const decayed=capture(1,false,0.12);
+        render(performance.now()/1000);
+        lastDraw=0;
+        queue(0,true);
+        return{baseline,early,middle,late,arrival,decayed,width:fxCanvas.width,height:fxCanvas.height,
+          start:{x:signalStartX,y:signalStartY},end:{x:signalEndX,y:signalEndY},cta:{x:ctaX,y:ctaY,w:ctaW,h:ctaH}};
       };
       const onPointerMove=e=>{
         const rect=dock.getBoundingClientRect();
@@ -706,8 +832,12 @@ void main(){
         wake();
       };
       const onVisibility=()=>{
-        if(document.hidden)clearSchedule();
-        else{lastDraw=0;resize();queue(0,true);}
+        if(document.hidden){
+          clearSchedule();signalActive=false;signalProgress=0;ctaExcite=0;
+          if(arrivalTimer){clearTimeout(arrivalTimer);arrivalTimer=0;}
+          cta.classList.remove('is-eggo-arrival');
+          syncSignalDebug();
+        }else{lastDraw=0;resize();queue(0,true);}
       };
       const onContextLost=e=>{
         e.preventDefault();
@@ -729,13 +859,18 @@ void main(){
         if(disposed)return;
         disposed=true;
         clearSchedule();
+        if(arrivalTimer)clearTimeout(arrivalTimer);
+        arrivalTimer=0;signalActive=false;signalProgress=0;ctaExcite=0;
+        cta.classList.remove('is-eggo-arrival');
+        if(launchCtaSignal===launchSignal)launchCtaSignal=null;
+        syncSignalDebug();
         observer.disconnect();
         dock.removeEventListener('pointermove',onPointerMove);
         document.removeEventListener('visibilitychange',onVisibility);
         fxCanvas.removeEventListener('webglcontextlost',onContextLost,false);
         gl.deleteBuffer(buffer);
         gl.deleteProgram(program);
-        if(debug){debug.shaderEnergy=0;debug.captureSpotlightPair=null;}
+        if(debug){debug.shaderEnergy=0;debug.captureSpotlightPair=null;debug.captureSignalFrames=null;}
       };
       return true;
     };

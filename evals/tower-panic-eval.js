@@ -6,6 +6,7 @@ const path=require('path');
 const{bootGame}=require('./harness');
 const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
 const{assertEntertainment}=require('./entertainment');
+const evidence=require('./evidence');
 const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
 const GAME_SOURCE=fs.readFileSync(path.join(__dirname,'..','tower-panic.html'),'utf8');
 const forbiddenPresentation=[/\bfunction\s+draw(?:Route|Path)s?\b/,/\bdrawRoutes?\s*\(/,/\broute(?:Points|Hash)\s*:/,/function\s+(?:probe|visualProbe)\(\)\{[^\n]*\broute\s*:/,/VISIBLE (?:ROUTE )?PLAN|FOLLOW THE (?:PATH|LINE)|CLIMB THE LINE|CHECK THE PLAN/,/\.setLineDash\s*\(/];
@@ -28,6 +29,35 @@ function notePairs(p,label,minPairs){
   const warn=p.act.notes.filter(n=>n.kind==='act-warning'),land=p.act.notes.filter(n=>n.kind==='act-land'),pending=warn.length===land.length+1&&p.act.phase==='warn';
   if(land.length<minPairs||!(warn.length===land.length||pending))fail(label+': warning/land pairing '+warn.length+'/'+land.length);
   for(let i=0;i<land.length;i++)if(land[i].at-warn[i].at!==240||land[i].tag-warn[i].tag!==240)fail(label+': act pair '+i+' was not exactly 240 frames');
+}
+function entertainmentEvidence(p,topology){return{
+  noVisiblePath,
+  topology:{rooms:topology.rooms,branches:topology.branches,maxStraight:topology.maxStraight},
+  puzzle:{transitions:p.stats.objectiveTransitions,completions:p.stats.objectiveCompletions},
+  agency:{enemyActions:p.stats.enemyActions,playerResponses:p.stats.playerResponses},
+  decisions:{
+    puzzle:{count:p.stats.puzzleDecisions,source:'stats.puzzleDecisions'},
+    threat:{count:p.stats.threatDecisions,source:'stats.threatDecisions'},
+    response:{count:p.stats.responseDecisions,source:'stats.responseDecisions'},
+    payoff:{count:p.stats.payoffDecisions,source:'stats.payoffDecisions'}
+  },
+  maxDeadAir:p.stats.maxDecisionDeadAir
+}}
+function validateNaturalEvidence(label,ambient){
+  const report=evidence.validateEvidence(ambient.ledger),events=report.ledger?report.ledger.events:[],locomotion=new Set(['locomotion','movement','walk','turn','replan','replanning','navigation','path']);
+  if(!report.ok){for(const violation of report.violations)fail(label+': ['+violation.code+'] '+violation.message);return null}
+  const bySerial=new Map(events.map(event=>[event.serial,event]));
+  if(events.some(event=>locomotion.has(event.kind)))fail(label+': ledger credited locomotion or replanning');
+  if(events.some(event=>(event.kind==='response'||event.kind==='commit')&&event.actorId!=='hero'))fail(label+': response/commit changed persistent hero identity');
+  if(events.some((event,index)=>!Number.isInteger(event.showFrame)||!Number.isInteger(event.runFrame)||event.frame!==event.showFrame||index&&(event.frame<events[index-1].frame||event.serial<=events[index-1].serial)))fail(label+': evidence lost integer show-frame payload or serial order');
+  if(events.some(event=>event.source==='hazard-consequence'&&(!bySerial.has(event.causeSerial)||bySerial.get(event.causeSerial).kind!=='threat'||bySerial.get(event.causeSerial).serial>=event.serial)))fail(label+': hazard consequence lost its prior threat cause');
+  if(!events.some(event=>event.kind==='threat')||!events.some(event=>event.kind==='response')||!events.some(event=>event.kind==='setup')||!events.some(event=>event.kind==='commit')||!events.some(event=>event.kind==='payoff')||!events.some(event=>event.kind==='environment'))fail(label+': natural ledger missed a tactical evidence category');
+  if(!events.some(event=>event.source==='hero-response'&&event.brace===true))fail(label+': natural ledger missed an authored brace deflection');
+  if(!events.some(event=>event.source==='extraction-ready')||!events.some(event=>event.source==='hero-commit'&&event.action==='board-extraction')||!events.some(event=>event.kind==='payoff'&&event.objective==='tower-cleared'))fail(label+': extraction setup/commit/payoff chain was absent');
+  if(!events.some(event=>event.source==='tower-reversal'))fail(label+': natural ledger missed meaningful reversal observations');
+  if(events.some(event=>event.kind==='threat'&&!/^stage:\d+:(?:barrel|fire|machine|cascade):\d+$/.test(event.actorId||'')))fail(label+': hazard actor ID was not stage-scoped');
+  if(events.some(event=>(event.source==='worker-ready'||event.kind==='payoff'&&event.objective==='rescue')&&!/^stage:\d+:worker:\d+$/.test(event.actorId||'')))fail(label+': worker actor ID was not stage-scoped');
+  return evidence.deriveEvidence(ambient.ledger)
 }
 
 // Baseline-first registration receipt, 2026-07-10. Eight paired five-minute
@@ -126,13 +156,18 @@ console.log('6) exact SHOW ladder budgets, admire gate, and skill-profile lapse 
 console.log('7) two independent ten-minute soaks keep moving, escalating, rescuing, and extracting');
 const entertainmentPanel=[];
 for(const seed of[0x74000,0x75a5d]){
-  const{game,samples}=runSoak('tower-panic',{seed,minutes:10,footer:FOOTER}),report=analyzeSoak(samples),p=game.sandbox.__towerPanicProbe();
+  const{game,samples}=runSoak('tower-panic',{seed,minutes:10,footer:FOOTER}),report=analyzeSoak(samples),p=game.sandbox.__towerPanicProbe(),ambient=game.sandbox.__ambientProbe();
   const topology=game.sandbox.__towerPanicTopologyFixture();console.log('  '+seed.toString(16)+' '+soakLine(report)+'; rescues '+p.stats.rescues+', extractions '+p.stats.extractions+', responses '+p.stats.playerResponses+', enemy actions '+p.stats.enemyActions+', dead air '+p.stats.maxDecisionDeadAir+'f');
   assertSoak(seed.toString(16),report,{still:1,quiet:6,stall:5,minEvents:1300,minProgress:720},fail);bands(p.stats,SOAK_BANDS,'seed '+seed.toString(16)+' soak');notePairs(p,'seed '+seed.toString(16),8);
   if(!p.finite||p.stats.invisibleResets!==0||p.stats.extractions<11||p.stats.rescues<45)fail('seed '+seed.toString(16)+': soak lost visible progress');
   if(p.stats.objectiveTransitions!==p.stats.rescues||p.stats.objectiveCompletions!==p.stats.extractions||p.stats.enemyActions!==p.stats.barrels||p.stats.playerResponses!==p.stats.deflections||p.stats.puzzleDecisions!==p.stats.objectiveTransitions||p.stats.threatDecisions!==p.stats.enemyActions||p.stats.responseDecisions!==p.stats.playerResponses||p.stats.payoffDecisions!==p.stats.objectiveCompletions)fail('seed '+seed.toString(16)+': entertainment telemetry aliases walking/replans or lost its truthful event source');
+  const expectedEntertainment=entertainmentEvidence(p,topology),derived=validateNaturalEvidence('seed '+seed.toString(16),ambient);
+  if(ambient.protocol!==evidence.PROTOCOL||ambient.schema!==1||ambient.game!=='tower-panic'||ambient.frame.run!==p.runFrame||ambient.frame.show!==p.showFrame||ambient.showFrame!==p.showFrame||ambient.runFrame!==p.runFrame||ambient.stateSignature!==game.sandbox.__towerPanicSignature()||ambient.stateDigest!==ambient.stateSignature||!ambient.finite)fail('seed '+seed.toString(16)+': ambient envelope metadata/digest drifted');
+  if(JSON.stringify(ambient.soak)!==JSON.stringify(game.sandbox.__soakProbe())||JSON.stringify(ambient.motion)!==JSON.stringify(game.sandbox.__motionProbe()))fail('seed '+seed.toString(16)+': ambient probe did not preserve the existing soak/motion contracts');
+  if(JSON.stringify(ambient.counters)!==JSON.stringify(p.stats)||JSON.stringify(ambient.evidence)!==JSON.stringify(expectedEntertainment)||JSON.stringify(ambient.entertainment)!==JSON.stringify(expectedEntertainment)||ambient.serial!==ambient.ledger.serial||JSON.stringify(ambient.events)!==JSON.stringify(ambient.ledger.events))fail('seed '+seed.toString(16)+': ambient evidence, counters, or ledger aliases drifted');
+  if(derived&&derived.payoffs!==p.stats.rescues+p.stats.extractions)fail('seed '+seed.toString(16)+': ledger payoff total lost rescue/extraction outcomes');
   const offered=p.show.offeredByTier,shown=p.show.shownByTier;if(!((offered[1]||0)>(offered[2]||0)&&(offered[2]||0)>(offered[3]||0)))fail('seed '+seed.toString(16)+': offered tiers not ordered');if(!((shown[1]||0)>(shown[2]||0)&&(shown[2]||0)>(shown[3]||0)))fail('seed '+seed.toString(16)+': shown tiers not ordered');
-  entertainmentPanel.push({p,topology});
+  entertainmentPanel.push({p,topology,ambient,derived});
 }
 
 console.log('7b) authored tower choices, active hazards, responses, and payoff pass the shared entertainment contract');
@@ -159,6 +194,19 @@ for(const seed of[0x74000,0x75a5d]){
   const run=runMotion('tower-panic',{seed,minutes:10,sampleEvery:5}),report=analyzeMotion(run,{stillRadius:2,emoteFrames:120,emoteShare:.15,requiredIds:['hero']}),heroSamples=run.samples.map(sample=>sample.actors.find(actor=>actor.id==='hero')).filter(Boolean);let physicalPairs=0,movingPairs=0,physicalDistance=0;
   for(let i=1;i<heroSamples.length;i++){const d=Math.hypot(heroSamples[i].x-heroSamples[i-1].x,heroSamples[i].y-heroSamples[i-1].y);if(d>25)continue;physicalPairs++;physicalDistance+=d;if(d>.5)movingPairs++}
   const pace=physicalDistance/(run.samples.length*run.step),movingShare=physicalPairs?movingPairs/physicalPairs:0,meanCarry=movingPairs?physicalDistance/movingPairs:0;console.log('  '+seed.toString(16)+' '+motionLine(report)+', pace '+pace.toFixed(3)+'px/f, moving '+(movingShare*100).toFixed(1)+'%, carry '+meanCarry.toFixed(2)+'px');assertMotion(seed.toString(16),report,fail);if(pace<.65||movingShare<.90||meanCarry<3.4)fail('seed '+seed.toString(16)+': physical momentum regressed: '+pace.toFixed(3)+'px/f, '+movingShare.toFixed(3)+' moving, '+meanCarry.toFixed(2)+'px carry')
+}
+
+console.log('7d) Ambient Evidence is causal, locomotion-free, and a perfect simulation/RNG/statistics no-op');
+{
+  const a=bootGame('tower-panic',{seed:0x744e}),b=bootGame('tower-panic',{seed:0x744e});b.sandbox.__NO_EVIDENCE_LEDGER=1;a.sandbox.__towerPanicReset();b.sandbox.__towerPanicReset();a.frames(18000,false);b.frames(18000,false);
+  const sa=a.sandbox.__towerPanicSignature(),sb=b.sandbox.__towerPanicSignature(),pa=a.sandbox.__towerPanicProbe(),pb=b.sandbox.__towerPanicProbe(),aa=a.sandbox.__ambientProbe(),ab=b.sandbox.__ambientProbe(),ra=a.sandbox.__towerPanicNextRandom(),rb=b.sandbox.__towerPanicNextRandom(),derived=validateNaturalEvidence('evidence-on twin',aa);
+  console.log('  '+(derived&&derived.eventCount||0)+' curated events, '+(derived&&derived.payoffs||0)+' causal payoffs; signatures '+(sa===sb?'identical':'DIFFERENT')+', RNG '+ra.toFixed(8)+'/'+rb.toFixed(8));
+  if(sa!==sb)fail('__NO_EVIDENCE_LEDGER changed simulation signature');
+  if(JSON.stringify(pa.stats)!==JSON.stringify(pb.stats))fail('__NO_EVIDENCE_LEDGER changed exact statistics');
+  if(ra!==rb)fail('__NO_EVIDENCE_LEDGER changed engine RNG state');
+  if(!aa.ledger.enabled||!aa.ledger.events.length||ab.ledger.enabled||ab.ledger.events.length||ab.ledger.serial!==0)fail('__NO_EVIDENCE_LEDGER did not expose an empty disabled ledger twin');
+  if(aa.stateDigest!==ab.stateDigest)fail('__NO_EVIDENCE_LEDGER changed ambient state digest');
+  if(/\brecordEvidence\([^;\n]*\beventSerial\b/.test(GAME_SOURCE)||aa.ledger.sources.some(source=>JSON.stringify(source).includes('eventSerial')))fail('Ambient Evidence derived credit from generic movement-incremented eventSerial');
 }
 
 console.log('8) payoff FX is a non-vacuous perfect same-seed simulation no-op');

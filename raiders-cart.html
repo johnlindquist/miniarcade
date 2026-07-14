@@ -408,6 +408,23 @@ function drawMasonry(){
     rect(x,y,w,11,mix(spec.wall,INK,.18));rect(x+(y/12%2?1:5),y+2,7,1,spec.wallHi);rect(x,y+10,w,1,SHADOW);}
   rect(0,fy,W,H-fy,spec.floor);rect(0,fy,W,3,spec.wallHi);
   for(let x=0;x<W;x+=12){for(let y=fy+8;y<H;y+=15){rect(x,y+(x/12%2)*4,10,1,mix(spec.floor,INK,.25));rect(x+3,y+6,5,2,mix(spec.floor,spec.wallHi,.28));}}
+  // Coffered floor stones and wall sconces hold deep ink wells against cream
+  // and gold lips so the chamber keeps BLOCK MINE-class luma range at native
+  // size. Values stay locked to the room, not screen-space noise.
+  for(let row=0,y=fy+10;y<H-4;y+=16,row++)for(let x=3+(row%2)*10;x<W-6;x+=20){
+    rect(x,y,16,9,mix(spec.floor,INK,.78));
+    rect(x+1,y,14,1,mix(CREAM,spec.wallHi,.55));
+    rect(x+2,y+3,10,2,mix(spec.floor,INK,.88));
+    rect(x+12,y+2,2,5,mix(GOLD,CREAM,.35));
+    rect(x+1,y+7,12,1,mix(spec.wallHi,CREAM,.25));
+  }
+  for(const side of[0,1])for(let i=0;i<5;i++){
+    const x=side?148:4,y=WORLD_TOP+18+i*34;
+    rect(x,y,8,10,mix(spec.wall,INK,.55));
+    rect(x+1,y+2,6,5,mix(GOLD,CREAM,.4));
+    withAlpha(.28,()=>rect(side?132:0,y+1,24,12,mix(GOLD,CREAM,.55)));
+    rect(x+2,y+3,4,2,CREAM);
+  }
 }
 function drawArch(x,y,w,h,c,hi){
   rect(x,y+h*.35,5,h*.65,c);rect(x+w-5,y+h*.35,5,h*.65,c);

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LANTERN LINE</title>
+<style>
+html,body{margin:0;height:100%;background:#080b16}body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+canvas{height:100vh;aspect-ratio:4/9;image-rendering:pixelated;background:#0b1020}canvas:focus-visible{outline:2px solid #79f2d0;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0" aria-label="Lantern Line. A tiny lightkeeper routes colored motes through an optical workshop, anticipates sootling sabotage, and lights four skyline districts."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,RI,clamp,rect,stepParts,drawParts,shake,preDraw,postDraw,start,keys,tap,manual,
+  initSession,sessionStep,drawSession,playing,addScore,createShow,createEvidence,fxBurst,fxDust}=E;
+
+const CLOG_LEAD_FRAMES = 36; // @foundry clogLeadFrames
+const TAU=Math.PI*2;
+const PAL={night:'#080b16',sky:'#111a31',steel:'#26344f',steel2:'#435477',glass:'#8fb7ce',cream:'#fff2c2',
+  amber:'#ffc857',cyan:'#58e5e8',rose:'#ff6fae',mint:'#79f2d0',coral:'#ff665f',violet:'#6b3c83',soot:'#171225',white:'#ffffff'};
+const HUES=[PAL.amber,PAL.cyan,PAL.rose],HUE_NAMES=['AMBER','CYAN','ROSE'];
+const NODES=Object.freeze({
+  'intake:0':{x:24,y:286},'intake:1':{x:80,y:286},'intake:2':{x:136,y:286},
+  'prism:0':{x:24,y:238},'prism:1':{x:80,y:238},'prism:2':{x:136,y:238},
+  'cross:01':{x:52,y:214},'cross:12':{x:108,y:214},'rework':{x:80,y:260},
+  'coil:0':{x:24,y:188},'coil:1':{x:80,y:188},'coil:2':{x:136,y:188},
+  'relay:01':{x:52,y:164},'relay:12':{x:108,y:164},
+  'fuser:0':{x:24,y:138},'fuser:1':{x:80,y:138},'fuser:2':{x:136,y:138},'purge':{x:80,y:118},
+  'dispatch:0':{x:24,y:92},'dispatch:1':{x:80,y:92},'dispatch:2':{x:136,y:92}
+});
+const MODULE_IDS=['prism:0','prism:1','prism:2','coil:0','coil:1','coil:2','fuser:0','fuser:1','fuser:2','purge'];
+const INTENT_KEYS=['interact','moveX','moveY','purge','rotate','tactic','targetId','targetKind'];
+const EVIDENCE_SOURCES=[
+  {id:'order-open',kind:'setup',signal:'orders.opened'},
+  {id:'route-commit',kind:'commit',signal:'decisions.routeCommits'},
+  {id:'sootling-windup',kind:'threat',signal:'threats.windups'},
+  {id:'keeper-anticipation',kind:'response',signal:'responses.forecast'},
+  {id:'keeper-recovery',kind:'response',signal:'responses.reactive'},
+  {id:'mote-transform',kind:'environment',signal:'environment.transforms'},
+  {id:'exact-lantern',kind:'payoff',signal:'payoffs.exactLanterns'},
+  {id:'imperfect-lantern',kind:'payoff',signal:'payoffs.imperfectLanterns'},
+  {id:'district-lit',kind:'progress',signal:'progress.districts'},
+  {id:'workshop-shift',kind:'environment',signal:'environment.stages'}
+];
+const SHOW=createShow({queueLimit:2,recoveryGap:45,tiers:{1:{frames:42,minGap:30},2:{frames:60,minGap:90,slowEvery:2,slowFrames:12,admire:18},3:{frames:90,minGap:300,hold:6,slowEvery:3,slowFrames:24,admire:48}}});
+const EVIDENCE=createEvidence({limit:1800,sources:EVIDENCE_SOURCES});
+
+let showFrame=0,runFrame=0,world=null,pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let feedback=[],feedbackSerial=0,goodPulse=0,badPulse=0,texts=[],visualFixture='',visualTick=0;
+const clone=o=>JSON.parse(JSON.stringify(o));
+const round=(v,d=3)=>{const p=10**d;return Math.round(v*p)/p};
+const hashValue=value=>{const s=JSON.stringify(value),h=[2166136261];for(let i=0;i<s.length;i++)h[0]=Math.imul(h[0]^s.charCodeAt(i),16777619);return(h[0]>>>0).toString(16)};
+const finiteObject=o=>{const stack=[o],seen=new Set();while(stack.length){const v=stack.pop();if(v&&typeof v==='object'){if(seen.has(v))continue;seen.add(v);for(const x of Object.values(v))stack.push(x)}else if(typeof v==='number'&&!Number.isFinite(v))return false}return true};
+function baseStats(){return{ordersOpened:0,routeCommits:0,transforms:0,batchesCompleted:0,exactLanterns:0,imperfectLanterns:0,
+  districtsLit:0,windups:0,forecastResponses:0,reactiveResponses:0,purgeCaptures:0,jams:0,jamFrames:0,clogsAvoided:0,
+  spoiledBatches:0,reworks:0,planReversals:0,events:0,progress:0,
+  maxDecisionDeadAir:0,maxEventLull:0,maxProgressLull:0,forecastChecks:0,leadActivations:0,lapses:0};}
+function buildSchedule(){
+  const orders=[],motes=[],threats=[],upgrades=[];
+  for(let i=0;i<64;i++)orders.push({id:'order:'+i,left:{hue:RI(0,2),glyph:RI(0,1),charge:RI(1,2)},right:{hue:RI(0,2),glyph:RI(0,1),charge:RI(1,2)}});
+  for(let i=0;i<180;i++)motes.push({hue:RI(0,2),glyph:RI(0,1),charge:0,lane:RI(0,2)});
+  for(let i=0;i<36;i++)threats.push({at:540+i*(600+RI(0,180)),side:(i+RI(0,1))%2,actor:i<12?'sootling:0':'sootling:'+(i%2)});
+  const choices=['split-prism','cold-coil','mirror-gate','deep-vent','twin-fuse','clear-glass'];
+  for(let i=0;i<4;i++){const a=(RI(0,choices.length-1)+i)%choices.length;upgrades.push([choices[a],choices[(a+2)%choices.length],choices[(a+4)%choices.length]])}
+  return{orders,motes,threats,upgrades};
+}
+function buildWorkshop(){return MODULE_IDS.map(id=>({id,heat:0,jamT:0,jamId:null,guardT:0,soot:0,misfire:null,orientation:0,bufferIds:[],spin:0}));}
+function makeSootling(id,index){return{id,state:'DUCT_PATROL',x:index?151:9,y:74+index*18,vx:index?-0.65:0.65,vy:0,targetId:'',stateT:0,landsAt:0,threatId:null,threatSerial:0,threatEvidenceSerial:0,threatOrdinal:-1,lapseCounted:false,retargets:0,phase:index*47};}
+function resetRun(){
+  SHOW.reset(showFrame);EVIDENCE.reset();feedback=[];feedbackSerial=0;goodPulse=badPulse=0;texts=[];runFrame=0;
+  const schedule=buildSchedule();
+  world={frame:0,stage:0,district:0,districtsLit:[false,false,false,false],chain:0,bestChain:0,blackout:0,schedule,scheduleSha256:hashValue(schedule),
+    orderIndex:0,order:null,moteIndex:0,motes:[],completedHalves:[],modules:buildWorkshop(),
+    keeper:{id:'keeper',x:80,y:300,vx:0,vy:0,facing:1,targetId:'intake:1',tactic:'READ THE ORDER',actionT:0,emoteT:0,carrying:null,intent:null,step:0},
+    sootlings:[makeSootling('sootling:0',0)],threatIndex:0,upgrade:null,upgradeHistory:[],lastPlanId:'',lastIntentDigest:'',lastDecisionAt:showFrame,lastEventAt:showFrame,lastProgressAt:showFrame,
+    currentSetupSerial:0,currentCommitSerial:0,routeSerial:0,jamSerial:0,misfireSerial:0,lanternSerial:0,lastSpawnAt:-90,stats:baseStats(),pendingPlan:null,productionPlan:null,scrap:[],launched:[],runEpoch:showFrame};
+  openOrder();
+}
+function evidenceFact(source,data){if(typeof globalThis.__NO_EVIDENCE_LEDGER!=='undefined')return null;return EVIDENCE.record(source,Object.assign({frame:showFrame,showFrame,runFrame},data));}
+function markEvent(){world.stats.events++;world.stats.maxEventLull=Math.max(world.stats.maxEventLull,showFrame-world.lastEventAt);world.lastEventAt=showFrame;world.stats.maxDecisionDeadAir=Math.max(world.stats.maxDecisionDeadAir,showFrame-world.lastDecisionAt);world.lastDecisionAt=showFrame;}
+function markProgress(){world.stats.progress++;world.stats.maxProgressLull=Math.max(world.stats.maxProgressLull,showFrame-world.lastProgressAt);world.lastProgressAt=showFrame;}
+function feedbackCue(kind,id,sx,sy){feedback.push({serial:++feedbackSerial,frame:runFrame,show:showFrame,kind,id,sx:Math.round(clamp(sx,0,159)),sy:Math.round(clamp(sy,0,359))});if(feedback.length>480)feedback.splice(0,feedback.length-480);if(typeof globalThis.__NO_PAYOFF_FX==='undefined'){if(kind==='good')goodPulse=Math.max(goodPulse,.7);else badPulse=Math.max(badPulse,.8)}}
+function say(s,c,x=80,y=72,t=48){texts.push({s,c,x,y,t});if(texts.length>8)texts.shift();}
+function offer(id,tier,x,y,tag){SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function openOrder(){
+  const src=world.schedule.orders[world.orderIndex%world.schedule.orders.length];world.order=clone(src);world.order.openedAt=runFrame;world.order.expiresAt=runFrame+720;
+  const e=evidenceFact('order-open',{id:world.order.id,orderId:world.order.id,x:80,y:332});world.currentSetupSerial=e?e.serial:0;world.stats.ordersOpened++;markEvent();
+  say('ORDER '+(world.orderIndex+1),PAL.cream,80,55,42);
+}
+function currentThreat(){for(const state of['CLOG','WINDUP','MARK','SCOUT']){const threat=world.sootlings.find(s=>s.state===state);if(threat)return threat}return null;}
+function threatWindow(s){return s&&s.landsAt-runFrame<=90+CLOG_LEAD_FRAMES&&s.landsAt>=runFrame;}
+function hiddenThreat(s){return s&&s.threatOrdinal>=0&&s.threatOrdinal%6===5}
+function sensedThreats(){const s=currentThreat();if(!s)return[];if(s.state==='CLOG')return[s];if(typeof globalThis.__NO_CLOG_FORECAST!=='undefined'||hiddenThreat(s))return[];return threatWindow(s)?[s]:[];}
+function accountForecastObservation(){const s=currentThreat();if(!s)return;world.stats.forecastChecks++;if(hiddenThreat(s)&&threatWindow(s)&&!s.lapseCounted){s.lapseCounted=true;world.stats.lapses++}if(typeof globalThis.__NO_CLOG_FORECAST==='undefined'&&!hiddenThreat(s)&&threatWindow(s)&&s.landsAt-runFrame>90)world.stats.leadActivations++;}
+function recipeDistance(raw,target,lane){const turns=(target.hue-raw.hue+3)%3,charge=target.charge,glyphFlip=raw.glyph===target.glyph?0:1;return{turns,charge,glyphFlip,lane,cost:turns*5+charge*4+glyphFlip*3};}
+function sense(){return{order:clone(world.order),modules:clone(world.modules),motes:clone(world.motes),halves:clone(world.completedHalves),threats:sensedThreats().map(clone),keeper:clone(world.keeper),stage:world.stage,chain:world.chain};}
+function enumeratePlans(s){
+  const raw=world.schedule.motes[world.moteIndex%world.schedule.motes.length],side=(world.completedHalves.length+world.motes.length)%2,half=side?world.order.right:world.order.left,out=[];
+  for(let lane=0;lane<3;lane++){
+    const recipe=recipeDistance(raw,half,lane),module=world.modules.find(m=>m.id==='coil:'+lane),threat=s.threats[0],threatened=threat&&threat.targetId==='coil:'+lane,occupied=world.motes.some(m=>m.lane===lane);
+    out.push({id:'exact:'+side+':'+lane,lane,side,kind:'exact',targetId:'prism:'+lane,targetKind:'module',tactic:threatened?'REROUTE THE GLOW':'BUILD EXACT LIGHT',recipe,score:120-recipe.cost-module.heat*.2-(module.jamT?80:0)-(threatened?70:0)-(occupied?100:0)});
+  }
+  const threat=s.threats[0];if(threat){const bait=threat.state==='WINDUP'&&world.orderIndex%3===0;out.push({id:'scrub:'+threat.threatSerial,lane:+threat.targetId.split(':')[1]||1,kind:'scrub',targetId:threat.targetId,targetKind:'module',tactic:threat.state==='CLOG'?'SCRUB THE JAM':'FORECAST THE CLOG',recipe:null,score:threat.state==='CLOG'?205:bait?188:198});out.push({id:'purge:'+threat.threatSerial,lane:1,kind:'purge',targetId:'purge',targetKind:'vent',tactic:'BAIT THE SOOTLING',recipe:null,score:bait?202:176})}
+  if(world.completedHalves.length&&world.completedHalves[0].flawed)out.push({id:'rework',lane:1,kind:'rework',targetId:'rework',targetKind:'module',tactic:'REWORK THE GLASS',recipe:null,score:168});
+  return out.sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id));
+}
+function clonePlannerState(state){return clone(state);}
+function simulatePlanStep(sim,plan){const next=clone(sim);next.score=(next.score||0)+plan.score;return next;}
+function scorePlan(sim,plan){return(sim.score||0)+plan.score;}
+function intentForPlan(plan){const n=NODES[plan.targetId]||NODES['intake:'+plan.lane],dx=n.x-world.keeper.x,dy=n.y-world.keeper.y,l=Math.hypot(dx,dy)||1;return{moveX:round(dx/l),moveY:round(dy/l),interact:plan.kind==='exact'||plan.kind==='scrub'||plan.kind==='rework',rotate:plan.kind==='exact',purge:plan.kind==='purge',targetId:plan.targetId,targetKind:plan.targetKind,tactic:plan.tactic,planId:plan.id,lane:plan.lane,side:plan.side,kind:plan.kind,recipe:plan.recipe};}
+function fallbackPlan(){return{id:'patrol',lane:(Math.floor(runFrame/90)%3),kind:'patrol',targetId:'intake:'+(Math.floor(runFrame/90)%3),targetKind:'intake',tactic:'WATCH THE WORKSHOP',score:0,recipe:null};}
+function botIntent(){const s=sense(),plans=enumeratePlans(s),plan=s.threats.length?plans[0]:(world.completedHalves.length+world.motes.length>=2?fallbackPlan():plans[0]||fallbackPlan());return intentForPlan(plan);}
+function nearestNode(ids,maxDistance=14){let best=null,distance=maxDistance;for(const id of ids){const n=NODES[id],d=Math.hypot(world.keeper.x-n.x,world.keeper.y-n.y);if(d<=distance){best=id;distance=d}}return best;}
+function humanIntent(){
+  const dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0),interact=tap('a'),rotate=tap('b'),purge=tap('c');let targetId='manual',targetKind='manual',kind='manual',tactic='MANUAL LIGHTWORK',lane=1;
+  if(purge){targetId='purge';targetKind='vent';kind='purge';tactic='OPEN PURGE'}
+  else if(rotate){targetId=nearestNode(['prism:0','prism:1','prism:2'])||'manual';targetKind=targetId==='manual'?'manual':'module';kind=targetId==='manual'?'manual':'rotate';tactic=kind==='rotate'?'TURN PRISM':'MANUAL LIGHTWORK';lane=targetId==='manual'?1:+targetId.split(':')[1]}
+  else if(interact){const threat=currentThreat(),jammed=nearestNode(world.modules.filter(m=>m.id.startsWith('coil:')&&m.jamT>0).map(m=>m.id));if(threat&&threat.state==='CLOG'&&Math.hypot(world.keeper.x-NODES[threat.targetId].x,world.keeper.y-NODES[threat.targetId].y)<=14)targetId=threat.targetId;else targetId=jammed||nearestNode(['rework'])||'manual';targetKind=targetId==='manual'?'manual':'module';kind=targetId==='rework'?'rework':targetId==='manual'?'manual':'scrub';tactic=kind==='scrub'?'SCRUB THE JAM':kind==='rework'?'REWORK THE GLASS':'MANUAL LIGHTWORK';lane=targetId.includes(':')?+targetId.split(':')[1]:1}
+  return{moveX:dx,moveY:dy,interact,rotate,purge,targetId,targetKind,tactic,planId:'manual',lane,kind,recipe:null};
+}
+function commitRoute(intent){
+  if(world.pendingPlan&&world.pendingPlan.planId===intent.planId)return;
+  const production=intent.kind==='exact',previous=world.productionPlan,threat=currentThreat(),qualifiedReversal=production&&previous&&!previous.consumed&&previous.orderId===world.order.id&&previous.side===intent.side&&previous.planId!==intent.planId&&threat&&threat.targetId==='coil:'+previous.lane&&threatWindow(threat),causeSerial=qualifiedReversal?threat.threatEvidenceSerial:0;
+  const productionCommitId=++world.routeSerial,fact=evidenceFact('route-commit',{id:'commit:'+runFrame,actorId:'keeper',setupSerial:world.currentSetupSerial,causeSerial,productionCommitId,orderId:world.order.id,planId:intent.planId,side:Number.isInteger(intent.side)?intent.side:null,lane:Number.isInteger(intent.lane)?intent.lane:null,targetId:intent.targetId,tactic:intent.tactic,x:world.keeper.x,y:world.keeper.y}),committed=Object.assign(clone(intent),{commitSerial:fact?fact.serial:0,productionCommitId,orderId:world.order.id,consumed:false,ready:false});world.pendingPlan=committed;world.currentCommitSerial=committed.commitSerial;
+  if(production)world.productionPlan=committed;if(qualifiedReversal)world.stats.planReversals++;world.stats.routeCommits++;world.lastPlanId=intent.planId;markEvent();
+  if(threat&&intent.tactic==='FORECAST THE CLOG'&&threat.threatSerial){world.stats.forecastResponses++;evidenceFact('keeper-anticipation',{id:'anticipation:'+runFrame,actorId:'keeper',causeSerial:threat.threatEvidenceSerial,tactic:intent.tactic,x:world.keeper.x,y:world.keeper.y});markEvent();offer('forecast',1,world.keeper.x,world.keeper.y,'FORECAST')}
+}
+function applyIntent(intent){
+  world.keeper.intent=clone(intent);const k=world.keeper,n=NODES[intent.targetId],speed=intent.kind==='scrub'||intent.kind==='purge'?1.7:1.35;if(n){const workX=n.x+Math.sin(runFrame*.08)*6,workY=n.y+Math.cos(runFrame*.08)*4,dx=workX-k.x,dy=workY-k.y,l=Math.hypot(dx,dy)||1;k.vx=dx/l*speed;k.vy=dy/l*speed}else{k.vx=intent.moveX*speed;k.vy=intent.moveY*speed}
+  if(intent.planId&&intent.planId!=='patrol'&&intent.planId!=='manual')commitRoute(intent);
+  return intent;
+}
+function operateIntent(intent){
+  if(intent.rotate&&intent.targetId.startsWith('prism:')){const module=moduleFor(intent.targetId),next=intent.recipe?intent.recipe.turns:(module.orientation+1)%3;if(module.orientation!==next){module.orientation=next;world.keeper.actionT=12;markEvent()}if(world.productionPlan&&world.productionPlan.planId===intent.planId&&world.productionPlan.orderId===world.order.id)world.productionPlan.ready=true}
+  if(intent.kind==='scrub')scrubThreat(intent);else if(intent.kind==='purge')purgeThreat();else if(intent.kind==='rework')reworkHalf();
+}
+function stepKeeper(){
+  const isManual=manual();if(!isManual)accountForecastObservation();const intent=isManual?humanIntent():botIntent();applyIntent(intent);const k=world.keeper,n=NODES[intent.targetId];k.x=clamp(k.x+k.vx,8,152);k.y=clamp(k.y+k.vy,62,302);k.facing=k.vx<-.05?-1:k.vx>.05?1:k.facing;k.step+=Math.hypot(k.vx,k.vy);
+  if(n&&Math.hypot(k.x-n.x,k.y-n.y)<8)operateIntent(intent);
+  if(k.actionT>0)k.actionT--;if(k.emoteT>0)k.emoteT--;
+}
+function chooseProductionPlan(){const snapshot=sense();snapshot.threats=[];return enumeratePlans(snapshot).find(plan=>plan.kind==='exact')||fallbackPlan();}
+function spawnMote(){
+  const source=world.productionPlan;if(world.motes.length>=5||world.completedHalves.length+world.motes.length>=2||!source||source.consumed||!source.ready||source.orderId!==world.order.id||runFrame-world.lastSpawnAt<90)return false;const raw=clone(world.schedule.motes[world.moteIndex%world.schedule.motes.length]),plan=clone(source),lane=plan.lane===undefined?raw.lane:plan.lane;world.productionPlan.consumed=true;world.lastSpawnAt=runFrame;
+  world.moteIndex++;world.motes.push({id:'batch:'+world.runEpoch+':'+world.moteIndex,lane,x:NODES['intake:'+lane].x,y:286,orderId:world.order.id,side:plan.side,commitSerial:plan.commitSerial||0,productionCommitId:plan.productionCommitId||0,
+    phase:'intake',t:0,hue:raw.hue,glyph:raw.glyph,charge:raw.charge,purity:1,plan,flawed:false,transformMask:0});return true;
+}
+function moduleFor(id){return world.modules.find(m=>m.id===id);}
+function transformMote(m,kind){
+  if(kind==='prism'&&!(m.transformMask&1)){const module=moduleFor('prism:'+m.lane),turns=module.orientation;m.hue=(m.hue+turns)%3;if(m.plan.recipe&&m.plan.recipe.glyphFlip)m.glyph=1-m.glyph;m.transformMask|=1;world.stats.transforms++;evidenceFact('mote-transform',{id:m.id+':prism',actorId:m.id,orderId:m.orderId,side:Number.isInteger(m.side)?m.side:null,commitSerial:m.commitSerial||0,productionCommitId:m.productionCommitId||0,planId:m.plan.planId||null,moduleId:'prism:'+m.lane,x:m.x,y:m.y});feedbackCue('good','transform',m.x,m.y);markEvent();offer('transform',1,m.x,m.y,'TRANSFORM')}
+  if(kind==='coil'&&!(m.transformMask&2)){const module=moduleFor('coil:'+m.lane),charge=m.plan.recipe?m.plan.recipe.charge:1,misfire=module.misfire;m.charge=misfire?(charge===2?1:2):charge;if(misfire){module.misfire=null;m.purity=.65;m.misfireT=24;m.threatId=misfire.threatId;m.jamId=misfire.jamId;m.misfireId=misfire.id;world.stats.spoiledBatches++;say('MISFIRE',PAL.coral,m.x,m.y-8,30);offer('spoil',1,m.x,m.y,'MISFIRE')}module.heat=clamp(module.heat+14+charge*5,0,100);module.spin+=charge;m.transformMask|=2;world.stats.transforms++;evidenceFact('mote-transform',{id:m.id+':coil',actorId:m.id,moteId:m.id,threatId:m.threatId||null,jamId:m.jamId||null,misfireId:m.misfireId||null,expectedCharge:charge,actualCharge:m.charge,orderId:m.orderId,side:Number.isInteger(m.side)?m.side:null,commitSerial:m.commitSerial||0,productionCommitId:m.productionCommitId||0,planId:m.plan.planId||null,moduleId:'coil:'+m.lane,x:m.x,y:m.y});feedbackCue(misfire?'bad':'good',misfire?'spoil':'transform',m.x,m.y);markEvent()}
+}
+function spoilMote(m,reason){m.flawed=true;m.purity=.4;world.stats.spoiledBatches++;world.scrap.push({x:m.x,y:m.y,t:180,reason});feedbackCue('bad','spoil',m.x,m.y);say('CRACK',PAL.coral,m.x,m.y-8,30);markEvent();offer('spoil',1,m.x,m.y,'SPOIL')}
+function stepMotes(){
+  spawnMote();
+  for(const m of world.motes){m.t++;if(m.misfireT>0)m.misfireT--;m.y-=.72;if(m.y<=240&&m.phase==='intake'){m.phase='prism';transformMote(m,'prism')}
+    if(m.y<=190&&m.phase==='prism'){m.phase='coil';const module=moduleFor('coil:'+m.lane);if(module.jamT>0)spoilMote(m,'jam');else transformMote(m,'coil')}
+    if(m.y<=140&&m.phase==='coil'){m.phase='fuser'}
+    if(m.y<=92&&m.phase==='fuser'){m.phase='done';world.completedHalves.push(clone(m));if(world.completedHalves.length>=2)resolveLantern()}}
+  world.motes=world.motes.filter(m=>m.phase!=='done');
+  for(const l of world.launched){l.y-=1.1;l.x+=(80-l.x)*.025;l.t--}world.launched=world.launched.filter(l=>l.t>0);
+  for(const s of world.scrap)s.t--;world.scrap=world.scrap.filter(s=>s.t>0);
+}
+function halfMatches(m,target){return m.hue===target.hue&&m.glyph===target.glyph&&m.charge===target.charge&&!m.flawed;}
+function resolveLantern(){
+  const halves=world.completedHalves.splice(0,2),exact=halfMatches(halves[0],world.order.left)&&halfMatches(halves[1],world.order.right),lanternId='lantern:'+ ++world.lanternSerial;world.stats.batchesCompleted++;
+  if(exact){world.stats.exactLanterns++;world.chain++;world.bestChain=Math.max(world.bestChain,world.chain);world.launched.push({id:lanternId,x:80,y:92,t:80,hue:halves[1].hue,exact:true});
+    const primary=halves.find(h=>h.commitSerial)||halves[0],secondary=halves.find(h=>h!==primary);evidenceFact('exact-lantern',{id:lanternId,lanternId,orderId:world.order.id,setupSerial:world.currentSetupSerial,commitSerial:primary.commitSerial||0,secondCommitSerial:secondary&&secondary.commitSerial||0,productionCommitId:primary.productionCommitId||0,secondProductionCommitId:secondary&&secondary.productionCommitId||0,planId:primary.plan&&primary.plan.planId||null,secondPlanId:secondary&&secondary.plan&&secondary.plan.planId||null,lanes:halves.map(h=>Number.isInteger(h.lane)?h.lane:null),halfIds:halves.map(h=>h.id),x:80,y:92});
+    feedbackCue('good','exact-lantern',80,92);if(typeof globalThis.__NO_PAYOFF_FX==='undefined'){fxBurst(80,92,18,PAL.amber,1.8,-.02);shake(2)}offer('exact-lantern',2,80,92,'EXACT');say('EXACT LIGHT',PAL.mint,80,75,60);markEvent();markProgress();addScore(100+world.chain*10);
+  }else{world.stats.imperfectLanterns++;world.chain=0;world.launched.push({id:lanternId,x:80,y:92,t:60,hue:halves[1].hue,exact:false});const causalHalf=halves.find(h=>h.misfireId);evidenceFact('imperfect-lantern',{id:lanternId,lanternId,orderId:world.order.id,setupSerial:world.currentSetupSerial,commitSerial:causalHalf&&causalHalf.commitSerial||halves[0].commitSerial||0,threatId:causalHalf&&causalHalf.threatId||null,jamId:causalHalf&&causalHalf.jamId||null,misfireId:causalHalf&&causalHalf.misfireId||null,moteId:causalHalf&&causalHalf.id||null,productionCommitId:causalHalf&&causalHalf.productionCommitId||null,halfIds:halves.map(h=>h.id),x:80,y:92});feedbackCue('bad','wrong-transform',80,138);say('DIM LANTERN',PAL.coral,80,116,42);markEvent();markProgress();addScore(20)}
+  const needed=4+world.district*2;if(world.stats.exactLanterns>=needed&&!world.districtsLit[world.district])lightDistrict();world.orderIndex++;openOrder();world.pendingPlan=null;world.productionPlan=null;
+}
+function lightDistrict(){
+  const d=world.district;world.districtsLit[d]=true;world.stats.districtsLit++;world.district=Math.min(3,d+1);world.stage=world.stats.districtsLit;
+  evidenceFact('district-lit',{id:'district:'+d,district:d,x:20+d*40,y:28});evidenceFact('workshop-shift',{id:'stage:'+world.stage,stage:world.stage,x:80,y:180});feedbackCue('good',world.stats.districtsLit===4?'beacon':'district-lit',20+d*40,28);
+  if(typeof globalThis.__NO_PAYOFF_FX==='undefined'){fxBurst(20+d*40,28,28,HUES[d%3],2.2,.01);shake(4)}offer('district-lit',3,20+d*40,28,'DISTRICT');say(d===3?'BEACON DAWN':'DISTRICT '+(d+1)+' LIT',PAL.amber,80,54,90);markEvent();markProgress();
+  if(d===1&&!world.sootlings.some(s=>s.id==='sootling:1'))world.sootlings.push(makeSootling('sootling:1',1));
+}
+function chooseThreatTarget(s){return world.modules.filter(m=>m.id.startsWith('coil:')).sort((a,b)=>(b.heat+(b.bufferIds.length*20))-(a.heat+(a.bufferIds.length*20))||a.id.localeCompare(b.id))[0].id;}
+function beginWindup(s){s.state='WINDUP';s.stateT=90;s.landsAt=runFrame+90;s.targetId=s.targetId||chooseThreatTarget(s);const n=NODES[s.targetId];if(!s.threatSerial){s.threatId=s.threatId||'threat:manual:'+runFrame;s.threatSerial=runFrame+1;const e=evidenceFact('sootling-windup',{id:s.threatId,threatId:s.threatId,actorId:s.id,targetId:s.targetId,landsAt:s.landsAt,x:n.x,y:n.y});s.threatEvidenceSerial=e?e.serial:0}world.stats.windups++;markEvent();offer('windup',1,n.x,n.y,'WINDUP');}
+function stepSootlings(){
+  for(const s of world.sootlings){s.phase+=.08;
+    if(s.state==='DUCT_PATROL'){s.x+=s.vx;if(s.x<9){s.x=9;s.vx=Math.abs(s.vx)}else if(s.x>151){s.x=151;s.vx=-Math.abs(s.vx)}s.y=68+(s.id.endsWith('1')?18:0)+Math.sin(s.phase)*4;const scheduled=world.schedule.threats[world.threatIndex];if(scheduled&&runFrame>=scheduled.at&&scheduled.actor===s.id){s.state='SCOUT';s.stateT=45;s.targetId=chooseThreatTarget(s);s.landsAt=runFrame+165;s.threatId='threat:'+world.threatIndex;s.threatSerial=runFrame+1;s.threatOrdinal=world.threatIndex;s.lapseCounted=false;const n=NODES[s.targetId],e=evidenceFact('sootling-windup',{id:s.threatId,threatId:s.threatId,actorId:s.id,targetId:s.targetId,landsAt:s.landsAt,x:n.x,y:n.y});s.threatEvidenceSerial=e?e.serial:0;world.threatIndex++}}
+    else if(s.state==='SCOUT'){s.stateT--;const scoutX=80+Math.sin(s.phase*1.7)*9,scoutY=165+Math.cos(s.phase*1.7)*7;s.x+=(scoutX-s.x)*.08;s.y+=(scoutY-s.y)*.08;if(s.stateT<=0){s.state='MARK';s.stateT=30}}
+    else if(s.state==='MARK'){s.stateT--;const n=NODES[s.targetId];s.x+=(n.x-s.x)*.08;s.y+=(n.y-18-s.y)*.08;if(s.stateT<=0)beginWindup(s)}
+    else if(s.state==='WINDUP'){s.stateT--;const n=NODES[s.targetId],a=runFrame*.28;s.x=n.x+Math.cos(a)*10;s.y=n.y-12+Math.sin(a)*5;if(s.stateT<=0)landClog(s)}
+    else if(s.state==='CLOG'){s.stateT--;const n=NODES[s.targetId];s.x=n.x+Math.sin(runFrame*.48)*9;s.y=n.y-5+Math.cos(runFrame*.48)*5;if(s.stateT<=0){s.state='FLEE';s.stateT=50}}
+    else if(s.state==='FLEE'){s.stateT--;const exitX=s.id.endsWith('1')?151:9;s.x+=(exitX-s.x)*.06;s.y+=(72-s.y)*.06;if(s.stateT<=0){s.state='RECOVER';s.stateT=35}}
+    else if(s.state==='RECOVER'){s.stateT--;s.x+=Math.sin(s.phase)*.6;s.y+=Math.cos(s.phase)*.3;if(s.stateT<=0){s.state='DUCT_PATROL';s.targetId=''}}
+  }
+}
+function landClog(s){const m=moduleFor(s.targetId),n=NODES[s.targetId];if(m.guardT>0){m.guardT=0;s.state='FLEE';s.stateT=50;world.stats.clogsAvoided++;feedbackCue('good','purge-capture',n.x,n.y);say('CLOG CAUGHT',PAL.mint,n.x,n.y-12,45);markEvent();offer('guard-catch',2,n.x,n.y,'CATCH');return}s.state='CLOG';s.stateT=120;m.jamT=180;m.jamId='jam:'+ ++world.jamSerial;m.soot=1;if(hiddenThreat(s)&&s.threatOrdinal%12===11&&typeof globalThis.__NO_MISFIRE_CONSEQUENCE==='undefined')m.misfire={id:'misfire:'+ ++world.misfireSerial,threatId:s.threatId,jamId:m.jamId,armedAt:runFrame,targetId:s.targetId};world.stats.jams++;evidenceFact('workshop-shift',{id:m.jamId,threatId:s.threatId,jamId:m.jamId,misfireId:m.misfire&&m.misfire.id||null,targetId:s.targetId,stage:'jam-landed',x:n.x,y:n.y});feedbackCue('bad','jam',n.x,n.y);say('JAM!',PAL.coral,n.x,n.y-12,45);markEvent();offer('jam',2,n.x,n.y,'JAM')}
+function scrubThreat(intent){const s=currentThreat();if(!s||s.targetId!==intent.targetId)return;const m=moduleFor(s.targetId);if(s.state==='CLOG'){m.jamT=0;m.soot=0;s.state='FLEE';s.stateT=45;world.stats.reactiveResponses++;evidenceFact('keeper-recovery',{id:'recovery:'+runFrame,actorId:'keeper',causeSerial:s.threatEvidenceSerial,tactic:intent.tactic,x:world.keeper.x,y:world.keeper.y});feedbackCue('good','purge-capture',world.keeper.x,world.keeper.y);markEvent();offer('scrub',1,world.keeper.x,world.keeper.y,'SCRUB')}else if(m.guardT===0){m.guardT=120;feedbackCue('good','transform',world.keeper.x,world.keeper.y);say('FILTER SET',PAL.mint,world.keeper.x,world.keeper.y-10,35);markEvent();offer('filter-set',1,world.keeper.x,world.keeper.y,'FILTER')}}
+function purgeThreat(){const s=currentThreat();if(!s||s.state!=='WINDUP')return;const n=NODES.purge;if(Math.hypot(s.x-n.x,s.y-n.y)>85)return;s.state='FLEE';s.stateT=60;const m=moduleFor(s.targetId);m.jamT=0;m.soot=0;world.stats.purgeCaptures++;world.stats.clogsAvoided++;feedbackCue('good','purge-capture',n.x,n.y);if(typeof globalThis.__NO_PAYOFF_FX==='undefined')fxBurst(n.x,n.y,20,PAL.mint,2,-.03);markEvent();offer('purge',2,n.x,n.y,'PURGE')}
+function reworkHalf(){const h=world.completedHalves[0];if(!h||!h.flawed)return;h.flawed=false;h.purity=.8;h.hue=world.order.left.hue;h.glyph=world.order.left.glyph;h.charge=world.order.left.charge;world.stats.reworks++;world.chain=0;feedbackCue('good','transform',80,260);markEvent()}
+function stepModules(){for(const m of world.modules){if(m.heat>0)m.heat=Math.max(0,m.heat-.08);if(m.guardT>0)m.guardT--;if(m.jamT>0){m.jamT--;world.stats.jamFrames++;if(m.jamT===0)m.soot=0}m.spin+=m.heat*.001}}
+function recordFeedback(){return feedback.slice()}
+function sampleMotion(){return globalThis.__motionProbe()}
+function step(){
+  showFrame++;pres=SHOW.step(showFrame);sessionStep({reset:resetRun});goodPulse=Math.max(0,goodPulse-.025);badPulse=Math.max(0,badPulse-.025);for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+  if(pres.holdWorld)return;if(showFrame%pres.physicsEvery!==0)return;runFrame++;world.frame=runFrame;
+  stepSootlings();stepModules();stepKeeper();stepMotes();stepParts();
+  world.stats.maxDecisionDeadAir=Math.max(world.stats.maxDecisionDeadAir,showFrame-world.lastDecisionAt);
+}
+function drawSkyline(){rect(0,0,W,52,PAL.night);for(let d=0;d<4;d++){const x=d*40,h=16+d*5,lit=world.districtsLit[d];rect(x+2,50-h,35,h,lit?'#27344a':'#111827');for(let wy=50-h+4;wy<48;wy+=6)for(let wx=x+6;wx<x+34;wx+=7)rect(wx,wy,3,2,lit?HUES[d%3]:'#1b2740');if(d===3){rect(153,14,3,36,lit?PAL.amber:'#26344f');if(lit)rect(149,10,11,4,PAL.cream)}}ctx.fillStyle=PAL.cream;ctx.font='bold 5px monospace';ctx.fillText('LANTERN LINE',4,8);ctx.fillStyle=PAL.glass;ctx.fillText('DISTRICT '+(world.district+1)+'/4',101,8)}
+function line(x1,y1,x2,y2,c,w=1){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.lineWidth=1}
+function drawWorkshop(){rect(0,52,W,258,'#0d1426');rect(5,87,43,218,'#0e192c');rect(58,87,44,218,'#12192b');rect(112,87,43,218,'#0c1829');ctx.globalAlpha=.5;rect(3,88,154,66,'#101b30');rect(3,155,154,69,'#0b1628');rect(3,225,154,80,'#11182a');ctx.globalAlpha=1;for(let x=8;x<160;x+=16)line(x,52,x,309,'#18243a');for(let y=60;y<310;y+=14)line(0,y,160,y,'#18243a');
+  for(let y=96;y<304;y+=28)for(const x of[8,51,105,152])rect(x,y,2,2,'#34445f');rect(3,61,154,25,'#11192a');rect(7,65,146,3,'#283a55');line(5,73,155,73,PAL.glass);ctx.globalAlpha=.35;line(8,80,152,80,PAL.cyan);ctx.globalAlpha=1;for(let x=12;x<156;x+=18){rect(x,70,2,2,PAL.steel2);rect(x+7,78,2,2,'#355c72')}
+  for(let lane=0;lane<3;lane++){const x=[24,80,136][lane];line(x,286,x,92,'#30415e',2);drawPrism(x,238,lane);drawCoil(x,188,lane);drawFuser(x,138,lane);drawDispatch(x,92,lane);drawIntake(x,286,lane)}
+  drawCross(52,214,0);drawCross(108,214,0);drawCross(52,164,0);drawCross(108,164,0);drawRework();drawPurge();
+}
+function drawPrism(x,y,lane){const m=moduleFor('prism:'+lane);ctx.fillStyle=PAL.glass;ctx.beginPath();ctx.moveTo(x,y-9);ctx.lineTo(x+9,y+8);ctx.lineTo(x-9,y+8);ctx.closePath();ctx.fill();rect(x-2,y-4,4,8,HUES[(m.orientation+lane)%3]);}
+function drawCoil(x,y,lane){const m=moduleFor('coil:'+lane);rect(x-10,y-8,20,16,m.jamT?PAL.coral:'#6e4b38');for(let i=0;i<4;i++)line(x-8+i*5,y-7,x-5+i*5,y+7,m.heat>70?PAL.amber:'#d98a50',2);if(m.soot)rect(x-11,y-10,22,4,PAL.soot);if(m.misfire){rect(x-11,y+9,22,2,PAL.coral);rect(x-2,y+6,4,8,PAL.amber)}if(m.guardT){ctx.strokeStyle=PAL.mint;ctx.strokeRect(x-12,y-10,24,20)}}
+function drawFuser(x,y,lane){const m=moduleFor('fuser:'+lane);rect(x-11,y-9,22,18,m.jamT?PAL.coral:'#2d5d63');rect(x-6,y-5,12,10,'#122a33');line(x-8,y,x+8,y,PAL.cyan,2)}
+function drawDispatch(x,y){rect(x-9,y-5,18,10,'#735a35');rect(x-5,y-9,10,5,PAL.amber)}
+function drawIntake(x,y){rect(x-10,y-6,20,12,'#24334c');rect(x-6,y-3,12,4,PAL.glass)}
+function drawCross(x,y,state){rect(x-8,y-6,16,12,'#1b2940');line(x-6,y+(state?4:-4),x+6,y+(state?-4:4),PAL.mint,2)}
+function drawRework(){rect(67,251,26,18,'#3c2e52');ctx.strokeStyle=PAL.rose;ctx.strokeRect(70,254,20,12);ctx.fillStyle=PAL.cream;ctx.font='bold 4px monospace';ctx.fillText('REWORK',71,263)}
+function drawPurge(){const hot=world.stats.purgeCaptures&&runFrame%120<30;rect(67,108,26,20,hot?PAL.coral:'#62432f');ctx.fillStyle=PAL.cream;ctx.font='bold 4px monospace';ctx.fillText('PURGE',72,121)}
+function visualSubject(id){const only=globalThis.__LL_VISUAL_ONLY_SUBJECT;return only===undefined||only===id}
+function drawMotes(){for(const m of world.motes){if(!visualSubject(m.id))continue;ctx.globalAlpha=.25;ctx.fillStyle=HUES[m.hue];ctx.beginPath();ctx.arc(m.x,m.y,7,0,TAU);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle=m.flawed?PAL.coral:HUES[m.hue];ctx.beginPath();ctx.arc(m.x,m.y,3,0,TAU);ctx.fill();if(m.glyph)rect(m.x-1,m.y-5,2,10,PAL.white);else{ctx.strokeStyle=PAL.white;ctx.strokeRect(m.x-2,m.y-2,4,4)}if(m.misfireT){ctx.strokeStyle=PAL.coral;ctx.lineWidth=2;ctx.beginPath();ctx.arc(m.x,m.y,6+Math.sin(runFrame*.5),0,TAU);ctx.stroke()}}if(globalThis.__LL_VISUAL_ONLY_SUBJECT===undefined)for(const l of world.launched){ctx.fillStyle=l.exact?HUES[l.hue]:'#6e6472';ctx.beginPath();ctx.arc(l.x,l.y,4,0,TAU);ctx.fill();rect(l.x-2,l.y-7,4,3,PAL.cream)}if(globalThis.__LL_VISUAL_ONLY_SUBJECT===undefined)for(const s of world.scrap)rect(s.x-3,s.y-2,6,4,PAL.coral)}
+function drawKeeper(){if(!visualSubject('keeper'))return;const k=world.keeper,bob=Math.sin(k.step*.7),y=k.y+bob;ctx.globalAlpha=.3;rect(k.x-6,k.y+10,12,2,PAL.night);ctx.globalAlpha=1;rect(k.x-6,y-10,12,5,'#d8aa48');rect(k.x-4,y-13,8,4,PAL.cream);rect(k.x-4,y-9,8,5,PAL.steel);rect(k.x-3,y-8,6,2,PAL.mint);ctx.fillStyle=PAL.cream;ctx.beginPath();ctx.moveTo(k.x-5,y-4);ctx.lineTo(k.x+5,y-4);ctx.lineTo(k.x+7,y+6);ctx.lineTo(k.x-7,y+6);ctx.closePath();ctx.fill();rect(k.x-4,y-2,8,3,'#d6c78f');rect(k.x+(k.facing>0?5:-8),y-4,3,9,'#9c6b37');rect(k.x+(k.facing>0?7:-9),y+2,2,7,PAL.glass);rect(k.x-5,y+6,4,5,PAL.steel2);rect(k.x+1,y+6,4,5,PAL.steel2);rect(k.x-6,y+10,4,2,PAL.night);rect(k.x+2,y+10,4,2,PAL.night);if(k.intent&&globalThis.__LL_VISUAL_ONLY_SUBJECT===undefined){ctx.fillStyle=PAL.cream;ctx.font='bold 4px monospace';const s=k.intent.tactic.slice(0,18);ctx.fillText(s,clamp(k.x-s.length*2,2,156-s.length*4),k.y-17)}}
+function drawSootlings(){for(const s of world.sootlings){if(!visualSubject(s.id))continue;ctx.fillStyle=PAL.soot;ctx.beginPath();ctx.arc(s.x,s.y,7,0,TAU);ctx.fill();rect(s.x-5,s.y+4,3,4,PAL.violet);rect(s.x+2,s.y+4,3,4,PAL.violet);rect(s.x-4,s.y-2,3,2,PAL.coral);rect(s.x+1,s.y-2,3,2,PAL.coral);if(s.state==='WINDUP'){const n=NODES[s.targetId];ctx.globalAlpha=.55;line(s.x,s.y,n.x,n.y,PAL.coral,1);ctx.globalAlpha=1;ctx.strokeStyle=PAL.coral;ctx.strokeRect(n.x-12,n.y-12,24,24)}}}
+function drawHud(){rect(0,310,W,50,'#090e1b');const o=world.order;ctx.font='bold 5px monospace';ctx.fillStyle=PAL.glass;ctx.fillText('ORDER',5,321);drawRecipeHalf(o.left,34,322);drawRecipeHalf(o.right,64,322);ctx.fillStyle=PAL.cream;ctx.fillText('CHAIN '+world.chain,96,321);ctx.fillText('EXACT '+world.stats.exactLanterns,96,330);ctx.fillStyle=PAL.glass;ctx.fillText(world.keeper.intent?world.keeper.intent.tactic:'READ THE ORDER',5,347);for(const t of texts){ctx.globalAlpha=Math.min(1,t.t/12);ctx.fillStyle=t.c;ctx.font='bold 6px monospace';ctx.fillText(t.s,t.x-t.s.length*3,t.y)}ctx.globalAlpha=1}
+function drawRecipeHalf(q,x,y){ctx.fillStyle=HUES[q.hue];ctx.beginPath();ctx.arc(x,y,5,0,TAU);ctx.fill();ctx.fillStyle=PAL.white;ctx.font='bold 4px monospace';ctx.fillText(q.glyph?'★':'O',x-2,y+2);ctx.fillStyle=PAL.cream;ctx.fillText('+'+q.charge,x+7,y+2)}
+function drawPayoffFx(){if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;if(goodPulse>0){ctx.globalAlpha=goodPulse*.75;rect(0,0,3,H,PAL.mint);rect(W-3,0,3,H,PAL.mint);rect(0,0,W,2,PAL.mint)}if(badPulse>0){ctx.globalAlpha=badPulse*.8;rect(0,0,4,H,PAL.coral);rect(W-4,0,4,H,PAL.coral);rect(0,H-3,W,3,PAL.coral)}ctx.globalAlpha=1;for(const e of feedback){const age=showFrame-e.show;if(age<0||age>24)continue;const color=e.kind==='good'?PAL.mint:PAL.coral,r=5+age*.45;ctx.globalAlpha=1-age/25;ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(e.sx,e.sy,r,0,TAU);ctx.stroke();rect(e.sx-1,e.sy-r-2,3,3,color);rect(e.sx-r-2,e.sy-1,3,3,color);rect(e.sx+r-1,e.sy-1,3,3,color);ctx.lineWidth=1}ctx.globalAlpha=1;const cue=pres.cue;if(cue){ctx.globalAlpha=Math.max(0,1-pres.t/(cue.tier===3?90:60));ctx.strokeStyle=cue.tier===3?PAL.amber:PAL.white;ctx.beginPath();ctx.arc(cue.x,cue.y,8+pres.t*.4,0,TAU);ctx.stroke();ctx.globalAlpha=1}}
+function render(){preDraw();drawSkyline();drawWorkshop();drawMotes();drawSootlings();drawKeeper();drawParts();drawPayoffFx();drawHud();postDraw();drawSession(false)}
+function simulationPlan(plan){if(!plan)return plan;const{commitSerial,...rest}=plan;return rest}
+function simulationMote(mote){const{commitSerial,plan,...rest}=mote;return Object.assign(rest,{plan:simulationPlan(plan)})}
+function simulationState(){return{runFrame,stage:world.stage,district:world.district,districtsLit:world.districtsLit,chain:world.chain,orderIndex:world.orderIndex,order:world.order,moteIndex:world.moteIndex,motes:world.motes.map(simulationMote),halves:world.completedHalves.map(simulationMote),modules:world.modules,keeper:world.keeper,sootlings:world.sootlings.map(({threatEvidenceSerial,...s})=>s),threatIndex:world.threatIndex,pendingPlan:simulationPlan(world.pendingPlan),stats:world.stats,scheduleSha256:world.scheduleSha256,lastPlanId:world.lastPlanId};}
+function signature(){return JSON.stringify(simulationState())}
+function topologyFixture(){const routes=[0,1,2].map(lane=>['intake:'+lane,'prism:'+lane,'coil:'+lane,'fuser:'+lane,'dispatch:'+lane]);return{nodes:Object.keys(NODES).length,lanes:routes.length,processingStages:3,independentLaneRoutes:routes.every((route,index)=>route.every(id=>id.endsWith(':'+index))),responseBranches:['forecast-reroute','rework','purge-bait','reactive-scrub'],rework:true,purgeDependency:true,recipes:3*2*2,solvable:true,routes};}
+function plannerFixture(){const before=signature(),a=botIntent(),middle=signature(),b=botIntent(),after=signature();return{pure:before===middle&&middle===after,repeat:JSON.stringify(a)===JSON.stringify(b),finite:finiteObject(a),intent:a,plans:enumeratePlans(sense()).map(p=>p.id)};}
+function manualActionFixture(name){resetRun();const keeper=world.keeper;if(name==='scrub'){const s=world.sootlings[0],n=NODES['coil:1'],m=moduleFor('coil:1');s.state='CLOG';s.stateT=120;s.targetId='coil:1';s.threatSerial=1;s.x=n.x;s.y=n.y;m.jamT=180;m.soot=1;keeper.x=n.x;keeper.y=n.y}else if(name==='rotate'){const n=NODES['prism:1'];keeper.x=n.x;keeper.y=n.y;moduleFor('prism:1').orientation=0;world.moteIndex=1;world.motes=[{id:'manual-transform',lane:1,x:n.x,y:240.5,orderId:world.order.id,side:0,commitSerial:0,phase:'intake',t:0,hue:0,glyph:0,charge:0,purity:1,plan:{planId:'manual-transform',recipe:{turns:1,charge:1,glyphFlip:0}},flawed:false,transformMask:0}]}else if(name==='purge'){const s=world.sootlings[0],n=NODES.purge;s.state='WINDUP';s.stateT=60;s.targetId='coil:1';s.landsAt=runFrame+60;s.threatSerial=1;s.x=n.x;s.y=n.y+30;keeper.x=n.x;keeper.y=n.y}else throw new Error('unknown manual fixture '+name);return globalThis.__lanternLineProbe();}
+function noThreatFixture(){resetRun();world.schedule.threats=[];return true;}
+function intentFixture(){const ai=botIntent(),human=humanIntent();return{aiKeys:Object.keys(ai).filter(k=>INTENT_KEYS.includes(k)).sort(),humanKeys:Object.keys(human).filter(k=>INTENT_KEYS.includes(k)).sort(),required:INTENT_KEYS.slice().sort()};}
+function foundryProbe(){const s=currentThreat();return{runFrame,intent:world.keeper.intent&&{tactic:world.keeper.intent.tactic,targetId:world.keeper.intent.targetId,planId:world.keeper.intent.planId},environment:{orderIndex:world.orderIndex,modules:world.modules.map(m=>[m.id,m.jamT,m.misfire,round(m.heat)]),sootlings:world.sootlings.map(q=>[q.id,q.state,q.targetId,q.landsAt]),scheduleSha256:world.scheduleSha256},activation:{forecastChecks:world.stats.forecastChecks,leadActivations:world.stats.leadActivations,forecastResponses:world.stats.forecastResponses},threat:s&&{state:s.state,landsAt:s.landsAt,targetId:s.targetId}};}
+function visualProbe(){const keeper={id:'keeper',kind:'keeper',type:'lightkeeper',box:{x:world.keeper.x-8,y:world.keeper.y-13,width:16,height:25}},sootlings=world.sootlings.map(s=>({id:s.id,kind:'sootling',type:s.state.toLowerCase(),box:{x:s.x-8,y:s.y-8,width:16,height:16}})),motes=world.motes.map(m=>({id:m.id,kind:'mote',type:m.flawed?'flawed':'active',box:{x:m.x-7,y:m.y-7,width:14,height:14}}));return{finite:finiteObject({keeper,sootlings,motes}),keeper:keeper.box,sootlings:sootlings.map(s=>Object.assign({id:s.id},s.box)),motes:motes.map(m=>Object.assign({id:m.id},m.box)),actors:[keeper,...sootlings,...motes],modules:world.modules.map(m=>({id:m.id,x:NODES[m.id].x-12,y:NODES[m.id].y-12,width:24,height:24})),districts:world.districtsLit.slice(),fixture:visualFixture,guidelines:0,layout:{playfield:{x:0,y:52,width:160,height:258}}};}
+function primeVisualMote(){const intent=intentForPlan(chooseProductionPlan());commitRoute(intent);world.productionPlan.ready=true;spawnMote()}
+function setVisualBeat(name){visualFixture=name;visualTick=0;resetRun();if(name==='order-read'){world.keeper.x=80;world.keeper.y=300;primeVisualMote()}else if(name==='route-choice'){primeVisualMote();world.keeper.x=24;world.keeper.y=255;world.pendingPlan=intentForPlan(enumeratePlans(sense())[0])}else if(name==='sootling-scout'){primeVisualMote();const s=world.sootlings[0];s.state='SCOUT';s.stateT=40;s.x=30;s.y=100}else if(name==='clog-warning'||name==='keeper-reroute'){primeVisualMote();const s=world.sootlings[0];s.state='MARK';s.stateT=1;s.targetId='coil:1';beginWindup(s);if(name==='keeper-reroute'){world.keeper.x=116;world.keeper.y=190}}else if(name==='jam-impact'){const s=world.sootlings[0];s.targetId='coil:1';s.threatId='threat:visual';s.threatSerial=1;landClog(s)}else if(name==='imperfect-lantern'){misfireFixture(false)}else if(name==='exact-lantern'){world.completedHalves=[Object.assign({flawed:false,commitSerial:1},clone(world.order.left)),Object.assign({flawed:false,commitSerial:1},clone(world.order.right))];resolveLantern()}else if(name==='purge-bait'){const s=world.sootlings[0];s.state='WINDUP';s.targetId='coil:1';s.x=84;s.y=133;s.landsAt=runFrame+40}else if(name==='district-lit'){world.stats.exactLanterns=4;lightDistrict()}else if(name==='blackout'){world.blackout=90;badPulse=1}else if(name==='beacon-apex'){world.district=3;world.districtsLit=[true,true,true,false];lightDistrict()}return visualProbe();}
+function misfireFixture(disabled){
+  const had=Object.prototype.hasOwnProperty.call(globalThis,'__NO_MISFIRE_CONSEQUENCE'),prior=globalThis.__NO_MISFIRE_CONSEQUENCE;if(disabled)globalThis.__NO_MISFIRE_CONSEQUENCE=1;else delete globalThis.__NO_MISFIRE_CONSEQUENCE;resetRun();
+  function productionHalf(lane){if(runFrame-world.lastSpawnAt<90){runFrame=world.lastSpawnAt+90;world.frame=runFrame}const snapshot=sense();snapshot.threats=[];const plan=enumeratePlans(snapshot).find(item=>item.kind==='exact'&&item.lane===lane),intent=intentForPlan(plan);commitRoute(intent);world.productionPlan.ready=true;moduleFor('prism:'+lane).orientation=plan.recipe.turns;if(!spawnMote())throw new Error('misfire fixture could not spawn production mote');const mote=world.motes.at(-1);transformMote(mote,'prism');return mote}
+  const first=productionHalf(1),s=world.sootlings[0];first.y=191;first.phase='prism';s.state='WINDUP';s.stateT=1;s.targetId='coil:1';s.threatId='threat:fixture:11';s.threatSerial=1;s.threatOrdinal=11;s.x=NODES['coil:1'].x;s.y=NODES['coil:1'].y-12;const landedOnOccupied=world.motes.some(mote=>mote.lane===1&&mote.phase==='prism');landClog(s);const armed=clone(moduleFor('coil:1').misfire);scrubThreat({targetId:'coil:1',tactic:'SCRUB THE JAM'});transformMote(first,'coil');world.completedHalves.push(clone(first));world.motes=[];const second=productionHalf(2);transformMote(second,'coil');world.completedHalves.push(clone(second));world.motes=[];resolveLantern();const events=EVIDENCE.probe().events.filter(event=>event.threatId==='threat:fixture:11'||event.lanternId==='lantern:1');const receipt={disabled:!!disabled,scheduleSha256:world.scheduleSha256,landedOnOccupied,threatId:'threat:fixture:11',jamId:armed&&armed.jamId||moduleFor('coil:1').jamId,misfireId:armed&&armed.id||null,moteId:first.id,productionCommitId:first.productionCommitId,expectedCharge:first.plan.recipe.charge,actualCharge:first.charge,lantern:world.launched.at(-1),stats:{exactLanterns:world.stats.exactLanterns,imperfectLanterns:world.stats.imperfectLanterns,spoiledBatches:world.stats.spoiledBatches},events};if(had)globalThis.__NO_MISFIRE_CONSEQUENCE=prior;else delete globalThis.__NO_MISFIRE_CONSEQUENCE;return receipt;
+}
+function threatFixture(){resetRun();world.orderIndex=1;const s=world.sootlings[0];s.state='MARK';s.stateT=1;s.targetId='coil:1';beginWindup(s);return{windupAt:runFrame,landsAt:s.landsAt};}
+
+globalThis.__lanternLineProbe=()=>({finite:finiteObject(simulationState()),runFrame,showFrame,stats:clone(world.stats),show:SHOW.probe(),order:clone(world.order),keeper:clone(world.keeper),sootlings:clone(world.sootlings),districts:world.districtsLit.slice(),scheduleSha256:world.scheduleSha256});
+globalThis.__lanternLineSignature=signature;
+globalThis.__lanternLineFoundryProbe=foundryProbe;
+globalThis.__lanternLinePlannerFixture=plannerFixture;
+globalThis.__lanternLineIntentFixture=intentFixture;
+globalThis.__lanternLineTopologyFixture=topologyFixture;
+globalThis.__lanternLineSetVisualBeat=setVisualBeat;
+globalThis.__lanternLineVisualProbe=visualProbe;
+globalThis.__lanternLinePlannerContamination=()=>{world.pendingPlan=Object.assign({},world.pendingPlan,{futureRoute:['intake:0','relay:12','dispatch:2'],futureDigest:'contaminated'});return true};
+globalThis.__lanternLineThreatFixture=threatFixture;
+globalThis.__lanternLineMisfireFixture=misfireFixture;
+globalThis.__lanternLineManualActionFixture=manualActionFixture;
+globalThis.__lanternLineManualProbe=()=>({modules:clone(world.modules),sootlings:clone(world.sootlings),motes:clone(world.motes),stats:clone(world.stats)});
+globalThis.__lanternLineNoThreatFixture=noThreatFixture;
+globalThis.__lanternLineReset=resetRun;
+globalThis.__feedbackProbe=()=>({finite:finiteObject(feedback),serial:feedbackSerial,events:recordFeedback()});
+globalThis.__motionProbe=()=>({finite:finiteObject(world.keeper)&&finiteObject(world.sootlings),actors:[{id:'keeper',role:'protagonist',x:world.keeper.x,y:world.keeper.y,emote:world.keeper.emoteT>0},...world.sootlings.map(s=>({id:s.id,role:s.id,x:s.x,y:s.y,emote:s.state==='WINDUP'||s.state==='RECOVER'}))]});
+globalThis.__soakProbe=()=>({sig:hashValue({order:world.orderIndex,motes:world.moteIndex,modules:world.modules,sootlings:world.sootlings,districts:world.districtsLit}),events:world.stats.transforms+world.stats.windups+world.stats.forecastResponses+world.stats.reactiveResponses+world.stats.exactLanterns+world.stats.purgeCaptures,progress:world.stats.batchesCompleted+Math.floor(world.stats.transforms/2)+world.stats.exactLanterns+world.stats.districtsLit*8,finite:finiteObject(simulationState())});
+globalThis.__ambientProbe=()=>{const ledger=EVIDENCE.probe();return{protocol:'ambient-evidence/v1',schema:1,game:'lantern-line',frame:{run:runFrame,show:showFrame},runFrame,showFrame,finite:finiteObject(simulationState()),topology:topologyFixture(),stateSignature:signature(),stateDigest:signature(),evidence:{decisions:{route:{count:world.stats.routeCommits,source:'stats.routeCommits'},threat:{count:world.stats.windups,source:'stats.windups'},response:{count:world.stats.forecastResponses+world.stats.reactiveResponses,source:'stats.responses'},payoff:{count:world.stats.exactLanterns,source:'stats.exactLanterns'}},maxDecisionDeadAir:world.stats.maxDecisionDeadAir},soak:globalThis.__soakProbe(),motion:globalThis.__motionProbe(),counters:clone(world.stats),serial:ledger.serial,events:ledger.events,ledger};};
+
+initSession('lantern-line',[['ARROWS / WASD','MOVE KEEPER'],['SPACE','INTERACT / SCRUB'],['X','ROTATE MODULE'],['Z','OPEN PURGE']],{viewer:true});
+resetRun();start(step,render);
+</script>
+</html>

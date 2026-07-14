@@ -6,8 +6,8 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "ff18397600de241c049e601b5438b6a1157dd1126041b591974e0d1c479eb1e1",
-  "reviewedAt": "2026-07-12",
+  "montageSha256": "f06f28856533ad9d6aa9da59cbbcb69c2627d372741e07cc41ad3657d56f7490",
+  "reviewedAt": "2026-07-14",
   "reviewer": "Claude native-size reference review (honest-heading + feedback-legibility pass: velocity-aligned yaw with fishtail slides, skid rubber/smoke aftermath, coral/white damage flash, gold glory shimmer, edge pulses, persistent smashed-barrier wreckage; 13-beat montage re-inspected at 160x360 against both references plus 5x crops of the new drift and wreck beats and rendered-clip frames)",
   "renderReceipt": {
     "seed": "0x4e454f4e",
@@ -55,7 +55,7 @@
     "confirmedAbsent": true,
     "note": "Checked all thirteen sampled beats at native size: no route lines/dots, arrows, alley/ramp/swap target highlights, police intercept predictions, ghost phantom cars, predicted arcs, or safe-lane markers anywhere. Skid rubber and wreck debris are AFTERMATH of committed motion, never a preview of it. The dragnet warning stays a physical world telegraph plus broadcast tint; the helicopter spotlight is world light from a visible aircraft. Executable pixel gates (opposite forced plans, injected ghost decoy) render identically at every planning beat."
   },
-  "reviewIdentitySha256": "c54ac83b053c4484f6f4ee6681795de0691acc79d3351d310b5029e3827d41a7",
+  "reviewIdentitySha256": "d16408826726cde0f531b6949dfb78dc9204e1d01030aacb3d1002d359669c9a",
   "seed": "0x4e454f4e",
   "checkpoints": [
     "opening@12",

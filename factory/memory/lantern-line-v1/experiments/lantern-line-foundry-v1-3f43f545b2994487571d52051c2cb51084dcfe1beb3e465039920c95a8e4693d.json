@@ -1,0 +1,9 @@
+{
+  "artifact": ".artifacts/factory/lantern-line-v1/experiment.json",
+  "artifactFileSha256": "cd455f3bddadda3bf22054e27e0634e74531c1eab05576cde35950adf5fe5852",
+  "claimIds": [],
+  "id": "lantern-line-foundry-v1",
+  "learningTrialOk": true,
+  "payloadSha256": "3f43f545b2994487571d52051c2cb51084dcfe1beb3e465039920c95a8e4693d",
+  "schema": "arcade-foundry-experiment-record/v1"
+}

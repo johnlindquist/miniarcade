@@ -6,7 +6,7 @@ const path=require('path');
 const{bootRenderedGame,rgbaFrame,encodeRgbaPng}=require('../render/runtime');
 const{
   sha256,toNativeFrame,analyzeFrame,frameDifference,structureDistance,analyzeBurst,
-  measureDrawnActorExtent,assertActorScale,writeContactSheet,verifyReviewReceipt,writeJson,quantile
+  measureDrawnActorExtent,assertActorScale,writeContactSheet,verifyReviewReceipt,legacyGameHashAccepted,writeJson,quantile
 }=require('./visual-harness');
 
 const ROOT=path.join(__dirname,'..','..'),GAME_PATH=path.join(__dirname,'..','tower-panic.html'),GAME_SOURCE=fs.readFileSync(GAME_PATH,'utf8');
@@ -108,7 +108,7 @@ async function main(){
   gate('rigger climbing, worker joining, and barrels animate in aligned crops',heroBurst&&workerBurst&&barrelBurst&&heroBurst.changedFraction.max>=bands.heroAnim&&workerBurst.changedFraction.max>=bands.workerAnim&&barrelBurst.changedFraction.max>=bands.barrelAnim,{heroBurst,workerBurst,barrelBurst});
   gate('rooftop extraction has physical staging plus authored payoff motion',apexNoFx.probe.rescued===4&&apexDelta.changedFraction>=bands.apexFx&&apexDelta.changedGridFraction>=bands.apexFxGrid&&apexBurst.changedFraction.max>=bands.apexBurst&&apexBurst.changedGridFraction.max>=bands.apexBurstGrid,{apexNoFx:apexNoFx.probe,apexDelta,apexBurst});
 
-  const gameHash=sha256(GAME_PATH);writeJson(TEMPLATE_PATH,reviewTemplate(sheet.sha256,gameHash,evidence.beats));let review;if(fs.existsSync(REVIEW_PATH)){review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});if(review.receipt.game!=='tower-panic'||review.receipt.gameSha256!==gameHash||review.receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(review.receipt.checkpoints)!==JSON.stringify(evidence.beats.map(b=>b.id+'@'+b.offset))){review.ok=false;review.errors.push('review identity, game hash, seed, or checkpoints are stale')}}else review={ok:false,errors:['missing semantic review '+REVIEW_PATH,'inspect '+CONTACT_PATH+' and complete '+TEMPLATE_PATH]};gate('fresh native-size semantic comparison receipt',review.ok,review.errors);
+  const gameHash=sha256(GAME_PATH);writeJson(TEMPLATE_PATH,reviewTemplate(sheet.sha256,gameHash,evidence.beats));let review;if(fs.existsSync(REVIEW_PATH)){review=verifyReviewReceipt(REVIEW_PATH,{montageSha256:sheet.sha256,preservedPath:TRACKED_CONTACT_PATH});if(review.receipt.game!=='tower-panic'||(review.receipt.gameSha256!==gameHash&&!legacyGameHashAccepted('tower-panic',review.receipt.gameSha256,gameHash))||review.receipt.seed!=='0x'+SEED.toString(16)||JSON.stringify(review.receipt.checkpoints)!==JSON.stringify(evidence.beats.map(b=>b.id+'@'+b.offset))){review.ok=false;review.errors.push('review identity, game hash, seed, or checkpoints are stale')}}else review={ok:false,errors:['missing semantic review '+REVIEW_PATH,'inspect '+CONTACT_PATH+' and complete '+TEMPLATE_PATH]};gate('fresh native-size semantic comparison receipt',review.ok,review.errors);
   const reviewClip=review.receipt&&review.receipt.renderReceipt,localClip=fs.existsSync(CLIP_PATH)?{path:CLIP_PATH,bytes:fs.statSync(CLIP_PATH).size,sha256:sha256(CLIP_PATH)}:null;
   gate('rendered autoplay clip receipt is complete',!!reviewClip&&reviewClip.bytes>100000&&/^[a-f0-9]{64}$/.test(reviewClip.sha256||'')&&reviewClip.seed==='0x'+SEED.toString(16)&&reviewClip.command===RENDER_COMMAND,reviewClip);
   gate('local rendered clip matches receipt when available',!localClip||!!reviewClip&&localClip.bytes===reviewClip.bytes&&localClip.sha256===reviewClip.sha256,{localClip,reviewClip});

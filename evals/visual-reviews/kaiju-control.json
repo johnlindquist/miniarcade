@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "3d4e6856232e1e2cc97fdf77f6730c23684ab084af146eb565df923e72279864",
+  "montageSha256": "1d1200bc3d1ae46178a8414d6dbc4074e1f2dc13aa092b3a46f2a102cd822e20",
   "gameSha256": "b0973ad67596b2a7fde0dbb6384db1e29a894cf1f4651300a097bc5c8ae4312d",
   "seed": "0x4b434954",
   "checkpoints": [
@@ -21,18 +21,8 @@
     "recovery@12",
     "apex@12"
   ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference review",
-  "renderReceipt": {
-    "seed": "0x4b433954",
-    "seconds": 60,
-    "fps": 30,
-    "codec": "h264",
-    "dimensions": "320x720",
-    "bytes": 4822229,
-    "sha256": "1d5a29ceffa5c5124d7c1a07167f5c895a732332857fcec534138e4ac9653e23",
-    "command": "node render/render.js kaiju-control 60 .artifacts/visual/kaiju-control/kaiju-control-final-60s.mp4 --seed 1262696788 --probe --fps 30"
-  },
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -67,5 +57,15 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "583295c5de024771cd83eb430100ade45fa57524aea22482af13e6accf2a05c0"
+  "renderReceipt": {
+    "seed": "0x4b433954",
+    "seconds": 60,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 4822229,
+    "sha256": "1d5a29ceffa5c5124d7c1a07167f5c895a732332857fcec534138e4ac9653e23",
+    "command": "node render/render.js kaiju-control 60 .artifacts/visual/kaiju-control/kaiju-control-final-60s.mp4 --seed 1262696788 --probe --fps 30"
+  },
+  "reviewIdentitySha256": "fe83a93998830685a4d1ce66a3961b38a7807818b74d47e02655130af3c9cb91"
 }

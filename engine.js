@@ -238,6 +238,80 @@ const E=(()=>{
         shownByTier:Object.assign({},shownByTier)},counts)};
   }
 
+  // ---- ambient evidence ledger: observational, deterministic, bounded, and
+  //      clone-isolated. Games register honest telemetry sources once, then
+  //      append nondecreasing frame-ordered facts. The simulation must never read
+  //      this ledger to make decisions. __NO_EVIDENCE_LEDGER turns every API
+  //      into a no-op without consuming RNG or mutating the retained history.
+  function createEvidence(options){
+    options=options||{};
+    const limit=options.limit===undefined?(options.maxEvents===undefined?(options.capacity===undefined?600:options.capacity):options.maxEvents):options.limit;
+    if(!Number.isInteger(limit)||limit<1)throw new Error('evidence limit must be a positive integer');
+    const clone=(value,seen)=>{
+      if(value===null||typeof value!=='object')return value;
+      seen=seen||new Map();if(seen.has(value))throw new Error('evidence values must not be cyclic');
+      const out=Array.isArray(value)?[]:{};seen.set(value,out);
+      if(Array.isArray(value))for(const item of value)out.push(clone(item,seen));
+      else for(const key of Object.keys(value))out[key]=clone(value[key],seen);
+      seen.delete(value);return out;
+    };
+    const rawSources=options.sources||[],sources=[];
+    if(Array.isArray(rawSources)){
+      for(const source of rawSources){
+        if(typeof source==='string')sources.push({id:source,kind:source});
+        else sources.push(clone(source));
+      }
+    }else if(rawSources&&typeof rawSources==='object'){
+      for(const id of Object.keys(rawSources)){
+        const value=rawSources[id];
+        sources.push(typeof value==='string'?{id,kind:value}:Object.assign({id},clone(value||{})));
+      }
+    }else throw new Error('evidence sources must be an array or object');
+    const sourceById=new Map();
+    for(const source of sources){
+      if(!source||typeof source.id!=='string'||!source.id.trim()||typeof source.kind!=='string'||!source.kind.trim())
+        throw new Error('evidence sources need non-empty id and kind strings');
+      if(sourceById.has(source.id))throw new Error('evidence source ids must be unique: '+source.id);
+      sourceById.set(source.id,source);
+    }
+    let events=[],serial=0,lastFrame=-Infinity,dropped=0,epoch=0;
+    const disabled=()=>typeof globalThis!=='undefined'&&typeof globalThis.__NO_EVIDENCE_LEDGER!=='undefined';
+    function record(sourceOrEvent,frameOrEvent,data){
+      if(disabled())return null;
+      let event;
+      if(sourceOrEvent&&typeof sourceOrEvent==='object')event=clone(sourceOrEvent);
+      else if(typeof frameOrEvent==='number')event=Object.assign({},clone(data||{}),{source:sourceOrEvent,frame:frameOrEvent});
+      else event=Object.assign({},clone(frameOrEvent||{}),{source:sourceOrEvent});
+      const sourceId=event.source===undefined?event.sourceId:event.source,source=sourceById.get(sourceId);
+      if(!source)throw new Error('unknown evidence source: '+sourceId);
+      const frame=event.frame;
+      if(!Number.isInteger(frame)||frame<0||frame<lastFrame)throw new Error('evidence frames must be nonnegative integers in nondecreasing order');
+      if(event.serial!==undefined)throw new Error('evidence serial is ledger-owned');
+      if(event.kind!==undefined&&event.kind!==source.kind)throw new Error('evidence source kind mismatch: '+sourceId);
+      delete event.sourceId;event.source=sourceId;event.kind=source.kind;event.serial=++serial;
+      lastFrame=frame;events.push(event);
+      if(events.length>limit){const n=events.length-limit;events.splice(0,n);dropped+=n;}
+      return clone(event);
+    }
+    function eventsSince(after){
+      if(disabled())return[];
+      after=after===undefined?-1:Number(after);
+      return events.filter(event=>event.serial>after).map(event=>clone(event));
+    }
+    function probe(){
+      const off=disabled();
+      return{protocol:'ambient-evidence/v1',version:1,enabled:!off,epoch,limit,
+        serial:off?0:serial,lastFrame:off?null:(lastFrame===-Infinity?null:lastFrame),
+        dropped:off?0:dropped,sources:sources.map(source=>clone(source)),
+        events:off?[]:events.map(event=>clone(event))};
+    }
+    function reset(){
+      if(disabled())return false;
+      events=[];serial=0;lastFrame=-Infinity;dropped=0;epoch++;return true;
+    }
+    return{record,emit:record,append:record,observe:record,event:record,eventsSince,events:()=>eventsSince(-1),probe,reset};
+  }
+
   // ---- keyboard: arrows + WASD move, space/x/z act; any input enters manual
   //      mode and the AI takes back over after 8 idle seconds
   const keys={left:false,right:false,up:false,down:false,a:false,b:false,c:false};
@@ -504,7 +578,7 @@ const E=(()=>{
     }return count;}
 
   return{cv,ctx,W,H,random,seedRandom,R,RI,hash,dist,clamp,rect,spawn,burst,dust,stepParts,drawParts,
-    fxRandom,fxR,fxRI,fxBurst,fxDust,createShow,
+    fxRandom,fxR,fxRI,fxBurst,fxDust,createShow,createEvidence,
     ring,stepRings,drawRings,shake,preDraw,postDraw,start,runFrames,keys,tap,manual,axis2,record,recordTurbo,
     profileReport,initSession,sessionStep,drawSession,playing,addScore,gameOver,
     sessionProbe:()=>({mode:SES.mode,t:SES.t,name:SES.name,viewer:SES.viewer})};

@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "ad2af3441951293307fd55e3b0ba7f7a16f582960dd718dce9682e2cb20f3edf",
+  "montageSha256": "d039f2b22e5966ee5348bd32e64f75642665c0abeb797091c1cd83d52dc2ac04",
   "gameSha256": "01ed979cdb03666b5f0ff5b14c6d39d9fbce2f92c36cdc8789d6965032e8e36c",
   "seed": "0xcc451e",
   "checkpoints": [
@@ -20,8 +20,8 @@
     "later@12",
     "apex@24"
   ],
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size montage and 60-second render review",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -56,5 +56,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "843e205892a3452a24dea37847243730c77d16e18cb665a679cc9cef67e789d5"
+  "reviewIdentitySha256": "27c241078904f763b64516ac3a64bb4eb1299ab5c27b80d4d1be8451354991e3"
 }

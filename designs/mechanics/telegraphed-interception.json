@@ -1,0 +1,11 @@
+{
+  "schema": "arcade-foundry-mechanic-capsule/v1",
+  "id": "telegraphed-interception",
+  "game": "tower-panic",
+  "hypothesis": "Earlier hazard sensing can improve readable defensive responses, but excessive lead can suppress visible rescue progress.",
+  "parameters": {
+    "threatLeadFrames": {"min": 0, "max": 36, "step": 12}
+  },
+  "causalPair": {"control": 0, "intervention": 36},
+  "broadMechanicAblation": "__NO_CASCADE_LOOKAHEAD"
+}

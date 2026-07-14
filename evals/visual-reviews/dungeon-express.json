@@ -6,9 +6,9 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "7d2657ee0625f28472fdc975b2117b62c453226e36a3609a90f419f398cd2624",
-  "reviewedAt": "2026-07-10",
-  "reviewer": "Codex native-size reference and autoplay-clip review",
+  "montageSha256": "ada69cbcb9ca264b4c5c692f78ca902a289ffe1f7417ad37735c5e2cfc31787f",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "seed": "0xded011",
   "checkpoints": [
     "puzzle-setup@8",
@@ -26,12 +26,12 @@
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "At native 160x360, the 17x22 caped hero has a face, hair, separate limbs, boots, sword arm, facing, gait, slash, hurt, collapse, and admire poses. Slime, bat, armored guard, and the singular 29x34 horned warden keep distinct construction and locomotion at reference-game scale; none reads as a board token or enlarged hitbox."
+      "note": "At native 160x360, the 11x16 hero is now subordinate to the 14px dungeon topology while retaining a readable face, hair, cape, separate gait, boots, sword arm, facing, slash, hurt, collapse, and admire poses. The 10x9 slime, 12x10 bat, 13x16 armored guard, and singular 26x27 horned warden form a deliberate cast hierarchy: ordinary actors stay near one tile and the boss remains nearly two tiles wide and tall without reading as an enlarged hitbox."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The dungeon reads as a built overhead place with masonry walls, recessed floors, lintels, foreground courses, room thresholds, fogged unknown chambers, and role-specific landmarks. Shelves and astrolabes, forges and chains, sarcophagi and moon dials, then roots and fountains give each floor the prop density and material specificity visible in MACHINE HUNT and BLOCK MINE."
+      "note": "The dungeon reads as a built overhead place with masonry walls, recessed floors, lintels, foreground courses, room thresholds, fogged unknown chambers, and role-specific landmarks. Shelves and astrolabes, forges and chains, sarcophagi and moon dials, then roots and fountains give each floor the prop density and material specificity visible in MACHINE HUNT and BLOCK MINE; key structures remain visibly larger than the reduced neutral cast."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
@@ -41,17 +41,17 @@
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The inspected 30-second autoplay clip shows continuous hero and enemy travel, a readable guard tell, displaced sidestep and blocked-lane brace responses, sword counters, sigil and vault payoffs, the full-screen FLOOR ROUTED apex, and a transition into a materially rebuilt floor. Biome warnings occupy the dungeon before land; tier-three presentation retains exact hitstop, slow motion, admire, physical overlay, and subordinate sim-inert particles."
+      "note": "The inspected deterministic 30-second autoplay clip shows continuous hero and enemy travel at the corrected body scale, with gait, weapon, cape, pursuit glints, and movement streaks remaining readable as presentation outside the neutral body envelope. It also shows a readable guard tell, displaced sidestep and blocked-lane brace responses, sword counters, sigil and vault payoffs, the full-screen FLOOR ROUTED apex, and a transition into a materially rebuilt floor."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Numbered sigils visibly feed 0/2 and 1/2 vault states; the guard's ring/exclamation tell, charge streak, hero SIDESTEPPING or BLOCK response, and room-changing solve carry intent without a route overlay. Unknown rooms remain fogged, the mini-map reveals only discovered topology, the HUD reports local room/actor state rather than the planner target, and an exact contamination fixture proves target, tactic, route, old-route, and trail buffers cannot change one pixel."
+      "note": "Numbered sigils visibly feed 0/2 and 1/2 vault states; the guard's ring/exclamation tell, charge streak, hero SIDESTEPPING or BLOCK response, and room-changing solve carry intent without a route overlay. The smaller hero and enemies improve room, corridor, and landmark legibility while fixed motion crops and stable actor anchors prove that locomotion remains authored rather than receiving credit from loose probe boxes."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Cream stone highlights, ink recesses, biome accents, gold sigils and rewards, cyan interaction energy, and coral danger form one consistent retro-adventure language across architecture, actors, local-state HUD, enemy tells, and payoffs. The dense tiled craft is distinct from both references while meeting their authored-world floor at the actual 160x360 viewing size."
+      "note": "Cream stone highlights, ink recesses, biome accents, gold sigils and rewards, cyan interaction energy, and coral danger form one consistent retro-adventure language across architecture, actors, local-state HUD, enemy tells, and payoffs. The corrected one-tile ordinary cast and larger landmark/boss silhouettes now reinforce the dense tiled world instead of competing with it, while remaining distinct from both references at the actual 160x360 viewing size."
     }
   },
   "renderReceipt": {
@@ -60,11 +60,11 @@
     "fps": 30,
     "codec": "h264",
     "dimensions": "320x720",
-    "bytes": 2959638,
-    "sha256": "dfb35c554b4ffe09ec5fcca8cb8de879b7ee6f71b04df5c76e5de8a2e6de5a1a",
+    "bytes": 2952045,
+    "sha256": "e339ceab5fc094d3ef26eb58d17db4bb4019d32bfee42145cc166b3a2ae33369",
     "command": "node render/render.js dungeon-express 30 .artifacts/visual/dungeon-express/dungeon-express-30s.mp4 --seed 14602257 --probe --fps 30"
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "c0592a05d20adbbeffdfb2fc32df1b8efd4dca01ff6e40d3f8d9f6b8fdeb39e8"
+  "reviewIdentitySha256": "1b36206f5e39ed4898272e1b6bad3697deb7d94e6cd88a1f6f50d2001e13b113"
 }

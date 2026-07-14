@@ -7,6 +7,7 @@
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
+const protocol=require('./visual-provenance');
 const{bootGame}=require('./harness');
 const{
   NATIVE_WIDTH,NATIVE_HEIGHT,bootRenderedGame,downsampleRgba,rgbaFrame,
@@ -429,7 +430,7 @@ function deriveBand(values,options){
 // Exact montage hashes remain mandatory on the review platform. A different
 // platform may accept raster-only drift only when this complete identity matches;
 // its executable pixel/scale/motion gates still run against the local render.
-function reviewIdentitySha256(game,options){
+function legacyReviewIdentitySha256(game,options){
   options=options||{};
   if(typeof game!=='string'||!/^[a-z0-9-]+$/.test(game))throw new Error('reviewIdentitySha256 needs a valid game slug');
   const root=options.root||path.resolve(__dirname,'..'),visualEval=options.visualEvalPath||path.join(root,'evals',game+'-visual-eval.js');
@@ -452,12 +453,14 @@ function reviewIdentitySha256(game,options){
   const hash=crypto.createHash('sha256');
   for(const file of files){
     const relative=path.relative(root,file).replace(/\\/g,'/');
-    hash.update(relative+'\0');hash.update(fs.readFileSync(file));hash.update('\0');
+    let bytes=protocol.legacyIdentityInputBytes(root,relative,fs.readFileSync(file));
+    if(relative==='evals/visual-harness.js')bytes=protocol.legacyHarnessBytes(bytes);
+    hash.update(relative+'\0');hash.update(bytes);hash.update('\0');
   }
   return hash.digest('hex');
 }
 
-function verifyReviewReceipt(receiptOrPath,options){
+function verifyLegacyReviewReceipt(receiptOrPath,options){
   options=options||{};
   const receiptPath=typeof receiptOrPath==='string'?receiptOrPath:null,
     receipt=receiptPath?JSON.parse(fs.readFileSync(receiptPath,'utf8')):receiptOrPath;
@@ -485,7 +488,7 @@ function verifyReviewReceipt(receiptOrPath,options){
   const expectedHash=options.montageSha256||(options.montagePath?sha256(options.montagePath):null);
   if(expectedHash&&!isSha(expectedHash))errors.push('expected montage hash is invalid');
   const platform=options.platform||process.platform,allowCrossPlatform=receipt&&receipt.allowCrossPlatformRasterization===true;
-  const currentIdentity=identityGame?reviewIdentitySha256(identityGame,{root:options.root,visualEvalPath:options.visualEvalPath}):null;
+  const currentIdentity=identityGame?legacyReviewIdentitySha256(identityGame,{root:options.root,visualEvalPath:options.visualEvalPath}):null;
   const identityMatches=!!(receipt&&receipt.reviewIdentitySha256&&currentIdentity&&receipt.reviewIdentitySha256===currentIdentity);
   if(allowCrossPlatform){
     if(!['darwin','linux','win32'].includes(receipt.reviewPlatform))errors.push('cross-platform review platform missing or invalid');
@@ -504,6 +507,16 @@ function verifyReviewReceipt(receiptOrPath,options){
   return{ok:errors.length===0,errors,warnings,platformDriftAccepted,currentIdentity,receipt};
 }
 
+/* AEP_V1_BEGIN */
+function reviewIdentitySha256(game,options){return protocol.reviewIdentitySha256(game,options)}
+function verifyReviewReceipt(receiptOrPath,options){
+  return protocol.verifyReviewReceipt(receiptOrPath,options,{verify:verifyLegacyReviewReceipt,identity:legacyReviewIdentitySha256});
+}
+function legacyGameHashAccepted(game,reviewedHash,currentHash){
+  return protocol.legacyGameHashAccepted(game,reviewedHash,currentHash);
+}
+/* AEP_V1_END */
+
 function writeJson(outPath,value){
   fs.mkdirSync(path.dirname(outPath),{recursive:true});
   fs.writeFileSync(outPath,JSON.stringify(value,null,2)+'\n');
@@ -515,5 +528,8 @@ module.exports={
   analyzeFrame,frameDifference,measureDrawnActorExtent,assertActorScale,
   structureDistance,analyzeBurst,extractSkyline,skylineDistance,
   discoverBeatFrame,captureBeat,writeContactSheet,checkMetricBands,deriveBand,
-  reviewIdentitySha256,verifyReviewReceipt,writeJson
+  legacyReviewIdentitySha256,reviewIdentitySha256,verifyReviewReceipt,legacyGameHashAccepted,writeJson,
+  AMBIENT_EVIDENCE_PROTOCOL:protocol.PROTOCOL,manifestSha256:protocol.manifestSha256,
+  createEvidenceManifest:protocol.createEvidenceManifest,createDependencyManifest:protocol.createDependencyManifest,
+  createVisualProvenance:protocol.createVisualProvenance,writeVisualProvenance:protocol.writeVisualProvenance
 };

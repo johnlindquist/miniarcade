@@ -5,11 +5,7 @@
 // their browser-first single-file shape; the harness supplies the tiny DOM they
 // need and exposes the engine's direct step runner so evals never traverse draw
 // code unless a rendering assertion explicitly requests it.
-const fs=require('fs');
-const path=require('path');
-const vm=require('vm');
-
-const ROOT=path.join(__dirname,'..');
+const{DEFAULT_ROOT:ROOT,inlineScript,gameSource,executeScripts}=require('../game-source');
 
 function seededRandom(seed){
   let s=(Number(seed)>>>0)||1;
@@ -17,11 +13,27 @@ function seededRandom(seed){
     t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
 }
 
-function inlineScript(html){
-  const blocks=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
-  const hit=blocks.find(m=>m[1].includes("'use strict'"))||blocks.at(-1);
-  if(!hit)throw new Error('No inline game script found');
-  return hit[1];
+function eventTarget(){
+  const listeners=Object.create(null),lists=Object.create(null);
+  function addEventListener(type,listener){
+    if(typeof listener!=='function'&&!(listener&&typeof listener.handleEvent==='function'))return;
+    const list=lists[type]||(lists[type]=[]);
+    if(!list.includes(listener))list.push(listener);
+    if(!listeners[type])listeners[type]=function(event){dispatch(this,type,event);};
+  }
+  function removeEventListener(type,listener){
+    const list=lists[type];if(!list)return;
+    const index=list.indexOf(listener);if(index>=0)list.splice(index,1);
+  }
+  function dispatch(target,type,event){
+    event=event||{};
+    for(const listener of[...(lists[type]||[])]){
+      if(!(lists[type]||[]).includes(listener))continue;
+      if(typeof listener==='function')listener.call(target,event);
+      else listener.handleEvent.call(listener,event);
+    }
+  }
+  return{listeners,addEventListener,removeEventListener,dispatch};
 }
 
 function makeContext(counter){
@@ -40,11 +52,9 @@ function makeContext(counter){
 
 function bootGame(name,options){
   options=options||{};
-  const html=fs.readFileSync(path.join(ROOT,name+'.html'),'utf8');
-  const engine=fs.readFileSync(path.join(ROOT,'engine.js'),'utf8');
-  const autoplay=fs.readFileSync(path.join(ROOT,'autoplay.js'),'utf8');
-  const wordPuzzle=fs.readFileSync(path.join(ROOT,'word-puzzle.js'),'utf8');
-  const listeners={};
+  const loaded=gameSource(name,options.root||ROOT);
+  const documentEvents=eventTarget(),windowEvents=eventTarget();
+  const listeners=documentEvents.listeners;
   const counter={calls:0,byMethod:{}};
   const ctx=makeContext(counter);
   const canvas={width:320,height:720,getContext:()=>ctx,captureStream:()=>({})};
@@ -53,11 +63,12 @@ function bootGame(name,options){
   const rng=seededRandom(options.seed===undefined?1:options.seed);
   const storage=new Map();
   const document={
-    hidden:false,
+    hidden:false,title:name,
     getElementById:()=>canvas,
     createElement:tag=>tag==='canvas'?{...canvas,getContext:()=>makeContext(counter)}:
-      {style:{},remove(){},click(){},set src(v){this._src=v;},get src(){return this._src;}},
-    addEventListener:(type,fn)=>{listeners[type]=fn;},
+      {style:{},remove(){},click(){},addEventListener(){},removeEventListener(){},
+        set src(v){this._src=v;},get src(){return this._src;}},
+    addEventListener:documentEvents.addEventListener,removeEventListener:documentEvents.removeEventListener,
     body:{appendChild(){}},head:{appendChild(node){if(node.onload)node.onload();}}
   };
   const sandbox={
@@ -72,23 +83,25 @@ function bootGame(name,options){
     cancelAnimationFrame:()=>{},
     setTimeout:options.setTimeout||(()=>0),clearTimeout:()=>{},setInterval:()=>0,clearInterval:()=>{},
     Blob:global.Blob,URL:global.URL,
+    addEventListener:windowEvents.addEventListener,removeEventListener:windowEvents.removeEventListener
   };
   sandbox.Math.random=rng;
-  sandbox.globalThis=sandbox;
+  sandbox.globalThis=sandbox;sandbox.window=sandbox;sandbox.self=sandbox;
   sandbox.__NO_UI=1;
-  const footer='\n;globalThis.__engine=E;\n'+(options.footer||'');
-  vm.createContext(sandbox);
-  vm.runInContext((engine+'\n'+autoplay+'\n'+wordPuzzle+'\n'+inlineScript(html)).replace(/'use strict';/g,'')+footer,sandbox,
-    {filename:name+'.eval.js'});
+  executeScripts(loaded,sandbox);
+  executeScripts([],sandbox,{footer:'globalThis.__engine=E;',footerFilename:name+'.engine-export.js'});
+  if(options.footer)executeScripts([],sandbox,{footer:options.footer,footerFilename:name+'.eval-footer.js'});
 
-  function key(type,code){const fn=listeners[type];if(fn)fn({code,preventDefault(){}});}
+  function key(type,code){documentEvents.dispatch(document,type,{code,preventDefault(){}});}
   function tick(ms){const fn=raf.next;if(!fn)throw new Error('No animation frame queued');
     raf.next=null;raf.time+=ms===undefined?1000/60:ms;fn(raf.time);}
   function ticks(n){for(let i=0;i<n;i++)tick();}
+  let frame=0;
   function frames(n,render){counter.calls=0;counter.byMethod={};
-    sandbox.__engine.runFrames(n,{render:!!render});return counter;}
+    const advanced=sandbox.__engine.runFrames(n,{render:!!render,startFrame:frame});frame+=advanced;return counter;}
   return{sandbox,ctx,canvas,counter,listeners,key,tick,ticks,frames,
-    probe:name=>sandbox[name],engine:sandbox.__engine};
+    sourceFiles:loaded.files,dependencyFiles:loaded.dependencyFiles,
+    probe:name=>sandbox[name],engine:sandbox.__engine,get frame(){return frame;}};
 }
 
 module.exports={ROOT,seededRandom,inlineScript,bootGame};

@@ -1,0 +1,393 @@
+{
+  "schema": 2,
+  "protocol": "ambient-evidence/v1",
+  "game": "ricochet-foundry",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "20cf82fa06c7b2390bd0270fb6645ce4eebeb18f46576cd11a3a30f61f4b5a3d",
+  "gameSha256": "71d4fc716b2b513401865d01de4a72e0eb3f8e6915bee1e266d8040035983401",
+  "reviewIdentitySha256": "c2cdb5dba4b64fdda1b70798c721fd0cb3bf165cd58a04848ec8c6ea676e0c9b",
+  "evidenceManifest": {
+    "protocol": "ambient-evidence/v1",
+    "kind": "visual-evidence",
+    "version": 1,
+    "game": "ricochet-foundry",
+    "checkpoints": [
+      "opening@8",
+      "order@8",
+      "commit@8",
+      "heat@8",
+      "stamp@8",
+      "quench@8",
+      "warning@8",
+      "response@8",
+      "scrap@8",
+      "cast@8",
+      "installed@8",
+      "apex@8"
+    ],
+    "fixtures": {
+      "apex": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "heart-aftermath",
+        "offset": 8
+      },
+      "cast": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "cast-payoff",
+        "offset": 8
+      },
+      "commit": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "commit-right",
+        "offset": 8
+      },
+      "heat": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "heat-impact",
+        "offset": 8
+      },
+      "installed": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "cast-aftermath",
+        "offset": 8
+      },
+      "opening": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "opening",
+        "offset": 8
+      },
+      "order": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "order-setup",
+        "offset": 8
+      },
+      "quench": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "quench-impact",
+        "offset": 8
+      },
+      "response": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "operator-response",
+        "offset": 8
+      },
+      "scrap": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "wrong-order",
+        "offset": 8
+      },
+      "stamp": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "stamp-impact",
+        "offset": 8
+      },
+      "warning": {
+        "burst": [
+          1,
+          4,
+          8,
+          12
+        ],
+        "fixture": "threat-warning",
+        "offset": 8
+      }
+    },
+    "naturalSequence": {
+      "contract": "good/bad real-pixel lockstep",
+      "frames": 18000,
+      "seeds": [
+        984273
+      ]
+    },
+    "probeFields": [
+      "finite",
+      "fixture",
+      "actors",
+      "order",
+      "recipe",
+      "pressure",
+      "threat",
+      "die",
+      "installed",
+      "component",
+      "layout.playfield"
+    ],
+    "crops": {
+      "engine": {
+        "height": 112,
+        "width": 64,
+        "x": 48,
+        "y": 82
+      },
+      "feedbackRadius": 30,
+      "world": {
+        "height": 284,
+        "width": 160,
+        "x": 0,
+        "y": 34
+      }
+    },
+    "actors": {
+      "maxFootprint": 0.08,
+      "scaleCaps": {
+        "component": [
+          24,
+          28
+        ],
+        "hazard": [
+          18,
+          24
+        ],
+        "smith": [
+          16,
+          24
+        ],
+        "workpiece": [
+          12,
+          12
+        ]
+      },
+      "selector": "__RF_VISUAL_ONLY_SUBJECT"
+    },
+    "metrics": {
+      "bands": {
+        "apexFx": 0.0035,
+        "apexFxGrid": 0.08,
+        "apexPhysical": 0.08,
+        "burst": 0.00075,
+        "colors": 65,
+        "edge": 0.012,
+        "entropy": 1.8,
+        "footprint": 0.08,
+        "installed": 0.025,
+        "largest": 0.65,
+        "luma": 0.08,
+        "pipeline": 0.015,
+        "responseChanged": 0.015,
+        "richEach": 0.55,
+        "richMedian": 0.62,
+        "scrapChanged": 0.025,
+        "warningChanged": 0.025,
+        "warningGrid": 0.12
+      },
+      "feedbackRequired": [
+        "good:heat",
+        "good:hazard-counter",
+        "good:cast",
+        "good:engine-start",
+        "bad:jam-land",
+        "bad:overheat"
+      ],
+      "plannerContamination": "exact-pixel-no-op"
+    },
+    "references": [
+      "horizon",
+      "blockmine"
+    ]
+  },
+  "evidenceManifestSha256": "c5acfb0cb529bc09e74bb49673ee07f013eb98297cee436ab876772adc0cf8eb",
+  "dependencyManifest": {
+    "protocol": "ambient-evidence/v1",
+    "kind": "visual-dependencies",
+    "version": 1,
+    "game": "ricochet-foundry",
+    "files": {
+      "baselines": [],
+      "candidate": [
+        {
+          "path": "evals/ricochet-foundry-visual-eval.js",
+          "sha256": "2c101fb5978836fd98b96ae83636c9604784b7b8ccf09a22425b9eacbd1c1fea"
+        },
+        {
+          "path": "ricochet-foundry.html",
+          "sha256": "71d4fc716b2b513401865d01de4a72e0eb3f8e6915bee1e266d8040035983401"
+        }
+      ],
+      "capture": [
+        {
+          "path": "evals/harness.js",
+          "sha256": "eda4fd97c9af34e3a9393faa47d386f7155c95a7ff7cda78d69bec8bca269984"
+        },
+        {
+          "path": "evals/visual-harness.js",
+          "sha256": "def55f63edcaafcdf1e6d107be0fc9fcf52e53891b37e5d2399486fa502d77a0"
+        },
+        {
+          "path": "evals/visual-provenance.js",
+          "sha256": "f60f717572b60527666068bd940660369a8319861809f02885edf382618b9506"
+        }
+      ],
+      "references": [
+        {
+          "path": "blockmine.html",
+          "sha256": "da57598ed58906693ed1b6739baa8e9c3eb05c001891e74d02976934f7f97129"
+        },
+        {
+          "path": "horizon.html",
+          "sha256": "23712163a5529df28268bac6d62db6b2d852a2dcee977684f16cb3da4e5dabb0"
+        }
+      ],
+      "renderer": [
+        {
+          "path": "render/fonts/Silkscreen-Regular.ttf",
+          "sha256": "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8"
+        },
+        {
+          "path": "render/package-lock.json",
+          "sha256": "d0ac9f3d9523c84e62880fd8e4560f7697a1e3b905d8f8a7cd0258e567a4a9a7"
+        },
+        {
+          "path": "render/package.json",
+          "sha256": "8acd4479b8d32207c06a1df34b9b37c41c127e795127337ae1c9f94996a7397f"
+        },
+        {
+          "path": "render/render.js",
+          "sha256": "2f2879345b55dfa85bb0f9cb9fd1a81ea6188f26118721c771a56caf9a309bce"
+        }
+      ],
+      "runtime": [
+        {
+          "path": "autoplay.js",
+          "sha256": "1acff4bb4050ff9aa4bd9e753fdd697add9776edcf1f5cce5eeaa60bd4014e97"
+        },
+        {
+          "path": "engine.js",
+          "sha256": "a73d506c3ea8390c7b46e2cf43b6c20db764bf3a07c1483ec91229268417b376"
+        },
+        {
+          "path": "game-source.js",
+          "sha256": "c79e2a126c6c85b649c0a1fb695fd89cfded6313bc10d2046226f36b03c0bf5f"
+        },
+        {
+          "path": "render/runtime.js",
+          "sha256": "faaf22c505bb97082afda669809873a48303fb449c9cc831b1f1d11c51e295e5"
+        },
+        {
+          "path": "word-puzzle.js",
+          "sha256": "90b792cf865f9e01b7d3e1a7fdc62ef94f28a2753ad11bc59f2add45fd634636"
+        }
+      ]
+    }
+  },
+  "dependencyManifestSha256": "dba89e0071585584a4b05022064ec1c745b7089fc917466b4c9e053bc7140a2c",
+  "seed": "0xf04d1",
+  "checkpoints": [
+    "opening@8",
+    "order@8",
+    "commit@8",
+    "heat@8",
+    "stamp@8",
+    "quench@8",
+    "warning@8",
+    "response@8",
+    "scrap@8",
+    "cast@8",
+    "installed@8",
+    "apex@8"
+  ],
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel semantic review",
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "At native 160x360, the persistent forge operator has a built helmet, apron, face, boots, crank/brace/hurt/cheer poses, and readable movement between the three launch banks. The white-hot workpiece, falling slag body, and gear/valve/turbine/heart casts remain distinct small silhouettes rather than placeholder dots."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The fixed board is an authored industrial room: furnace, stamp, quench tank, die, director anvil, pressure valve, return cup, three launch ports, destructible blueprint clutter, rear engine, skyline, rails, fasteners, heat bars, and order panel all use layered material detail comparable to the references."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The montage shows more than palette swaps: process impacts occupy different machines, warned slag reserves a lane, counterplay moves the operator to the valve, wrong order warps the workpiece, cast parts physically accumulate in the rear engine, and the heart changes the completed composition."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Executable burst receipts prove moving charge ignition, orbiting machine sparks, warning pulses, cast rotation, installed engine motion, and heart-apex motion. The native frames also show anticipation and follow-through through the operator crank/brace/cheer poses, lane warning, impact flashes, cast lift, and persistent installation."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The current order, next process, heat bar, pressure, selected bank, tactic caption, warned lane, counter location, good/bad full-board grammar, installed parts, and final online state read at native size. Planner contamination is an exact pixel no-op, so no hidden forecast is laundered into a route overlay."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Copper, iron, ember orange, quench cyan, hazard red, cream highlights, beveled machine silhouettes, compact pixel type, and the shared pulse/particle grammar form one coherent foundry. The subject footprint stays below eight percent while the environment remains richly authored."
+    }
+  },
+  "renderReceipt": {
+    "seed": "0xf04d1",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 1677688,
+    "sha256": "2a67ad337d74aeb2ab043625968544b76670647dc357068d59059451b42866b7",
+    "command": "node render/render.js ricochet-foundry 30 .artifacts/visual/ricochet-foundry/ricochet-foundry-30s.mp4 --seed 0xf04d1 --probe --fps 30"
+  }
+}

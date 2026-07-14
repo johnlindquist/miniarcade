@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "44d274082ee0fb2791a64395f62bb806bf0f4c11f615e3dd7cf7cdfc6a0aa0bc",
+  "montageSha256": "9d1a83112f84e4286c92e41098e533486af97fac3c524422c96dba0d89a1877f",
   "seed": "0x9c0cab",
   "checkpoints": [
     "opening@12",
@@ -20,9 +20,9 @@
     "storm@6",
     "restore@6"
   ],
-  "reviewedAt": "2026-07-11",
-  "reviewer": "Claude native-size review of the 160x360 candidate, Machine Hunt, and Block Mine contact sheet after the reference-scale character pass (hero 10x21 -> 9x12, pico 13x13 -> 9x9, gnawer 13x12 -> 10x8 drawn pixels)",
-  "guidelineOverlays": "none: no path lines, breadcrumbs, predicted arcs, or future-position reticles are drawn for any actor at any sampled beat; the beetle windup lane is a diegetic enemy attack tell and the storm banner warns about the world, not about an actor's plan",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
+  "guidelineOverlays": "PENDING: confirm no path lines, breadcrumbs, predicted arcs, or future-position reticles are drawn for any actor at any sampled beat (the beetle windup lane is a diegetic enemy attack tell).",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -67,5 +67,5 @@
   },
   "reviewPlatform": "darwin",
   "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "3c5c4be767b3ef22c7dbc147b3fc9cece8174b2fca0d16b79a47cc9ba1f58141"
+  "reviewIdentitySha256": "bd04dd406b3672725c03f0124c059bf588da423003d55c11fb2254a7ce46ee16"
 }

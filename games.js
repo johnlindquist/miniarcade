@@ -32,5 +32,7 @@
   {id:'kaiju-control',title:'KAIJU CONTROL',label:'kaiju control',tagline:'evacuate · divert · rebuild',tone:'kc'},
   {id:'moonshine-valley',title:'MOONSHINE VALLEY',label:'moonshine valley',tagline:'plant · harvest · defend',tone:'mv'},
   {id:'dungeon-express',title:'DUNGEON EXPRESS',label:'dungeon express',tagline:'scout · remember · steal the split',tone:'de'},
-  {id:'crystal-mesa',title:'CRYSTAL MESA',label:'crystal mesa',tagline:'grab · hurl · ascend',tone:'cm'}
+  {id:'crystal-mesa',title:'CRYSTAL MESA',label:'crystal mesa',tagline:'grab · hurl · ascend',tone:'cm'},
+  {id:'ricochet-foundry',title:'RICOCHET FOUNDRY',label:'ricochet foundry',tagline:'bank · temper · cast',tone:'rf'},
+  {id:'lantern-line',title:'LANTERN LINE',label:'lantern line',tagline:'route · refine · light the skyline',tone:'ll'}
 ]));

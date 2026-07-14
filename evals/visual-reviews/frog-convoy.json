@@ -6,21 +6,10 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "ac1bfd7374bf885003a9e19ef11673be6853e63804365b93dbb948c2170c9474",
-  "reviewedAt": "2026-07-11",
-  "reviewer": "Claude native-size reference review of the 2026-07-11 reference-scale character redesign (drawn-pixel scale gates audited against isolated renders)",
+  "montageSha256": "d550cb8d4889be5ca688374cf3e7e73dae0778702033cbfb330e2b769d0904c7",
+  "reviewedAt": "2026-07-14",
+  "reviewer": "Claude Code native-pixel re-review",
   "seed": "0xf09c0",
-  "checkpoints": [
-    "opening@12",
-    "normal@12",
-    "family@12",
-    "danger@12",
-    "sacrifice@12",
-    "later@12",
-    "apex@120",
-    "scale@4"
-  ],
-  "guidelineOverlays": "none: the former dashed route-cue arc and target reticle on the leader's next hop were removed as banned guideline overlays; the family ribbon links only the CURRENT bodies of live convoy members, and the sacrifice streak trails the leaping ghost's already-flown path with the impact ring appearing only on arrival. No path lines, predicted arcs, or future-position reticles are drawn at any sampled beat.",
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
@@ -53,6 +42,8 @@
       "note": "One storybook-marsh grammar at a single consistent scale: rounded shaded frog anatomy, bark rings and end caps on the slimmer logs, top-down cab/window/wheel vehicle construction at the Pocket League 14px reference (car 15, truck/bus 23), the 32x17 croc set-piece, marsh greens against water cyans, gold reward and coral danger language. The density pass extends the existing material triples instead of pasting noise on top."
     }
   },
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true,
   "renderReceipt": {
     "seed": "0xf09c0",
     "seconds": 30,
@@ -63,7 +54,16 @@
     "sha256": "a34e0e0d5b3ba48e13c960e06f59309cb3aee5843c4311f3a58996169d3c8d7c",
     "command": "node render/render.js frog-convoy 30 .artifacts/visual/frog-convoy/frog-convoy-30s.mp4 --seed 0xf09c0 --probe --fps 30"
   },
-  "reviewPlatform": "darwin",
-  "allowCrossPlatformRasterization": true,
-  "reviewIdentitySha256": "fd43fcf01622ab142ce117f9307e8431da07a610476d9fc98707db1eb54d1e19"
+  "reviewIdentitySha256": "4cca837829dd28a8811fbdfd94390d6b41ba03f0d03fa60431e34b6dd30a329f",
+  "checkpoints": [
+    "opening@12",
+    "normal@12",
+    "family@12",
+    "danger@12",
+    "sacrifice@12",
+    "later@12",
+    "apex@120",
+    "scale@4"
+  ],
+  "guidelineOverlays": "none: the former dashed route-cue arc and target reticle on the leader's next hop were removed as banned guideline overlays; the family ribbon links only the CURRENT bodies of live convoy members, and the sacrifice streak trails the leaping ghost's already-flown path with the impact ring appearing only on arrival. No path lines, predicted arcs, or future-position reticles are drawn at any sampled beat."
 }

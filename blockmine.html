@@ -102,7 +102,8 @@ const P={cx:10,cy:11,x:84,y:92,toX:10,toY:11,moveT:0,mine:null,face:1,hp:5,invT:
   target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,aiMode:'SCOUT',
   bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,lastBuildDepth:0,fallD:0,air:0,
   ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
-  portalT:0,portalCd:0,portalTo:null,regroup:false,
+  portalT:0,portalCd:0,portalTo:null,regroup:false,tactic:null,
+  avoidUntil:new Map(),cyclePenalty:new Map(),motionTrail:[],cycleBreaks:0,cycleDig:null,
   beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()};
 let goalState={stage:0,depthTarget:50,outpostTarget:1,trapTarget:1,legendTarget:500,caravanTarget:1,completed:0,lastFlash:0};
 
@@ -316,7 +317,8 @@ function resetGame(){
     tool:0,torch:4,swing:0,target:null,targetT:0,route:[],dead:0,attackT:0,lastTorch:12,
     aiMode:'SCOUT',bow:false,ammo:0,food:2,powder:0,armor:0,trapCd:0,buildCd:0,fallD:0,air:0,
     ladder:2,rope:0,silk:0,sapling:0,dur:0,durMax:0,homing:false,tripEnd:0,stairDir:0,
-    portalT:0,portalCd:0,portalTo:null,regroup:false,
+    portalT:0,portalCd:0,portalTo:null,regroup:false,tactic:null,
+    avoidUntil:new Map(),cyclePenalty:new Map(),motionTrail:[],cycleBreaks:0,cycleDig:null,
     lastBuildDepth:0,beaconBuilt:false,portalBuilt:false,progressFrame:0,stuckRecoveries:0,visits:new Map()});
   SHOW.reset(showFrame);wasNight=false; // showFrame is monotonic; only the cue state resets
 }
@@ -406,8 +408,28 @@ function hurt(n,why){
 // SteamWorld rules: air gives no purchase. The miner stands on solid ground
 // or a bridge, hangs on ladders and ropes, floats in water, and lava arrests
 // a fall so the escape logic can climb out (never sink through it).
-function supported(){const b=tile(P.cx,P.cy+1),h=tile(P.cx,P.cy);
+function supportedAt(x,y){const b=tile(x,y+1),h=tile(x,y);
   return climbable(h)||h===LAVA||h===WATER||h===BRIDGE||solid(b)||b===BRIDGE||b===LADDER;}
+const supported=()=>supportedAt(P.cx,P.cy);
+function escapeLava(){
+  P.cycleDig=null; // hazard escape owns movement until the miner reaches stable ground
+  const toward=P.cx<COLS/2?1:-1,dirs=[[toward,0],[0,1],[0,-1],[-toward,0]];
+  const q=[{x:P.cx,y:P.cy,first:null}],seen=new Set([key(P.cx,P.cy)]);let head=0;
+  while(head<q.length&&head<160){const cur=q[head++];
+    for(const d of dirs){const x=cur.x+d[0],y=cur.y+d[1];if(x<0||x>=COLS||Math.abs(y-P.cy)>16)continue;
+      const k=key(x,y);if(seen.has(k))continue;seen.add(k);const t=tile(x,y),first=cur.first||{x,y};
+      if(t===LAVA){q.push({x,y,first});continue;}
+      if(solid(t)){if(t!==BEDROCK&&t!==PORTAL){
+          if(cur.x===P.cx&&cur.y===P.cy)return startMine(x,y);
+          if(startMove(first.x,first.y)){P.aiMode='SWIM TO SHORE';return true;}}
+        continue;}
+      if(tile(x,y+1)!==LAVA&&supportedAt(x,y)&&!avoided(x,y)){
+        if(startMove(first.x,first.y)){P.aiMode='SWIM TO SHORE';return true;}
+      }
+    }
+  }
+  return false;
+}
 // Crafting the way back out: wood nails into ladders, spider silk weaves into
 // rope, and in a pinch cobble is carved into stone steps.
 function ensureClimbStock(){
@@ -478,8 +500,8 @@ function landFall(){
   P.fallD=0;P.route=[];P.target=null;
 }
 function respawn(){
-  P.hp=5;P.dead=0;P.invT=300;P.mine=null;P.moveT=0;P.route=[];P.target=null;P.fallD=0;P.air=0;
-  P.warpT=0;P.homing=false;P.portalT=0;P.portalTo=null;
+  P.hp=5;P.dead=0;P.invT=300;P.mine=null;P.moveT=0;cancelAutoPlan();P.fallD=0;P.air=0;
+  P.warpT=0;P.homing=false;P.portalT=0;P.portalTo=null;P.cycleDig=null;resetAutoTrail();
   // Gates turned death loops into express lines: respawn, step through, die in
   // the same lava pool. A cooldown makes him walk (and restock) first; a
   // grinder streak locks the gates long enough to genuinely regroup.
@@ -511,6 +533,13 @@ function respawn(){
 }
 
 const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+function cancelAutoPlan(){P.route=[];P.target=null;P.tactic=null;}
+function markAvoid(x,y,ttl){P.avoidUntil.set(key(x,y),frame+ttl);}
+function avoided(x,y){const k=key(x,y),until=P.avoidUntil.get(k)||0;
+  if(until<=frame){if(until)P.avoidUntil.delete(k);return false;}return true;}
+function cycleCost(x,y){const k=key(x,y),until=P.cyclePenalty.get(k)||0;
+  if(until<=frame){if(until)P.cyclePenalty.delete(k);return 0;}return 50;}
+function resetAutoTrail(){P.motionTrail=[];}
 function gridLOS(ax,ay,bx,by){
   const n=Math.ceil(Math.max(Math.abs(bx-ax),Math.abs(by-ay))/3);
   for(let i=1;i<n;i++){const u=i/n,x=Math.floor((ax+(bx-ax)*u)/TS),y=Math.floor((ay+(by-ay)*u)/TS);
@@ -529,7 +558,8 @@ function findRoute(sx,sy,gx,gy,opt){
     for(const d of DIRS){const x=q.x+d[0],y=q.y+d[1];if(x<1||x>COLS-2||y<minY||y>maxY)continue;
       const t=tile(x,y),isGoal=x===gx&&y===gy;if(t===BEDROCK||t===PORTAL)continue;
       if(opt.airOnly&&solid(t)&&!isGoal)continue;if(t===LAVA&&(!opt.allowBridge||P.cobble<2))continue;
-      let c=1;
+      if(!opt.mob&&key(x,y)!==sk&&avoided(x,y))continue;
+      let c=1+(!opt.mob?cycleCost(x,y):0);
       // Climbing gate (player routes only; cave mobs scale walls natively):
       // heading up costs a ladder or rope unless one is already hung there,
       // and with no climbing stock at all only a one-block hop off footing works.
@@ -545,17 +575,21 @@ function findRoute(sx,sy,gx,gy,opt){
       // smashes through the tower's own windows instead of using the door is
       // vandalism, not pathfinding.
       if(t===LAVA)c=30*(P.hp<=2?4:P.hp<=3?2:1);else if(t===WATER)c=3.5;else if(solid(t))c=2+mineFrames(t)/18+(t===FORT||t===BEACON||t===WINDOW?24:0);
-      // Fall awareness: passing through a cell with no floor and no wall to
-      // grab risks a plunge, so the planner prices in the drop below it.
+      // Planner and executor share one landing contract: a horizontal route
+      // may cross unsupported air only when the miner can build its footing.
+      if(d[1]===0&&!opt.mob&&!solid(t)&&!supportedAt(x,y)){
+        const b=tile(x,y+1);
+        if(b===AIR&&P.cobble>=1)c+=2.5;
+        else if(b===LAVA&&opt.allowBridge&&P.cobble>=2)c+=5;
+        else continue;
+      }
+      // Fall awareness still prices vertical drops and unsupported mob paths;
+      // player-side horizontal gaps were admitted or rejected above.
       if(!solid(t)&&t!==WATER&&t!==LADDER&&t!==ROPE){
         const b=tile(x,y+1);
-        if(!solid(b)&&b!==BRIDGE&&b!==LADDER){let drop=1;while(drop<7&&!solid(tile(x,y+1+drop)))drop++;
-          // With cobble in the bag a sideways gap is just a plank (the route
-          // executor lays it before stepping). Only air can hold a plank —
-          // water or lava under the gap keeps the full fall price. Mobs can't
-          // plank; wounded or homebound miners still treat drops as near-walls.
-          if(d[1]===0&&!opt.mob&&P.cobble>=3&&b===AIR&&P.hp>3)c+=2.5;
-          else c+=(2+drop*3)*(P.hp<=3?3:P.homing?4:1);}
+        if(!solid(b)&&b!==BRIDGE&&b!==LADDER&&!(d[1]===0&&!opt.mob)){
+          let drop=1;while(drop<7&&!solid(tile(x,y+1+drop)))drop++;
+          c+=(2+drop*3)*(P.hp<=3?3:P.homing?4:1);}
       }
       // Broke miners give lava a wide berth: with no cobble to seal or bridge,
       // one slip beside a pool is a guaranteed death chain, so cells touching
@@ -770,9 +804,30 @@ function weatherStep(){
     }else if(wT%140===0)stormStrike();
   }
 }
+function prepareHorizontalLanding(x,y){
+  if(supportedAt(x,y))return true;
+  const below=tile(x,y+1);
+  if(below===AIR){if(!placePlank(x,y+1))return false;}
+  else if(below===LAVA){if(!buildBridge(x,y+1))return false;}
+  else return false;
+  return supportedAt(x,y);
+}
+function commitTactic(kind,route,ttl,threat){
+  if(!route||!route.length)return false;
+  if(kind==='LAST STAND RETREAT'||kind==='FALL BACK'||kind.indexOf('BAIT ')===0)markAvoid(P.cx,P.cy,180);
+  P.route=route;
+  const end=route[route.length-1];P.target={x:end.x,y:end.y};
+  P.tactic={kind,until:frame+ttl,threat:threat||null};P.aiMode=kind;return followRoute();
+}
+function continueTactic(){
+  const t=P.tactic;if(!t)return false;
+  if(frame>=t.until||!P.route.length||(t.threat&&t.threat.dead>0)){P.tactic=null;return false;}
+  P.aiMode=t.kind;if(followRoute())return true;cancelAutoPlan();return false;
+}
 function followRoute(){
   while(P.route.length&&P.route[0].x===P.cx&&P.route[0].y===P.cy)P.route.shift();
   if(!P.route.length)return false;const n=P.route[0],t=tile(n.x,n.y);
+  if(Math.abs(n.x-P.cx)+Math.abs(n.y-P.cy)!==1){cancelAutoPlan();return false;}
   if(t===LAVA){if(!buildBridge(n.x,n.y)){P.route=[];return false;}}
   const now=tile(n.x,n.y);
   if(solid(now)){
@@ -792,12 +847,10 @@ function followRoute(){
     if(solid(t2)&&startMine(n.x,n.y))return true;
     P.route=[];return false;
   }
-  // Placing a block as the solution: before stepping sideways over a drop,
-  // lay a plank under the landing so the gap becomes floor instead of a fall.
-  // Even a one-cell dip gets planked — dropping off the route invalidates it
-  // and burns a replan, which is far pricier than a cobble.
-  if(n.y===P.cy&&n.x!==P.cx&&!playing()&&!manual()&&P.cobble>0){
-    if(tile(n.x,n.y+1)===AIR)placePlank(n.x,n.y+1);
+  // Horizontal route nodes must be executable before movement starts. This
+  // covers both open gaps and air cells whose floor is a lava bridge.
+  if(n.y===P.cy&&n.x!==P.cx&&!playing()&&!manual()&&!prepareHorizontalLanding(n.x,n.y)){
+    cancelAutoPlan();return false;
   }
   if(startMove(n.x,n.y))return true;
   if(solid(tile(n.x,n.y))&&startMine(n.x,n.y))return true;
@@ -820,6 +873,44 @@ function retreatRoute(threats){
   }
   return best;
 }
+const CYCLE_WINDOW=120,CYCLE_MIN_MOVES=8,CYCLE_MIN_REVERSALS=6,CYCLE_MIN_SHARE=.7,CYCLE_MIN_REVISIT_SHARE=.7,CYCLE_MAX_SPAN=2,CYCLE_MAX_NET=1;
+function breakAutoCycle(trail){
+  cancelAutoPlan();P.cycleBreaks++;
+  for(const e of trail)P.cyclePenalty.set(key(e.x,e.y),frame+360);
+  const xs=trail.map(e=>e.x),ys=trail.map(e=>e.y),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const offsets=[[3,0],[-3,0],[0,3],[0,-3],[3,3],[-3,3],[3,-3],[-3,-3]],th=nearestThreat(140);
+  let best=null;
+  for(const o of offsets){const x=clamp(P.cx+o[0],1,COLS-2),y=Math.max(-47,P.cy+o[1]);
+    if(x>=minX&&x<=maxX&&y>=minY&&y<=maxY)continue;
+    const t=tile(x,y);if(solid(t)||t===LAVA)continue;
+    const r=findRoute(P.cx,P.cy,x,y,{allowBridge:true,avoidMobs:true});if(!r||!r.length)continue;
+    const threat=th?Math.hypot(centerX(x)-th.m.x,centerY(y)-th.m.y):0;
+    const candidate={r,x,y,threat};
+    if(!best||r.length<best.r.length||r.length===best.r.length&&(threat>best.threat||threat===best.threat&&y>best.y))best=candidate;
+  }
+  if(!best||!commitTactic('BREAK CONTACT',best.r,360,null)){
+    cancelAutoPlan();P.cycleDig={x:P.cx,y:P.cy,until:frame+360};P.aiMode='DIG A NEW LINE';
+  }
+  resetAutoTrail();
+}
+function noteAutoArrival(fromX,fromY,toX,toY){
+  if(!P.motionTrail.length)P.motionTrail.push({at:Math.max(0,frame-8),x:fromX,y:fromY});
+  const last=P.motionTrail[P.motionTrail.length-1];
+  if(Math.abs(toX-last.x)+Math.abs(toY-last.y)>2)resetAutoTrail();
+  if(!P.motionTrail.length)P.motionTrail.push({at:frame,x:toX,y:toY});
+  else P.motionTrail.push({at:frame,x:toX,y:toY});
+  while(P.motionTrail.length>2&&P.motionTrail[1].at<=frame-CYCLE_WINDOW)P.motionTrail.shift();
+  const trail=P.motionTrail;if(trail.length<2||trail[trail.length-1].at-trail[0].at<CYCLE_WINDOW)return;
+  const vectors=[];for(let i=1;i<trail.length;i++)vectors.push({dx:trail[i].x-trail[i-1].x,dy:trail[i].y-trail[i-1].y});
+  if(vectors.length<CYCLE_MIN_MOVES)return;
+  let reversals=0;for(let i=1;i<vectors.length;i++)if(vectors[i].dx===-vectors[i-1].dx&&vectors[i].dy===-vectors[i-1].dy)reversals++;
+  const seen=new Set([key(trail[0].x,trail[0].y)]);let revisits=0;
+  for(let i=1;i<trail.length;i++){const k=key(trail[i].x,trail[i].y);if(seen.has(k))revisits++;else seen.add(k);}
+  const xs=trail.map(e=>e.x),ys=trail.map(e=>e.y),span=Math.max(...xs)-Math.min(...xs)+Math.max(...ys)-Math.min(...ys);
+  const net=Math.abs(trail[trail.length-1].x-trail[0].x)+Math.abs(trail[trail.length-1].y-trail[0].y);
+  const repeated=reversals>=CYCLE_MIN_REVERSALS&&reversals/(vectors.length-1)>=CYCLE_MIN_SHARE||revisits/vectors.length>=CYCLE_MIN_REVISIT_SHARE;
+  if(repeated&&span<=CYCLE_MAX_SPAN&&net<=CYCLE_MAX_NET)breakAutoCycle(trail);
+}
 function shootBow(m){
   if(!P.bow||P.ammo<=0||P.attackT>0)return false;const dx=m.x-P.x,dy=m.y-P.y,d=Math.hypot(dx,dy)||1;
   P.ammo--;P.attackT=34;P.swing=8;P.face=dx<0?-1:1;projectiles.push({x:P.x,y:P.y-2,vx:dx/d*2.8,vy:dy/d*2.8,t:80,dmg:1+Math.floor(P.tool/2)});
@@ -832,18 +923,25 @@ function dodgeShot(){
     const sp=Math.hypot(a.vx,a.vy)||1;
     if((dx*a.vx+dy*a.vy)/sp<=0)continue; // already past us
     const perp=Math.abs(dx*a.vy-dy*a.vx)/sp;if(perp>7)continue; // will miss anyway
-    let best=null,bs=perp;
+    let best=null,bs=-1e9;
     for(const dd of DIRS){const x=P.cx+dd[0],y=P.cy+dd[1],t=tile(x,y);
-      if(solid(t)||t===LAVA)continue;
+      if(solid(t)||t===LAVA||!supportedAt(x,y))continue;
       const ex=centerX(x)-a.x,ey=centerY(y)-a.y;
-      const p2=Math.abs(ex*a.vy-ey*a.vx)/sp;
-      if(p2>bs){bs=p2;best={x,y};}}
-    if(best){P.mine=null;startMove(best.x,best.y);P.aiMode='DODGE!';return true;}
+      const miss=Math.abs(ex*a.vy-ey*a.vx)/sp;if(miss<=perp)continue;
+      const score=miss-cycleCost(x,y)*4;
+      if(score>bs){bs=score;best={x,y};}}
+    if(best){
+      // Once a local cycle has been diagnosed, another dodge back into that
+      // same loop is worse than taking the glancing shot while exiting it.
+      if(P.tactic&&P.tactic.kind==='BREAK CONTACT'&&cycleCost(best.x,best.y)>0)return false;
+      P.mine=null;cancelAutoPlan();markAvoid(P.cx,P.cy,120);startMove(best.x,best.y);P.aiMode='DODGE!';return true;
+    }
   }
   return false;
 }
 function combatAct(){
   if(dodgeShot())return true;
+  if(continueTactic())return true;
   // Ranged mobs demand attention across the cavern; brawlers only once close.
   // Chasing every distant zombie was where whole runs quietly bled away.
   // On the climb home the bar is higher still: only fight what's in his face —
@@ -864,7 +962,7 @@ function combatAct(){
     P.aiMode='LAST STAND RETREAT';
     if(P.trapCd<=0)placeTrapToward(m,true);
     const rr=retreatRoute(threats);
-    if(rr&&rr.length){P.route=rr;followRoute();return true;}
+    if(rr&&rr.length)return commitTactic(P.aiMode,rr,300,m);
     if(buildCover(m,true))return true;
   }
   if(P.hp<=3&&P.food>0){P.food--;P.hp=Math.min(5,P.hp+2);P.invT=45;P.aiMode='EAT + HEAL';say('ATE RATIONS','#7ed957');return true;}
@@ -873,7 +971,7 @@ function combatAct(){
     P.aiMode=golem?'BAIT GOLEM':m.kind==='creeper'?'BAIT CREEPER':'FALL BACK';
     const armed=P.trapCd<=0&&placeTrapToward(m,golem);
     if(armed||d<27||(m.kind==='creeper'&&m.charge>10)||golem){
-      const rr=retreatRoute(threats);if(rr&&rr.length){P.route=rr;followRoute();return true;}
+      const rr=retreatRoute(threats);if(rr&&rr.length)return commitTactic(P.aiMode,rr,300,m);
       // Cornered with no way out: wall the tunnel shut and fight through a slit.
       if(P.hp<=2&&buildCover(m,true)){P.aiMode='SEAL TUNNEL';return true;}
     }
@@ -884,10 +982,10 @@ function combatAct(){
   if(d>(golem?12:17)&&gridLOS(P.x,P.y,m.x,m.y)&&shootBow(m)){P.aiMode='BOW KITE';return true;}
   const mx=clamp(Math.floor(m.x/TS),1,COLS-2),my=Math.max(0,Math.floor(m.y/TS));
   const r=findRoute(P.cx,P.cy,mx,my,{airOnly:true,avoidMobs:false});
-  if(r&&r.length){P.aiMode='HUNT '+m.kind.toUpperCase();P.route=r;followRoute();return true;}
+  if(r&&r.length)return commitTactic('HUNT '+m.kind.toUpperCase(),r,60,m);
   // A wall-separated enemy is no longer a permanent stand-off: mine one tactical breach.
   const breach=findRoute(P.cx,P.cy,mx,my,{allowBridge:true,avoidMobs:true});
-  if(breach&&breach.length){P.aiMode='BREACH';P.route=breach;followRoute();return true;}
+  if(breach&&breach.length)return commitTactic('BREACH',breach,60,m);
   // Truly unreachable: write the grudge off for a while and get back to work.
   m.ignore=frame+900;return false;
 }
@@ -1053,6 +1151,11 @@ function nearestGateRoute(){
   return best;
 }
 function aiAct(){
+  if(P.cycleDig){
+    const escaped=Math.abs(P.cx-P.cycleDig.x)+Math.abs(P.cy-P.cycleDig.y)>=3;
+    if(frame>=P.cycleDig.until||escaped)P.cycleDig=null;
+    else{P.aiMode='DIG A NEW LINE';shaftDown();return;}
+  }
   // Warp channel is all-consuming: he plants the totem, holds on, and rides
   // the light home to the surface camp.
   if(P.portalT>0){P.aiMode='THE GATE TAKES HOLD';return;}
@@ -1062,10 +1165,14 @@ function aiAct(){
     if(--P.warpT===0){
       burst(P.x,P.y,24,'#b57aff',2.4);
       P.cx=CAMP_X;P.cy=SURFACE-1;P.toX=P.cx;P.toY=P.cy;P.x=centerX(P.cx);P.y=centerY(P.cy);
-      P.fallD=0;P.moveT=0;burst(P.x,P.y,24,'#b57aff',2.4);shake(3);
+      P.fallD=0;P.moveT=0;P.cycleDig=null;resetAutoTrail();burst(P.x,P.y,24,'#b57aff',2.4);shake(3);
       say('WARPED TO CAMP','#b57aff');lastDeepFrame=frame;
     }
     return;
+  }
+  if(P.tactic&&P.tactic.kind==='BREAK CONTACT'){
+    if(continueTactic())return;
+    P.cycleDig={x:P.cx,y:P.cy,until:frame+360};P.aiMode='DIG A NEW LINE';shaftDown();return;
   }
   if(combatAct())return;if(maybeBuild()){P.aiMode='ARCHITECT';return;}
   // Peace-time upkeep: top off health while nothing is hunting, before the next fight.
@@ -1191,6 +1298,8 @@ function stairStep(){
   for(let attempt=0;attempt<2;attempt++){
     const dir=P.stairDir;
     if(P.cx+dir<1||P.cx+dir>COLS-2){P.stairDir=-dir;continue;}
+    if(avoided(P.cx+dir,P.cy)||avoided(P.cx+dir,P.cy+1)||
+      P.cycleDig&&(cycleCost(P.cx+dir,P.cy)>0||cycleCost(P.cx+dir,P.cy+1)>0)){P.stairDir=-dir;continue;}
     const side=tile(P.cx+dir,P.cy),step=tile(P.cx+dir,P.cy+1);
     if(side===BEDROCK||side===PORTAL||step===BEDROCK||step===PORTAL){P.stairDir=-dir;continue;}
     if(side===LAVA||step===LAVA){
@@ -1215,13 +1324,13 @@ function shaftDown(){
   const bt=tile(P.cx,P.cy+1);
   if(bt===LAVA&&P.cobble>=2){buildBridge(P.cx,P.cy+1);return;}
   if(solid(bt)&&bt!==BEDROCK&&bt!==PORTAL){startMine(P.cx,P.cy+1);return;}
-  if(!solid(bt)&&bt!==LAVA){startMove(P.cx,P.cy+1);return;}
-  for(const d of DIRS){const t=tile(P.cx+d[0],P.cy+d[1]);
-    if(solid(t)&&t!==BEDROCK&&t!==PORTAL){startMine(P.cx+d[0],P.cy+d[1]);return;}}
+  if(!solid(bt)&&bt!==LAVA&&!avoided(P.cx,P.cy+1)&&(!P.cycleDig||cycleCost(P.cx,P.cy+1)===0)){startMove(P.cx,P.cy+1);return;}
+  for(const d of DIRS){const x=P.cx+d[0],y=P.cy+d[1],t=tile(x,y);
+    if((!P.cycleDig||cycleCost(x,y)===0)&&solid(t)&&t!==BEDROCK&&t!==PORTAL){startMine(x,y);return;}}
   // Nothing to mine at all (open cavern over lava): step anywhere safe and
   // let gravity produce the progress.
-  for(const d of DIRS){const t=tile(P.cx+d[0],P.cy+d[1]);
-    if(!solid(t)&&t!==LAVA&&d[1]>=0){startMove(P.cx+d[0],P.cy+d[1]);return;}}
+  for(const d of DIRS){const x=P.cx+d[0],y=P.cy+d[1],t=tile(x,y);
+    if(!avoided(x,y)&&(!P.cycleDig||cycleCost(x,y)===0)&&!solid(t)&&t!==LAVA&&d[1]>=0){startMove(x,y);return;}}
   // Marooned on a bridge island in a lava lake with no cobble: swimming for
   // shore burns, but it beats standing still until the run dies of old age.
   for(const d of[[0,1],[P.face,0],[-P.face,0]]){
@@ -1259,21 +1368,22 @@ function playerStep(){
     // Ranged mobs get interrupted at sniping distance, brawlers when close.
     if(th&&gridLOS(P.x,P.y,th.m.x,th.m.y)&&
       (th.d<24||(th.m.kind==='skeleton'||th.m.kind==='golem')||th.d<40&&th.m.kind==='spider')){
-      P.mine=null;P.route=[];P.target=null;P.aiMode='THREAT!';}}
+      P.mine=null;cancelAutoPlan();P.aiMode='THREAT!';}}
   if(P.mine){P.mine.left--;P.swing=6;P.progressFrame=frame; // active digging is progress
     if(P.mine.left%7===0)dust(centerX(P.mine.x),centerY(P.mine.y),2,(BC[P.mine.t]||[])[1]);
     if(P.mine.left<=0)finishMine();
   }else if(P.moveT>0){
     P.moveT--;P.x+=(centerX(P.toX)-P.x)*0.42;P.y+=(centerY(P.toY)-P.y)*0.42;
-    if(P.moveT===0){P.cx=P.toX;P.cy=P.toY;P.x=centerX(P.cx);P.y=centerY(P.cy);
+    if(P.moveT===0){const fromX=P.cx,fromY=P.cy;P.cx=P.toX;P.cy=P.toY;P.x=centerX(P.cx);P.y=centerY(P.cy);
       while(P.route.length&&P.route[0].x===P.cx&&P.route[0].y===P.cy)P.route.shift();
+      if(!playing()&&!manual())noteAutoArrival(fromX,fromY,P.cx,P.cy);
       const vk=key(P.cx,P.cy);P.visits.set(vk,(P.visits.get(vk)||0)+1);P.progressFrame=frame;
       const t=tile(P.cx,P.cy);if(t===LAVA)hurt(2,'LAVA');
       // Never plant a torch mid-plunge: respawn anchors must be standable ground.
       if(P.cy>P.lastTorch+11&&P.torch>0&&P.fallD===0&&supported()&&!playing()&&!manual())placeTorch();
     }
   }else if(!supported()&&P.air<=0){
-    P.fallD++;P.mine=null;P.route=[];P.target=null;
+    P.fallD++;P.mine=null;cancelAutoPlan();
     // A miner with rope doesn't pancake: at three cells of freefall (damage
     // starts at four) he catches himself on a thrown rung — sooner when every
     // fallen cell is homeward climbing he would have to redo.
@@ -1286,14 +1396,16 @@ function playerStep(){
     let vx=0;
     if(tile(P.cx,P.cy+1)===LAVA)for(const s of[P.face,-P.face]){
       const st=tile(P.cx+s,P.cy);
-      if(!solid(st)&&st!==LAVA&&tile(P.cx+s,P.cy+1)!==LAVA){vx=s;break;}
+      if(!solid(st)&&st!==LAVA&&tile(P.cx+s,P.cy+1)!==LAVA&&cycleCost(P.cx+s,P.cy)===0){vx=s;break;}
     }
     P.toX=P.cx+vx;P.toY=vx?P.cy:P.cy+1;P.moveT=3;P.aiMode='FALLING!';
     if(P.fallD===4)say('FALLING!','#ff9f5a');
   }else{
     if(P.air>0)P.air--;
     if(P.fallD>0)landFall();
-    if(playing()||manual())manualAct();else aiAct();
+    if(playing()||manual())manualAct();
+    else if(tile(P.cx,P.cy)===LAVA)P.aiMode='ESCAPE LAVA'; // step() owns the emergency route
+    else aiAct();
   }
   const d=Math.max(0,P.cy-SURFACE);if(d>deepest){if(playing())addScore(d-deepest);deepest=d;lastDeepFrame=frame;}
 }
@@ -1524,7 +1636,7 @@ function gateStep(){
     if(--P.portalT===0&&P.portalTo){
       const t=P.portalTo;P.portalTo=null;P.portalCd=300;
       P.cx=t.x;P.cy=t.y;P.toX=t.x;P.toY=t.y;P.x=centerX(t.x);P.y=centerY(t.y);
-      P.moveT=0;P.fallD=0;P.mine=null;P.route=[];P.target=null;
+      P.moveT=0;P.fallD=0;P.mine=null;cancelAutoPlan();P.cycleDig=null;resetAutoTrail();
       camY=P.y-178;discoveryDirty=true;
       burst(P.x,P.y,24,'#b57aff',2.4);shake(3);say('THROUGH THE GATE','#b57aff');
       P.progressFrame=frame;if(P.cy>SURFACE)lastDeepFrame=frame;
@@ -1542,26 +1654,19 @@ function step(){
   if(tile(P.cx,P.cy)===LAVA){
     if(!playing()&&!manual()&&P.cobble>=2){buildBridge(P.cx,P.cy);P.aiMode='SEAL LAVA';}
     else{hurt(1,'LAVA FLOW');if(!playing()&&!manual()&&P.moveT<=0){const safe=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]}))
-      .find(c=>tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y)));
-      if(safe){startMove(safe.x,safe.y);P.aiMode='ESCAPE LAVA';}
-      else if(!P.mine){ // fully walled in: claw upward through rock rather than boil
-        let acted=false;
-        for(const c of[[P.cx,P.cy-1],[P.cx-1,P.cy],[P.cx+1,P.cy]]){
-          const t=tile(c[0],c[1]);
-          if(solid(t)&&t!==BEDROCK&&t!==PORTAL&&startMine(c[0],c[1])){P.aiMode='DIG OUT';acted=true;break;}
-        }
-        // Adrift in an open lava lake: swim for it (downward first — lakes
-        // have stone floors to dig through) rather than tread fire forever.
-        if(!acted&&P.moveT<=0)for(const c of[[0,1],[P.face,0],[-P.face,0],[0,-1]]){
-          if(tile(P.cx+c[0],P.cy+c[1])===LAVA){startMove(P.cx+c[0],P.cy+c[1]);P.aiMode='SWIM LAVA';break;}
-        }
+      .find(c=>tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y))&&tile(c.x,c.y+1)!==LAVA&&supportedAt(c.x,c.y)&&!avoided(c.x,c.y));
+      if(safe){P.mine=null;cancelAutoPlan();P.cycleDig=null;markAvoid(P.cx,P.cy,360);startMove(safe.x,safe.y);P.aiMode='ESCAPE LAVA';}
+      else if(!P.mine){
+        // Search the connected lake for a real shore or mineable bank. Picking
+        // an arbitrary adjacent lava cell can alternate forever at a cave wall.
+        if(escapeLava()&&P.mine)P.aiMode='DIG OUT';
       }}}
   }
   // Lava about to pour onto the miner's head reads as a threat, not scenery.
   if(!playing()&&!manual()&&P.dead<=0&&P.moveT<=0&&tile(P.cx,P.cy)!==LAVA&&tile(P.cx,P.cy-1)===LAVA){
     const safe=DIRS.map(d=>({x:P.cx+d[0],y:P.cy+d[1]}))
-      .find(c=>c.y>=P.cy&&tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y))&&tile(c.x,c.y-1)!==LAVA);
-    if(safe){P.mine=null;startMove(safe.x,safe.y);P.aiMode='DODGE LAVA';}
+      .find(c=>c.y>=P.cy&&tile(c.x,c.y)!==LAVA&&!solid(tile(c.x,c.y))&&supportedAt(c.x,c.y)&&tile(c.x,c.y-1)!==LAVA&&!avoided(c.x,c.y));
+    if(safe){P.mine=null;cancelAutoPlan();P.cycleDig=null;markAvoid(P.cx,P.cy,360);startMove(safe.x,safe.y);P.aiMode='DODGE LAVA';}
   }
   if(!playing()&&!manual()&&P.dead<=0&&frame-P.progressFrame>540){
     // Whatever wedged the planner, digging straight down always unwedges it.
