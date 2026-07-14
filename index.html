@@ -147,10 +147,14 @@
     }
     .workshop-brand{grid-area:brand;display:grid;grid-template-columns:38px auto;align-items:center;gap:5px;min-width:48px}
     .workshop-eggo{
-      position:relative;width:38px;height:40px;touch-action:none;user-select:none;cursor:grab;
+      position:relative;display:block;width:38px;height:40px;padding:0;border:0;background:transparent;color:inherit;
+      font:inherit;appearance:none;touch-action:none;user-select:none;cursor:grab;
     }
-    .workshop-eggo:active{cursor:grabbing}
+    .workshop-eggo:active:not(:disabled){cursor:grabbing}
+    .workshop-eggo:disabled{opacity:1;cursor:default}
+    .workshop-eggo:focus-visible{outline:1px solid var(--cyan);outline-offset:2px;border-radius:4px}
     .workshop-eggo img{display:block;width:38px;height:40px;object-fit:contain;pointer-events:none}
+    .workshop-eggo img[hidden],.workshop-eggo:not(:disabled) img{display:none!important}
     .workshop-eggo-canvas{
       position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform:translate(-50%,-50%);
     }
@@ -300,10 +304,10 @@
       <canvas id="workshop-fx-canvas" class="workshop-fx-canvas" aria-hidden="true"></canvas>
       <span class="workshop-scan" aria-hidden="true"></span>
       <span class="workshop-brand">
-        <span id="workshop-eggo" class="workshop-eggo" role="img" aria-label="Eggo, the egghead.io mascot — grab to stretch" data-eggo-state="static">
+        <button id="workshop-eggo" class="workshop-eggo" type="button" aria-label="Eggo, the egghead.io mascot" data-eggo-state="static" disabled>
           <img id="workshop-eggo-fallback" src="eggo.svg" alt="" aria-hidden="true" draggable="false">
           <canvas id="workshop-eggo-canvas" class="workshop-eggo-canvas" aria-hidden="true" hidden></canvas>
-        </span>
+        </button>
         <span class="workshop-signal" aria-hidden="true">
           <span class="workshop-signal-cell"></span>
           <span class="workshop-signal-cell"></span>
