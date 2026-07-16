@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "game": "ashen-rage",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "aef748c752fbb956aabbc700dc2b9cbc97aa975124737be357719118c2a22b04",
+  "reviewedAt": "2026-07-16",
+  "reviewer": "Kimi native-size reference review (Road Rage 2017 spinoff pass: shared-integrator pack combat with raised-weapon tells, wet-neon downtown, dusk haze value structure, grudge/pack physical telegraphs, feedback-legibility colors; 14-beat montage re-inspected at 160x360 against both references plus native crops of the brawl, swing, warning, and podium cells and the rendered 30s clip)",
+  "renderReceipt": {
+    "seed": "0xa54e0001",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 7012904,
+    "sha256": "12b9b6af9a070e401e73f1480ad2435701e1fef3708d8e125c73162447dd198c",
+    "command": "node render/render.js ashen-rage 30 .artifacts/visual/ashen-rage/ashen-rage-30s.mp4 --seed 0xa54e0001 --probe --fps 30"
+  },
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The riders are constructed 7x19 bikes at the reference scale, measured by the drawn-pixel gates: two wheels, frame, tank, rider torso that leans INTO actual travel through the shared integrator (zero wrong-way/crab violations in the behavior suite), helmet with visor, and a weapon arm with a four-pose grammar (rest / raised windup with glint tip / sweeping swing / extended recover). The four rival personas read at a glance — TANK red with the heavy pipe, SLIP mint with the quick bat, ACE blue, PSYCHO magenta — the grudge-marked rival wears a gold crown, and downed rivals cartwheel into the weeds under dizzy stun sparks. Traffic sedans/pickups/box trucks are 8-10px constructed bodies with headlight dots, and spectators in the refuge pockets throw their arms up as the pack passes."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The five districts of Ashen are built, not palette-swapped: DOWNTOWN CORE is rain-slick asphalt bouncing neon sign blades and tower window grids with wavering reflection streaks, SUBURB ROW has gabled houses, porch lights, mailboxes and picket fences, FARMLAND rolls crop rows, fence lines, hay bales and a barn with silo, IRONWORKS stacks containers, pipe runs and furnace glow, HARBOR LIGHTS opens real water with wave tiers, moored hulls and masts beside a boardwalk. The road carries lane paint, cats-eyes, patchwork, gutter seams and shoulder posts; foreground lamps and district banners pass over the world; and atmospheric dusk haze pulls the far highway into the sunset band while the foreground stays ink-dark."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Across the fourteen-beat sheet the road grammar, side silhouettes, material identity, hazards and composition change per district — wet neon avenue, lawn-lined street, open field rows, container canyons, open water on one shoulder. The executable structure-distance gate holds across all five district pairs, and hazards re-skin the same grammar honestly (roadworks barriers in farmland, oil sheens, pickups bobbing on glow poles)."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned rider and rival bursts pass their motion floors; the windup beat carries the raised bat with the torso leaned back; the swing connects with gold sparks, a ring and CONNECTED!/COUNTER! text; the knockout cartwheels off the shoulder with debris, stun sparks and KO text; the nitro burn lays exhaust flames and dust; the KO tumble decelerates physically to rest in the weeds; and the county-line podium drops confetti over a COUNTY LINE card while the winner keeps rolling on a victory lap. The measured payoff-diff crops (same-sim __NO_PAYOFF_FX twins) confirm the sparks/debris land on the actors."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Intent reads from the riders alone: honest lean tracks travel, the raised weapon is the incoming-swing tell, the grudge crown and the stake-out/escort formations are physical telegraphs (no ghost overlays anywhere), and every good/bad beat is tagged — gold sparks and gold edge pulse on connects, KOs, overtakes, pickups and boosts; coral flash and coral edge pulse on hits taken, wrecks, barrier/oil/traffic hits, drops and lapses. The executable feedback-legibility suite (evals/feedback.js) sampled 76 beats across 27 categories, all palette-separated at the event location, thinnest 12px. Rank P_/8, health, boost, weapon tier, KO pips, district name and the county-line strip all read at native size, with ZERO drawn guidelines — opposite forced plans render byte-identical at every planning beat."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Dusk-highway ink, amber horizon light, wet neon, warm farmhouse tones, furnace orange and harbor teal stay one world: gold means won, coral means hurt, mint means threaded. The HUD, broadcast plates, payoff language, spectators and district banners read as one ASHEN county, and the strip sits beside MACHINE HUNT and BLOCK MINE without looking primitive."
+    }
+  },
+  "guidelineOverlays": {
+    "confirmedAbsent": true,
+    "note": "Checked all fourteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The grudge stake-out rival, the pack escort slots, the warning strobes and the broadcast plate are physical world telegraphs; skid-free taillight and headlight pools are world light from visible bikes. Executable pixel gates (opposite forced route plans at five beats) render identically, and the banned overlay primitives are absent from source."
+  },
+  "reviewIdentitySha256": "3ba847854714e8256f06ec1832dc9d0b880710ea65c95141ff365e5711599a26",
+  "seed": "0xa54e0001",
+  "checkpoints": [
+    "opening@12",
+    "pack-ride@13",
+    "windup@8",
+    "swing-hit@8",
+    "knockout@12",
+    "boost@12",
+    "pickup@12",
+    "barrier@12",
+    "oil@12",
+    "grudge-warn@12",
+    "grudge-live@12",
+    "farmland@12",
+    "harbor@12",
+    "podium@12"
+  ],
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true
+}

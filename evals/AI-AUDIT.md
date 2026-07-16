@@ -1247,3 +1247,55 @@ was 54 pixels. The explicitly preserved montage hash is
 `4f28e7588007f212018e66641a18d98f36ccb709d13472e413545182be71e37b`;
 the final 30-second H.264 review clip is 2,552,570 bytes with SHA-256
 `a453a94769a9ca5ce8836afd1a42cd34a357fd990531e20701f4a0c890cfd631`.
+
+## ASHEN RAGE: Road Rage (2017) spinoff — pack combat on the shared integrator (2026-07-16)
+
+ASHEN RAGE drops the 2017 game's city of Ashen into the 4:9 strip as a
+self-playing outlaw moto league: the gold rider closes a flank, the rival's bat
+rises in a readable windup, and the next second is a dodge, a counter-swing, a
+wobble, or a cartwheel into the weeds. Seven rivals in four personas
+(TANK/SLIP/ACE/PSYCHO) rubber-band around the player with a pace -> engage ->
+windup -> swing -> recover state machine, committed flanks, punish windows,
+and VETERAN/WEASEL sidestep dodges. The bot runs a committed engagement mode
+over a copied-state route planner on the SAME advanceBike integrator the human
+and rivals use, three seeded player personas, a grudge-match/pack-turn act
+ladder with exactly 240f physical warnings (stake-out rival, escort slots),
+and a podium finish with a rolling victory lap.
+
+Measured behavior truth: fixed 60 Hz determinism with render and chunk parity;
+ten paired five-minute seeds won the route planner 10/10 on score (882 vs
+-1285) and 9/10 on failures (798 vs 1888), with traffic hits 152 vs 623 and
+wrecks 46 vs 145, while the __NO_ROUTE_PLAN baseline kept brawling (158+ KOs,
+5,400+ events). Both act types physically diverge the world during the warning
+window at frame 1. Two ten-minute soaks held still 0s / quiet 2s / stall 2-3s
+with 704..714 events and 471..475 progress, rank P1 both seeds, tier-3 apexes
+2 and 4 (grudge settles, rampages, nitro KOs, untouched swarms), and exact
+SHOW hold/slow/admire budgets. The motion contract measured rider pace 2.199
+px/f and pack mean 2.068..2.172 px/f over 7 rivals with worst bare still 5f;
+__NO_EMOTE re-exposes 7 uncovered pauses; __NO_PAYOFF_FX is a byte-identical
+no-op; the feedback ledger sampled 76 beats across 27 categories, all
+palette-separated, thinnest 12px.
+
+Native 160x360 review covered opening, pack brawl, windup tell, swing connect,
+knockout, nitro burn, pickup, roadworks, oil slick, grudge warning, grudge
+match, farmland, harbor, and the county-line podium against MACHINE HUNT and
+BLOCK MINE. Every executable determinism, flatness, detail, richness, burst,
+district-structure, warning/land, payoff-diff, scroll-coherence, guideline-ban,
+actor-scale, footprint, approach, and reference-median gate passed. The
+explicitly preserved montage hash is
+`aef748c752fbb956aabbc700dc2b9cbc97aa975124737be357719118c2a22b04`; the final
+30-second H.264 review clip is 7,012,904 bytes with SHA-256
+`12b9b6af9a070e401e73f1480ad2435701e1fef3708d8e125c73162447dd198c`.
+
+Lessons, in shipping order. (1) EVERY actor must run the shared integrator
+every frame: pace rivals hand-rolled their cruise and never received the
+integrator's pose fields, so `angle` was undefined, `rotate(NaN)` silently
+dropped the whole sprite, and the drawn-pixel scale gate caught "invisible"
+rivals the naked eye missed. (2) Luma range needs a bright MASS, not more
+midtone detail: palette lifts, vignettes, and faint light pools moved
+lumaStdDev by less than 0.001, while distance fog done as a genuinely bright
+dusk band plus wet-neon reflections moved it by 0.02+. (3) A uniform warning
+tint compresses global contrast — edge-darkening plus bright strobes kept both
+the readability and the luma. (4) Telegraphs belong to the world: the grudge
+stake-out and pack escort made the act A/B divergence provable at frame 1 of
+the warning while keeping the zero-guideline pixel gates exact.

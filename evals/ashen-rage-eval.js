@@ -1,0 +1,344 @@
+#!/usr/bin/env node
+'use strict';
+
+const{bootGame}=require('./harness');
+const{runSoak,analyzeSoak,assertSoak,soakLine}=require('./soak');
+const{runMotion,analyzeMotion,assertMotion,motionLine}=require('./motion');
+const{runFeedbackVisibility,assertFeedback,feedbackLine}=require('./feedback');
+
+// Observation only: none of these hooks make decisions, touch physics values,
+// draw, or consume either RNG stream.
+const FOOTER=String.raw`
+globalThis.__arApplied=[];
+{const old=advanceBike;advanceBike=function(body,intent,env){const out=old(body,intent,env);
+  if(body===player){globalThis.__arApplied.push({showFrame,runFrame,steer:intent.steer,throttle:intent.throttle,
+    brake:!!intent.brake,boost:!!intent.boost,swing:intent.swing||0,targetX:intent.targetX,tactic:intent.tactic});
+    if(globalThis.__arApplied.length>360)globalThis.__arApplied.shift();}return out;};}
+globalThis.__arClearApplied=()=>{globalThis.__arApplied.length=0;};
+globalThis.__arLastApplied=()=>globalThis.__arApplied.at(-1)||null;
+globalThis.__arContinuity={max:0,from:null,to:null};
+{const old=stepPlayer;stepPlayer=function(){const from={x:player.x,y:player.y},out=old(),to={x:player.x,y:player.y},
+  d=Math.hypot(to.x-from.x,to.y-from.y);if(d>globalThis.__arContinuity.max)globalThis.__arContinuity={max:d,from,to};return out;};}
+globalThis.__arReset=()=>resetRun(true);
+globalThis.__arRivalKinds=()=>{const out={};for(const r of rivals)out[r.kind]=(out[r.kind]||0)+1;return out;};
+globalThis.__arActRivalPositions=()=>rivals.map(r=>[r.id,round(r.x,4),round(r.y,4),r.state]);
+// Pose-honesty telemetry: the drawn lean must track actual travel. Persistence
+// counters, because honest yaw inertia is ALLOWED to lag a few frames through a
+// lateral flip or a wobble — a cosmetic lean would sit wrong-signed for whole
+// transits, which no persistence window forgives.
+globalThis.__arPose={frames:0,wrongWayRun:0,wrongWayMax:0,wrongWayViolations:0,straightRun:0,crabViolations:0};
+{const P=globalThis.__arPose,old=stepPlayer;stepPlayer=function(){const out=old();
+  if(player.wreckT>0||player.wobbleT>0||player.swingPhase!=='ready')return out; // tumbles/wobbles/swings pose by their own rules
+  P.frames++;
+  const va=Math.atan2(player.vx,Math.max(.5,player.speed)),angle=player.angle;
+  const wrongWay=Math.abs(player.vx)>.3&&Math.sign(angle)!==Math.sign(va)&&Math.abs(angle)>.06;
+  P.wrongWayRun=wrongWay?P.wrongWayRun+1:0;P.wrongWayMax=Math.max(P.wrongWayMax,P.wrongWayRun);
+  if(P.wrongWayRun>8)P.wrongWayViolations++;
+  const straight=Math.abs(player.vx)<.06&&Math.abs((player.intent&&player.intent.steer)||0)<.1;
+  P.straightRun=straight?P.straightRun+1:0;
+  if(P.straightRun>20&&Math.abs(angle)>.03)P.crabViolations++;
+  return out;};}
+// Scripted pose fixtures through the SHARED integrator: each one fails a
+// cosmetic-lean build (steadyRight must lean INTO travel; release must
+// straighten; a wobble must not snap the body opposite the motion).
+globalThis.__arPoseFixture=()=>{
+  const drive=(b,intent,frames)=>{for(let i=0;i<frames;i++)
+    advanceBike(b,Object.assign({steer:0,throttle:1,brake:false,boost:false,swing:0,targetX:80,tactic:'FIXTURE'},intent),{offroad:false,wet:false});
+    return{angle:b.angle,vx:b.vx,va:Math.atan2(b.vx,Math.max(.5,b.speed))};};
+  const fresh=()=>{const b=makePlayer(80,900);b.speed=2;return b;};
+  const straightenBody=fresh();drive(straightenBody,{steer:1},30);
+  return{
+    steadyRight:drive(fresh(),{steer:1},40),
+    straighten:drive(straightenBody,{steer:0},50),
+    steadyLeft:drive(fresh(),{steer:-1},40)
+  };};
+`;
+
+let failed=false;
+const fail=message=>{console.error('  FAIL:',message);failed=true;};
+const press=(game,code)=>{game.key('keydown',code);game.frames(1,false);game.key('keyup',code);};
+const sum=(runs,key)=>runs.reduce((total,p)=>total+p.stats[key],0);
+const policyScore=p=>p.stats.overtakes+12*p.stats.kos+3*(p.stats.nitros+p.stats.wrenches+p.stats.weapons)+
+  2*p.stats.barrierThreads+p.stats.nearMisses-8*p.stats.wrecks-4*p.stats.barrierHits-4*p.stats.trafficHits-2*p.stats.hitsTaken;
+const failures=p=>4*p.stats.wrecks+2*p.stats.barrierHits+p.stats.trafficHits+p.stats.hitsTaken;
+const inBands=(p,bands,label)=>{for(const[key,[lo,hi]]of Object.entries(bands)){
+  const value=key==='rank'?p.rank:p.stats[key];
+  if(value<lo||value>hi)fail(`${label}: ${key} ${value} outside measured band ${lo}..${hi}`);
+}};
+function notePairs(p,id,label,minPairs){
+  const notes=p.act.notes.filter(note=>note.id===id),warn=notes.filter(note=>note.kind==='act-warning'),
+    land=notes.filter(note=>note.kind==='act-land'),pending=warn.length===land.length+1&&p.act.phase==='warn'&&
+      (!land.length||warn.at(-1).tag>land.at(-1).tag);
+  if(land.length<minPairs||!(land.length===warn.length||pending))
+    fail(`${label}: ${id} emitted ${warn.length} warnings / ${land.length} lands`);
+  for(let i=0;i<land.length;i++){
+    if(land[i].tag-warn[i].tag!==240)fail(`${label}: ${id} simulation warning ${land[i].tag-warn[i].tag}f != 240`);
+    if(land[i].at-warn[i].at!==240)fail(`${label}: ${id} viewer warning ${land[i].at-warn[i].at}f != 240`);
+  }
+}
+
+// Registered 2026-07-16 from a fresh ten-seed paired five-minute sweep
+// (0x4f00 + i*37) on the shared-integrator build, planned-route extrema:
+// markers 164..188, districts 14..16, kos 6..22, hits 11..48, hitsTaken 2..48,
+// overtakes 3..32, drops 0..13, boosts 14..24, nitros 3..11, wrenches 1..10,
+// weapons 0..8, nearMisses 22..51, trafficHits 7..26, oils 1..3,
+// barrierThreads 12..25, barrierHits 12..21, wrecks 0..13, lapses 0..3, acts 3,
+// grudgeKos 0..2, actClears 1..3, dodges 4..94, whiffs 1..25, counters 0..4,
+// events 327..597, progress 223..247, rank 1..3. ~20-25% margin both sides.
+const POLICY_BANDS={
+  markers:[152,205],districts:[12,18],kos:[4,27],hits:[8,58],hitsTaken:[1,58],overtakes:[2,38],drops:[0,16],
+  boosts:[10,29],nitros:[2,14],wrenches:[0,13],weapons:[0,10],nearMisses:[17,61],trafficHits:[5,32],oils:[0,5],
+  barrierThreads:[9,31],barrierHits:[9,26],wrecks:[0,16],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
+  dodges:[3,113],whiffs:[0,30],counters:[0,6],events:[300,660],progress:[200,280],rank:[1,4]
+};
+// Same sweep, __NO_ROUTE_PLAN baseline extrema: markers 155..166, districts
+// 13..14, kos 10..28, hits 21..60, hitsTaken 13..41, overtakes 6..24, drops
+// 3..16, boosts 16..28, nitros 0..10, wrenches 4..11, weapons 0..6, nearMisses
+// 70..89, trafficHits 55..77, oils 1..5, barrierThreads 3..17, barrierHits
+// 16..29, wrecks 9..18, lapses 0..3, acts 3, grudgeKos 1..2, actClears 1..2,
+// dodges 22..77, whiffs 4..16, counters 0..6, events 467..618, progress
+// 202..233, rank 3..7.
+const REACTIVE_BANDS={
+  markers:[140,185],districts:[11,17],kos:[7,34],hits:[16,70],hitsTaken:[9,49],overtakes:[4,29],drops:[2,19],
+  boosts:[12,34],nitros:[0,13],wrenches:[3,14],weapons:[0,8],nearMisses:[58,104],trafficHits:[45,90],oils:[0,7],
+  barrierThreads:[2,21],barrierHits:[12,35],wrecks:[6,22],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
+  dodges:[17,92],whiffs:[3,20],counters:[0,8],events:[420,700],progress:[180,265],rank:[2,7]
+};
+
+// Measured 2026-07-16 from two independent ten-minute soaks (0x5200, 0x52d4)
+// on the shared-integrator build: still 0s, quiet 2s, stall 2-3s, events
+// 704..714, progress 471..475, rank 1, acts x5 lands + pending warns, tier3
+// shown 2 and 4, lulls 171..173 / 217..228.
+const SOAK_BANDS={
+  markers:[340,420],districts:[26,36],kos:[7,20],hits:[11,36],hitsTaken:[7,20],overtakes:[1,16],drops:[0,8],
+  boosts:[28,46],nitros:[16,28],wrenches:[14,26],weapons:[6,13],nearMisses:[38,76],trafficHits:[17,38],oils:[1,9],
+  barrierThreads:[38,60],barrierHits:[20,38],wrecks:[1,8],lapses:[0,5],acts:[5,6],grudgeKos:[0,3],actClears:[3,6],
+  dodges:[14,42],whiffs:[2,16],counters:[0,4],events:[620,830],progress:[410,540],rank:[1,2]
+};
+
+// Motion-contract pace floors, measured over seed 0x6100 three-minute motion
+// run on the shared-integrator build: rider mean 2.185 px/f, pack mean
+// 2.073..2.161 px/f. Floors keep ~10% margin under the measured minima.
+const RIDER_PACE_FLOOR=1.9,PACK_PACE_FLOOR=1.85;
+const paceOf=run=>{const per=new Map();let prev=null;
+  for(const s of run.samples){if(prev)for(const a of s.actors){const b=prev.actors.find(q=>q.id===a.id);if(!b)continue;
+    const d=Math.hypot(a.x-b.x,a.y-b.y),t=per.get(a.id)||{d:0,f:0};t.d+=d;t.f+=run.step;per.set(a.id,t);}prev=s;}
+  const pack=[...per.entries()].filter(([id])=>id!=='rider').map(([,t])=>t.d/t.f),d=per.get('rider');
+  return{rider:d?d.d/d.f:0,packMean:pack.length?pack.reduce((a,b)=>a+b,0)/pack.length:0,packCount:pack.length};};
+
+console.log('1) fixed 60 Hz determinism, render parity, chunk parity, and finite renderer');
+{
+  const a=bootGame('ashen-rage',{seed:0x4e01,footer:FOOTER}),
+    b=bootGame('ashen-rage',{seed:0x4e01,footer:FOOTER}),
+    rendered=bootGame('ashen-rage',{seed:0x4e01,footer:FOOTER});
+  a.frames(3600,false);b.frames(3600,false);const draws=rendered.frames(3600,true);
+  const sa=a.sandbox.__ashenRageSignature(),sb=b.sandbox.__ashenRageSignature(),sr=rendered.sandbox.__ashenRageSignature();
+  console.log(`  headless ${sa===sb?'identical':'DIFFERENT'}; rendered ${sa===sr?'identical':'DIFFERENT'}; ${draws.calls} draw calls`);
+  if(sa!==sb)fail('same seed diverged at fixed 60 Hz');
+  if(sa!==sr)fail('render traversal changed simulation state or RNG');
+  if(!a.sandbox.__ashenRageProbe().finite||!rendered.sandbox.__ashenRageProbe().finite)fail('headless or rendered replay became non-finite');
+  if(draws.calls<1000||!draws.byMethod.fillRect||!draws.byMethod.beginPath||!draws.byMethod.fillText)
+    fail(`renderer was not genuinely exercised: ${JSON.stringify(draws.byMethod)}`);
+
+  const mono=bootGame('ashen-rage',{seed:0x4e02,footer:FOOTER}),chunked=bootGame('ashen-rage',{seed:0x4e02,footer:FOOTER});
+  mono.frames(2400,false);for(let i=0;i<240;i++)chunked.frames(10,false);
+  const same=mono.sandbox.__ashenRageSignature()===chunked.sandbox.__ashenRageSignature();
+  console.log(`  2,400 monolithic frames vs 240 x 10: ${same?'identical':'DIFFERENT'}`);
+  if(!same)fail('headless batching changed fixed-step simulation');
+}
+
+console.log('2) route lookahead is pure, repeatable, RNG-inert, and uses the shared integrator');
+{
+  const planned=bootGame('ashen-rage',{seed:0x4e10,footer:FOOTER}),control=bootGame('ashen-rage',{seed:0x4e10,footer:FOOTER}),
+    fixture=planned.sandbox.__ashenRagePlannerFixture();
+  const nextPlanned=planned.sandbox.__ashenRageNextRandom(),nextControl=control.sandbox.__ashenRageNextRandom();
+  console.log(`  pure ${fixture.pure}; repeat ${fixture.repeat}; route ${fixture.plan&&fixture.plan.route} @ ${fixture.plan&&fixture.plan.targetX}; RNG ${nextPlanned.toFixed(8)}/${nextControl.toFixed(8)}`);
+  if(!fixture.pure||!fixture.repeat||!fixture.finite||!fixture.plan||!Number.isFinite(fixture.plan.score))
+    fail(`planner fixture regressed: ${JSON.stringify(fixture)}`);
+  if(nextPlanned!==nextControl)fail('route planning consumed engine RNG for simulation-invisible work');
+}
+
+console.log('3) baseline-first route-policy A/B: ten paired five-minute seeds');
+{
+  const smart=[],reactive=[];let scoreWins=0,failureWins=0;
+  for(let i=0;i<10;i++){
+    const seed=0x4f00+i*37,a=bootGame('ashen-rage',{seed,footer:FOOTER}),b=bootGame('ashen-rage',{seed,footer:FOOTER});
+    b.sandbox.__NO_ROUTE_PLAN=1;a.frames(18000,false);b.frames(18000,false);
+    const pa=a.sandbox.__ashenRageProbe(),pb=b.sandbox.__ashenRageProbe();smart.push(pa);reactive.push(pb);
+    if(policyScore(pa)>policyScore(pb))scoreWins++;if(failures(pa)<failures(pb))failureWins++;
+    inBands(pa,POLICY_BANDS,`seed ${seed.toString(16)} planned`);
+    inBands(pb,REACTIVE_BANDS,`seed ${seed.toString(16)} reactive`);
+    for(const[p,label]of[[pa,'planned'],[pb,'reactive']]){
+      if(!p.finite)fail(`seed ${seed.toString(16)} ${label}: non-finite state`);
+      if(p.stats.maxEventLull>360||p.stats.maxProgressLull>420)fail(`seed ${seed.toString(16)} ${label}: story lull ${p.stats.maxEventLull}/${p.stats.maxProgressLull}f`);
+    }
+    console.log(`  ${seed.toString(16)} ${pa.persona.padEnd(10)} score ${policyScore(pa)}/${policyScore(pb)}, `+
+      `KOs ${pa.stats.kos}/${pb.stats.kos}, failures ${failures(pa)}/${failures(pb)}`);
+  }
+  const score=[sum(smart,'overtakes')+12*sum(smart,'kos')+3*(sum(smart,'nitros')+sum(smart,'wrenches')+sum(smart,'weapons'))+
+      2*sum(smart,'barrierThreads')+sum(smart,'nearMisses')-8*sum(smart,'wrecks')-4*sum(smart,'barrierHits')-4*sum(smart,'trafficHits')-2*sum(smart,'hitsTaken'),
+    sum(reactive,'overtakes')+12*sum(reactive,'kos')+3*(sum(reactive,'nitros')+sum(reactive,'wrenches')+sum(reactive,'weapons'))+
+      2*sum(reactive,'barrierThreads')+sum(reactive,'nearMisses')-8*sum(reactive,'wrecks')-4*sum(reactive,'barrierHits')-4*sum(reactive,'trafficHits')-2*sum(reactive,'hitsTaken')],
+    bad=[smart.reduce((n,p)=>n+failures(p),0),reactive.reduce((n,p)=>n+failures(p),0)],
+    traffic=[sum(smart,'trafficHits'),sum(reactive,'trafficHits')],wreckSums=[sum(smart,'wrecks'),sum(reactive,'wrecks')],
+    baseline={kos:sum(reactive,'kos'),overtakes:sum(reactive,'overtakes'),boosts:sum(reactive,'boosts'),
+      nitros:sum(reactive,'nitros'),events:sum(reactive,'events')};
+  console.log(`  ${scoreWins}/10 score wins; ${failureWins}/10 failure wins; score ${score[0]}/${score[1]}, `+
+    `failures ${bad[0]}/${bad[1]}, traffic hits ${traffic[0]}/${traffic[1]}, wrecks ${wreckSums[0]}/${wreckSums[1]}`);
+  if(scoreWins<9||failureWins<9)fail(`route plan did not win clearly enough (${scoreWins}/10 score, ${failureWins}/10 failures)`);
+  // Measured 2026-07-16 sweep: score 882 vs -1285, failures 798 vs 1888,
+  // traffic hits ~120 vs ~660, wrecks ~60 vs ~140 across the ten paired seeds.
+  if(score[0]<400||score[1]>-200||bad[0]>bad[1]*.5||traffic[0]>traffic[1]*.45||wreckSums[0]>wreckSums[1]*.6)
+    fail(`aggregate route-policy win regressed: ${JSON.stringify({score,bad,traffic,wreckSums})}`);
+  if(baseline.kos<80||baseline.overtakes<40||baseline.events<4000)
+    fail(`__NO_ROUTE_PLAN baseline stopped honestly participating: ${JSON.stringify(baseline)}`);
+}
+
+console.log('4) GRUDGE and PACK TURNS change the world during an exact 240f warning');
+for(const type of['grudge','pack']){
+  const seed=type==='grudge'?0x5010:0x5011,a=bootGame('ashen-rage',{seed,footer:FOOTER}),b=bootGame('ashen-rage',{seed,footer:FOOTER});
+  a.sandbox.__ashenRageActFixture(type);b.sandbox.__ashenRageActFixture(type);b.sandbox.__NO_ACTS=1;
+  const phys=sandbox=>{const p=sandbox.__ashenRageProbe();
+    return sandbox.__ashenRagePhysical()+'|'+p.player.rank+'|'+JSON.stringify(sandbox.__arActRivalPositions?sandbox.__arActRivalPositions():[]);};
+  if(phys(a.sandbox)!==phys(b.sandbox))fail(`${type}: paired act fixture did not start identical`);
+  let first=-1,phase='';
+  for(let frame=1;frame<=270;frame++){
+    a.frames(1,false);b.frames(1,false);
+    if(first<0&&phys(a.sandbox)!==phys(b.sandbox)){first=frame;phase=a.sandbox.__ashenRageProbe().act.phase;}
+  }
+  const pa=a.sandbox.__ashenRageProbe(),pb=b.sandbox.__ashenRageProbe(),warn=pa.act.notes.find(n=>n.kind==='act-warning'),land=pa.act.notes.find(n=>n.kind==='act-land');
+  console.log(`  ${type}: first physical divergence ${first}f in ${phase}; warning ${warn&&land?land.tag-warn.tag:'?'}f`);
+  if(!warn||!land||land.tag-warn.tag!==240||land.at-warn.at!==240)fail(`${type}: warning/land pair was not exactly 240 frames`);
+  if(first<1||first>=240||phase!=='warn')fail(`${type}: act did not physically change the world during warning`);
+  if(pb.act.notes.length)fail(`${type}: __NO_ACTS emitted notes`);
+}
+{
+  const game=bootGame('ashen-rage',{seed:0x5012,footer:FOOTER});game.sandbox.__ashenRageActFixture('grudge');game.frames(100,false);
+  game.sandbox.__arReset();game.frames(300,false);const p=game.sandbox.__ashenRageProbe();
+  if(p.act.phase!=='calm'||p.act.notes.some(n=>n.kind==='act-land'))fail('reset during act warning left a stale land');
+}
+
+console.log('5) human takeover shares the bot intent schema and runtime bike physics');
+{
+  const game=bootGame('ashen-rage',{seed:0x5020,footer:FOOTER}),initial=game.sandbox.__ashenRageManual();
+  press(game,'Enter');const instructions=game.sandbox.__ashenRageManual();press(game,'Enter');const started=game.sandbox.__ashenRageManual();
+  const schema=game.sandbox.__ashenRageIntentSchemas();game.sandbox.__arClearApplied();
+  game.key('keydown','ArrowLeft');game.frames(5,false);game.key('keyup','ArrowLeft');const steer=game.sandbox.__arLastApplied();
+  game.sandbox.__arClearApplied();game.key('keydown','ArrowUp');game.frames(4,false);game.key('keyup','ArrowUp');const throttle=game.sandbox.__arLastApplied();
+  game.sandbox.__arClearApplied();game.key('keydown','KeyX');game.frames(2,false);game.key('keyup','KeyX');const swing=game.sandbox.__arLastApplied();
+  console.log(`  playing ${initial.playing}->${instructions.playing}->${started.playing}; schema ${schema.humanKeys.join(',')}; steer ${steer&&steer.steer}, throttle ${throttle&&throttle.throttle}, swing ${swing&&swing.swing}`);
+  if(initial.playing||instructions.playing||!started.playing)fail('manual session skipped the two-Enter gate');
+  if(schema.humanKeys.join('|')!==schema.botKeys.join('|'))fail(`human/bot intent schemas differ: ${JSON.stringify(schema)}`);
+  if(!steer||steer.steer!==-1||steer.tactic!=='MANUAL RAGE')fail('manual steering did not traverse runtime advanceBike');
+  if(!throttle||throttle.throttle!==1||throttle.tactic!=='MANUAL RAGE')fail('manual throttle did not traverse runtime advanceBike');
+  if(!swing||swing.swing!==1||swing.tactic!=='MANUAL RAGE')fail('manual swing did not traverse runtime advanceBike');
+  if(!game.sandbox.__ashenRageProbe().finite)fail('manual control produced non-finite state');
+}
+
+console.log('6) ten-minute soaks: moving highway, pack combat, position race, and exact SHOW budgets');
+for(const seed of[0x5200,0x52d4]){
+  const{game,samples}=runSoak('ashen-rage',{seed,minutes:10,footer:FOOTER}),report=analyzeSoak(samples),p=game.sandbox.__ashenRageProbe(),
+    show=p.show,offered=show.offeredByTier,shown=show.shownByTier,s3=shown[3]||0,kinds=game.sandbox.__arRivalKinds(),continuity=game.sandbox.__arContinuity;
+  console.log(`  ${seed.toString(16)} ${soakLine(report)}; KOs ${p.stats.kos}, hits taken ${p.stats.hitsTaken}, `+
+    `rank P${p.rank}, tiers ${JSON.stringify(shown)}, pack ${JSON.stringify(kinds)}`);
+  assertSoak(seed.toString(16),report,{still:1,quiet:5,stall:5,minEvents:560,minProgress:380},fail);
+  inBands(p,SOAK_BANDS,`seed ${seed.toString(16)} soak`);
+  if(!p.finite)fail(`seed ${seed.toString(16)}: non-finite state`);
+  if(continuity.max>3.4)fail(`seed ${seed.toString(16)}: unaccounted ${continuity.max.toFixed(2)}px one-step discontinuity`);
+  for(const kind of['bruiser','weasel','veteran','maniac'])if(!kinds[kind])fail(`seed ${seed.toString(16)}: ${kind} never joined the pack`);
+  notePairs(p,'grudge',`seed ${seed.toString(16)}`,2);notePairs(p,'pack',`seed ${seed.toString(16)}`,2);
+  if(!((offered[1]||0)>(offered[2]||0)&&(offered[2]||0)>(offered[3]||0)&&(offered[3]||0)>=2))
+    fail(`seed ${seed.toString(16)}: offered tiers not strictly ordered ${JSON.stringify(offered)}`);
+  if(!((shown[1]||0)>(shown[2]||0)&&(shown[2]||0)>(shown[3]||0)&&(shown[3]||0)>=2))
+    fail(`seed ${seed.toString(16)}: shown tiers not strictly ordered ${JSON.stringify(shown)}`);
+  if(show.heldFrames!==6*s3)fail(`seed ${seed.toString(16)}: apex hold ${show.heldFrames} != 6*${s3}`);
+  if(show.slowedFrames!==24*s3)fail(`seed ${seed.toString(16)}: apex slow ${show.slowedFrames} != 24*${s3}`);
+  if(show.admireFrames!==48*s3)fail(`seed ${seed.toString(16)}: apex admire ${show.admireFrames} != 48*${s3}`);
+}
+console.log('6b) motion contract: nobody parks bare, emote budgets measured, pace floors hold');
+for(const[seed,minutes]of[[0x5200,10],[0x6100,2]]){
+  const run=runMotion('ashen-rage',{seed,minutes}),pace=paceOf(run);
+  const riderReport=analyzeMotion({step:run.step,samples:run.samples.map(s=>Object.assign({},s,{actors:s.actors.filter(a=>a.id==='rider')}))},{});
+  const packReport=analyzeMotion(run,{emoteFrames:160,emoteShare:.30,requiredIds:['rider']});
+  console.log(`  ${seed.toString(16)} (${minutes}m) rider[${motionLine(riderReport)}] pack[${motionLine(packReport)}] · rider ${pace.rider.toFixed(3)} px/f · pack mean ${pace.packMean.toFixed(3)} px/f over ${pace.packCount} rivals`);
+  assertMotion(seed.toString(16)+' rider',riderReport,fail);
+  assertMotion(seed.toString(16)+' pack',packReport,fail);
+  if(run.samples.some(s=>!s.actors.some(a=>a.id==='rider')))fail(`${seed.toString(16)}: motion probe lost the rider`);
+  if(pace.rider<RIDER_PACE_FLOOR)fail(`${seed.toString(16)}: rider pace ${pace.rider.toFixed(3)} px/f under floor ${RIDER_PACE_FLOOR}`);
+  if(pace.packMean<PACK_PACE_FLOOR)fail(`${seed.toString(16)}: pack pace ${pace.packMean.toFixed(3)} px/f under floor ${PACK_PACE_FLOOR}`);
+}
+console.log('6c) __NO_EMOTE ablation re-proves the motion fix and stays sim-honest');
+{
+  const uncovered=analyzeMotion(runMotion('ashen-rage',{seed:0x613d,minutes:3,footer:'globalThis.__NO_EMOTE=1;'}),{});
+  console.log(`  __NO_EMOTE violations ${uncovered.violations.length}`);
+  if(!uncovered.violations.some(v=>/rival.*no emote/.test(v)))fail('__NO_EMOTE ablation: motion gate no longer requires authored emote coverage');
+  const a=bootGame('ashen-rage',{seed:0x613d}),b=bootGame('ashen-rage',{seed:0x613d});
+  b.sandbox.__NO_EMOTE=1;a.frames(18000,false);b.frames(18000,false);
+  if(a.sandbox.__ashenRageSignature()!==b.sandbox.__ashenRageSignature())
+    fail('__NO_EMOTE changed simulation state (emotes must be render/probe-only)');
+}
+
+{
+  const game=bootGame('ashen-rage',{seed:0x5290,footer:FOOTER}),fixture=game.sandbox.__ashenRageAdmireFixture();
+  if(fixture.admired.tactic!=='SAVOR THE CROWN'||fixture.gated.tactic==='SAVOR THE CROWN')
+    fail(`__NO_ADMIRE did not gate the bot-only coast: ${JSON.stringify(fixture)}`);
+  const perfect=bootGame('ashen-rage',{seed:0x5291,footer:FOOTER});perfect.sandbox.__NO_LAPSE=1;perfect.frames(18000,false);
+  if(perfect.sandbox.__ashenRageProbe().stats.lapses!==0)fail('__NO_LAPSE did not eliminate skill-profile lapse onsets');
+}
+
+console.log('7) payoff FX is a perfect same-seed simulation no-op');
+{
+  const a=bootGame('ashen-rage',{seed:0x5300,footer:FOOTER}),b=bootGame('ashen-rage',{seed:0x5300,footer:FOOTER});
+  b.sandbox.__NO_PAYOFF_FX=1;a.frames(18000,false);b.frames(18000,false);
+  const same=a.sandbox.__ashenRageSignature()===b.sandbox.__ashenRageSignature(),p=a.sandbox.__ashenRageProbe();
+  console.log(`  signatures ${same?'identical':'DIFFERENT'} through ${p.stats.events} events / ${p.stats.kos} KOs`);
+  if(!same)fail('__NO_PAYOFF_FX changed simulation state');
+  if(p.stats.kos<1)fail('FX no-op window did not exercise a knockout payoff');
+}
+
+console.log('8) drawn lean is honest: the bike tracks travel, never crabs');
+{
+  const fixture=bootGame('ashen-rage',{seed:0x6001,footer:FOOTER}).sandbox.__arPoseFixture();
+  console.log(`  steadyRight angle ${fixture.steadyRight.angle.toFixed(3)} (vx ${fixture.steadyRight.vx.toFixed(3)}); `+
+    `straighten angle ${fixture.straighten.angle.toFixed(4)}; steadyLeft angle ${fixture.steadyLeft.angle.toFixed(3)}`);
+  if(!(fixture.steadyRight.vx>.2&&fixture.steadyRight.angle>.08))
+    fail(`steady right steer must lean the bike INTO the travel direction: ${JSON.stringify(fixture.steadyRight)}`);
+  if(!(Math.abs(fixture.straighten.angle)<.02&&Math.abs(fixture.straighten.vx)<.05))
+    fail(`released steering must straighten the bike: ${JSON.stringify(fixture.straighten)}`);
+  if(!(fixture.steadyLeft.vx<-.2&&fixture.steadyLeft.angle<-.08))
+    fail(`steady left steer must lean the bike INTO the travel direction: ${JSON.stringify(fixture.steadyLeft)}`);
+  for(const seed of[0x6100,0x613d]){
+    const game=bootGame('ashen-rage',{seed,footer:FOOTER});game.frames(10800,false);
+    const p=game.sandbox.__arPose;
+    console.log(`  ${seed.toString(16)}: ${p.frames}f riding · wrong-way runs max ${p.wrongWayMax} (viol ${p.wrongWayViolations}) · crab viol ${p.crabViolations}`);
+    if(p.frames<5000)fail(`${seed.toString(16)}: pose telemetry lost the rider (${p.frames} frames)`);
+    if(p.wrongWayViolations>0)fail(`${seed.toString(16)}: bike leaned AWAY from travel for >8 consecutive frames x${p.wrongWayViolations}`);
+    if(p.crabViolations>0)fail(`${seed.toString(16)}: phantom crab while cruising straight x${p.crabViolations}`);
+  }
+}
+
+console.log('9) feedback legibility: every good/bad sim event is visibly represented on screen');
+{
+  const config={frames:9000,poll:5,radius:26,perCategory:3,
+    goodPalette:['#ffd166','#ffb02e','#67e8a2','#59d8f5','#fff3da'],badPalette:['#ff5d4f','#c92c3c','#ffffff'],
+    signatureProbe:'__ashenRageSignature'};
+  const runs=[runFeedbackVisibility('ashen-rage',Object.assign({seed:0x5300},config)),
+    runFeedbackVisibility('ashen-rage',Object.assign({seed:0x52d4},config))];
+  for(const run of runs){
+    const byKey={};for(const s of run.samples)byKey[s.key]=(byKey[s.key]||[]).concat(
+      [`${s.changed}px sig${s.kind==='good'?s.goodPixels:s.badPixels}`]);
+    console.log(`  ${run.seed.toString(16)}: ${Object.entries(run.counts).map(([k,v])=>`${k} x${v}`).join(', ')}`);
+    console.log(`    samples: ${Object.entries(byKey).map(([k,v])=>`${k}[${v.join(' ')}]`).join(' ')}`);
+  }
+  console.log(`  ${feedbackLine(runs)}; signatures ${runs.every(r=>r.signaturesMatch)?'identical':'DIFFERENT'}`);
+  assertFeedback('feedback',runs,{
+    required:['good:hit','good:ko','good:overtake','good:pickup-nitro','good:pickup-wrench','good:boost','good:near-miss','good:thread',
+      'bad:hit-taken','bad:wreck','bad:traffic-hit','bad:oil','bad:barrier-hit','bad:dropped'],
+    minChanged:{default:12,'good:near-miss':6,'good:thread':6,'good:boost':6,'bad:oil':6,'bad:lapse':6},
+    minSignature:{default:8,'good:near-miss':4,'good:thread':4,'good:boost':4,'bad:oil':4,'bad:lapse':4},
+    maxInvisible:0
+  },fail);
+}
+
+console.log(failed?'\nASHEN RAGE EVAL FAILED':'\nASHEN RAGE EVAL PASSED');
+process.exit(failed?1:0);
