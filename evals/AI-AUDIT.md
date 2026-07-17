@@ -1367,3 +1367,15 @@ the speckle ceilings held (road .004-.006, sides .007-.010). One-pixel
 vertical lines are speckle by construction: the tram rail started at 1px and
 the quiet gate caught it; 2px minimum for any linear feature. Blinking is now
 limited to payoff FX and the neon spill; lamps burn steady.
+
+### ASHEN RAGE owner round 5: status lives beside the rider (2026-07-16)
+
+Owner directive: the player's boost/health/status sat at the top of the strip,
+250px from where the viewer's eyes actually are. The HUD split into a slim
+identity strip on top (game, tactic, district, race progress) and a compact
+status cluster at the bottom beside the rider (health, nitro, weapon, KO
+pips, rank). The recurring class got an executable gate with it: the game's
+visual probe carries the status-cluster box, and the visual eval requires it
+to sit within 80px of the rider and to contain live health and boost bar
+pixels — "keep user status near the main character" is now a failing test,
+not a preference.

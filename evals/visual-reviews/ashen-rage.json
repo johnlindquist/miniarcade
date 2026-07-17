@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "42628b6da19370348dc17fd7bfca8a2329622deb71650fc141414f53ddd3b420",
+  "montageSha256": "a05f1564dddf26dc3d2cf7ba4cd96cdc3e05d1523c8d555d80e09de5d8a342ec",
   "reviewedAt": "2026-07-16",
   "reviewer": "Kimi native-size reference review (owner-feedback round 2: full contact model — bike/bike separation, pack traffic anticipation and wobbles, player-car shove — calm-road pass with speckle ceilings, dusk striations, wet-neon spill, asphalt tone bands; keyboard chord coverage in eval; 14-beat montage re-inspected at 160x360 against both references plus native crops of the brawl, swing, warning, and podium cells and the rendered 30s clip)",
   "renderReceipt": {
@@ -43,7 +43,7 @@
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Intent reads from the riders alone: honest lean tracks travel, the raised weapon is the incoming-swing tell, the grudge crown and the stake-out/escort formations are physical telegraphs (no ghost overlays anywhere), and every good/bad beat is tagged — gold sparks and gold edge pulse on connects, KOs, overtakes, pickups, boosts and the take-crown apex; coral flash and coral edge pulse on hits taken, wrecks, barrier/oil/traffic hits, drops and lapses. The executable feedback-legibility suite (evals/feedback.js) sampled 88 beats across 28 categories, all palette-separated at the event location, thinnest 8px. Rank P_/8, health, boost, weapon tier, KO pips, district name and the county-line strip all read at native size, with ZERO drawn guidelines — opposite forced plans render byte-identical at every planning beat."
+      "note": "Intent reads from the riders alone: honest lean tracks travel, the raised weapon is the incoming-swing tell, the grudge crown and the stake-out/escort formations are physical telegraphs (no ghost overlays anywhere), and every good/bad beat is tagged — gold sparks and gold edge pulse on connects, KOs, overtakes, pickups, boosts and the take-crown apex; coral flash and coral edge pulse on hits taken, wrecks, barrier/oil/traffic hits, drops and lapses. The executable feedback-legibility suite (evals/feedback.js) sampled 88 beats across 28 categories, all palette-separated at the event location, thinnest 8px. The player's own numbers live beside the player: health, nitro, weapon, KO pips and rank sit in a compact bottom cluster next to the rider (pinned by an executable status-near-rider gate), with only the identity strip, tactic and race progress at the top. All of it reads at native size, with ZERO drawn guidelines — opposite forced plans render byte-identical at every planning beat."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
@@ -55,7 +55,7 @@
     "confirmedAbsent": true,
     "note": "Checked all fourteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The grudge stake-out rival, the pack escort slots, the warning strobes and the broadcast plate are physical world telegraphs; skid-free taillight and headlight pools are world light from visible bikes. Executable pixel gates (opposite forced route plans at five beats) render identically, and the banned overlay primitives are absent from source."
   },
-  "reviewIdentitySha256": "86fd13de0163ceb9a46d87753757bdfdffb4076dc2676ba29c1d6571347e29c2",
+  "reviewIdentitySha256": "8d07d11e219093b502558628b1626077fc8e950cbc6a5502e1a782796aefdb85",
   "seed": "0xa54e0001",
   "checkpoints": [
     "opening@12",

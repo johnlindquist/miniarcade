@@ -469,6 +469,26 @@ async function main(){
   gate('normal riding carries no phantom crab: lean tracks travel outside swings',
     Math.abs(brawlPose.vx)<.12||Math.sign(brawlPose.angle)===Math.sign(brawlPose.vx)||Math.abs(brawlPose.angle)<.03,
     {brawlPose});
+  // Status-near-rider contract (owner directive 2026-07-16): the player's own
+  // numbers (health, nitro, weapon, KOs, rank) live in a compact cluster
+  // beside the rider at the bottom of the strip — never exiled to the far
+  // top. The probe carries the box; the pixels carry the bars.
+  const hudStatus=runs.brawl.get(13).probe.layout&&runs.brawl.get(13).probe.layout.hudStatus;
+  const hudPalette=(()=>{
+    if(!hudStatus)return null;
+    const src=toNativeFrame(candidate.brawl),colors={health:0,boost:0};
+    for(let y=hudStatus.y;y<hudStatus.y+hudStatus.height;y++)for(let x=hudStatus.x;x<hudStatus.x+hudStatus.width;x++){
+      const i=(y*src.width+x)*4,r=src.rgba[i],g=src.rgba[i+1],b=src.rgba[i+2];
+      const near=(pr,pg,pb,t)=>(r-pr)*(r-pr)+(g-pg)*(g-pg)+(b-pb)*(b-pb)<=t*t;
+      if(near(103,232,162,55)||near(255,93,79,55))colors.health++;
+      if(near(255,176,46,55)||near(255,138,61,55))colors.boost++;
+    }
+    return colors;
+  })();
+  gate('player status cluster lives beside the rider with the bars in it',
+    !!hudStatus&&hudStatus.y>=292+25&&hudStatus.y+hudStatus.height<=360&&
+    hudStatus.y-292<=80&&!!hudPalette&&hudPalette.health>4&&hudPalette.boost>2,
+    {hudStatus,hudPalette});
   const quietBeats=['opening','brawl','windup','farm','harbor'].map(id=>({beat:id,
     road:+speckleDensity(candidate[id],QUIET_ROAD_CROP).toFixed(4),
     sides:+((speckleDensity(candidate[id],QUIET_SIDE_CROPS[0])+speckleDensity(candidate[id],QUIET_SIDE_CROPS[1]))/2).toFixed(4)}));
