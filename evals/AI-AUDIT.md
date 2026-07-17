@@ -1299,3 +1299,34 @@ tint compresses global contrast — edge-darkening plus bright strobes kept both
 the readability and the luma. (4) Telegraphs belong to the world: the grudge
 stake-out and pack escort made the act A/B divergence provable at frame 1 of
 the warning while keeping the zero-guideline pixel gates exact.
+
+### ASHEN RAGE owner-feedback round: contact model, quiet corridor, keyboard proof (2026-07-16)
+
+Three owner directives landed behind permanent eval organs. (1) "Cars drive on
+top of each other": a full contact model — bike/bike lateral separation with
+momentum bleed, a continuous bike/car separation that ALWAYS applies while the
+damage/wobble events ride on their own cooldowns (the one-shot flags had left
+ghost windows where anyone could overlap an already-hit car), pack traffic
+anticipation so rivals bend around the commute, and an overlap contract in the
+behavior eval: hard overlaps must clear within 8 frames, with a staged
+three-body fixture that resolves to zero. Measured: worst overlap 2 pairs for
+5 frames across 7,200-frame runs; 9..16 firmer bumps and 20..58 pack wobbles
+per two minutes. (2) "Markings and sides are too busy": the calm-road pass
+removed cats-eyes, gutter seams, and speckle fields, widened one-pixel windows
+and pickets, added painted chevrons, weathered asphalt tone bands, dusk
+striations, and wet-neon spill — and the recurring problem got a recurring
+gate: a speckle-density ceiling over actor-free road and roadside crops
+(busy build fails at ~2x) paired with richness floors as the "quiet corridor".
+(3) "Verify every key, simultaneously": the behavior eval now presses all ten
+mapped codes individually and as a LEFT+UP+SPACE+X chord through the runtime
+integrator, requiring one composed intent with steer, throttle, boost, and
+swing all present, plus cancel/precedence rules.
+
+Lessons. Events on cooldowns, separation always — any cooldown that also gates
+physics becomes a ghost window. Crab detection must compare lean to the
+velocity vector (angle-va mismatch), not to zero, or committed micro-positioning
+reads as phantom lean. Drifting payoff particles flake at screen edges and long
+poll lags; static aftermath decals (coral skid-zigzag, gold swoosh) land the
+signature color on the event spot deterministically. Tone-band and striation
+contrast that reads as atmosphere also moves aligned-burst backgrounds — cap
+their scroll delta or the actor animation floors drown in the stage.

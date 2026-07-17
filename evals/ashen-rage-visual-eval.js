@@ -122,6 +122,28 @@ function allPairs(values,fn){
   return out;
 }
 
+// Furniture-quiet gate (owner directive 2026-07-16, recurring problem): the
+// road and roadside are the STAGE, not the show. Speckle density counts pixels
+// that fight BOTH horizontal neighbours in luma — isolated one-pixel marks —
+// inside actor-free crops of the drivable road and the two roadside bands.
+// Measured 2026-07-16: busy build road .0207..0310 / sides .0161..0560
+// (fails); calm build road .0026..0048 / sides .0131..0220. Ceilings fail the
+// busy build at ~2x while keeping ~35% margin over the calm one.
+const QUIET_ROAD_CROP={x:34,y:60,width:92,height:230};
+const QUIET_SIDE_CROPS=[{x:0,y:60,width:28,height:230},{x:132,y:60,width:28,height:230}];
+function speckleDensity(input,crop){
+  const src=toNativeFrame(input);let n=0,total=0;
+  for(let y=crop.y;y<crop.y+crop.height;y++)for(let x=crop.x+1;x<crop.x+crop.width-1;x++){
+    const i=(y*src.width+x)*4,l=src.rgba[i]*.299+src.rgba[i+1]*.587+src.rgba[i+2]*.114;
+    const j=(y*src.width+x-1)*4,l1=src.rgba[j]*.299+src.rgba[j+1]*.587+src.rgba[j+2]*.114;
+    const k=(y*src.width+x+1)*4,l2=src.rgba[k]*.299+src.rgba[k+1]*.587+src.rgba[k+2]*.114;
+    if(Math.abs(l-l1)>42&&Math.abs(l-l2)>42)n++;
+    total++;
+  }
+  return n/total;
+}
+const QUIET_ROAD_MAX=.010,QUIET_SIDES_MAX=.030;
+
 // Drawn-pixel actor-scale gates (small-actors-big-worlds law): the game
 // isolates any probe actor through __AR_VISUAL_ONLY_SUBJECT and the caps below
 // encode the directive with a little margin. Riders are ~7x19 constructed
@@ -367,11 +389,16 @@ async function main(){
   const bannedOverlaySources=['drawRoute','routeDot','setLineDash','predictIntercept','drawWaypoint','drawPath(']
     .filter(token=>gameSource.includes(token));
 
-  // Locked-candidate calibration, seed 0xa54e0001 — PLACEHOLDER pending the
-  // first full metrics pass; replace with the measured distribution comment.
+  // Locked-candidate calibration, seed 0xa54e0001, calm-road collision-model
+  // build (2026-07-16): colors 176..404, entropy 3.70..5.04, luma deviation
+  // .142...190, largest-color max .29 after the asphalt tone bands, one-pixel
+  // edge energy .0202...0402, rich cells .80..1.0 with median .8889. The
+  // richness floors form the quiet corridor with the speckle ceilings: the
+  // busy build fails QUIET_ROAD_MAX/QUIET_SIDES_MAX at ~2x, an emptied cheap
+  // build fails these floors. Floors keep ~5-15% margin under measurement.
   const bands={
     colors:90,entropy:2.9,lumaStdDev:.09,largestColorShare:.42,
-    edgeEnergy:.016,richEach:.85,richMedian:.90,
+    edgeEnergy:.016,richEach:.78,richMedian:.86,
     playerMedian:.10,playerFirstLast:.16,playerGrid:.55,
     rivalMedian:.12,rivalFirstLast:.22,rivalGrid:.60,
     koMax:.10,
@@ -442,6 +469,12 @@ async function main(){
   gate('normal riding carries no phantom crab: lean tracks travel outside swings',
     Math.abs(brawlPose.vx)<.12||Math.sign(brawlPose.angle)===Math.sign(brawlPose.vx)||Math.abs(brawlPose.angle)<.03,
     {brawlPose});
+  const quietBeats=['opening','brawl','windup','farm','harbor'].map(id=>({beat:id,
+    road:+speckleDensity(candidate[id],QUIET_ROAD_CROP).toFixed(4),
+    sides:+((speckleDensity(candidate[id],QUIET_SIDE_CROPS[0])+speckleDensity(candidate[id],QUIET_SIDE_CROPS[1]))/2).toFixed(4)}));
+  gate('road and roadside furniture stay quiet: no speckle fields fighting the action',
+    quietBeats.every(v=>v.road<=QUIET_ROAD_MAX&&v.sides<=QUIET_SIDES_MAX),
+    {quietBeats,ceilings:{road:QUIET_ROAD_MAX,sides:QUIET_SIDES_MAX}});
   gate('candidate numeric richness meets both reference medians',median(cm.map(value=>value.edge[1].energy))>=ref.edge*.95&&
     median(cm.map(value=>value.richCellFraction))>=ref.rich*.95&&median(cm.map(value=>value.colorEntropy))>=ref.entropy*.95&&
     median(cm.map(value=>value.lumaStdDev))>=ref.luma*.90,
@@ -498,7 +531,7 @@ async function main(){
       ped:{maxWidth:9,maxHeight:12},footprint:.20,approach:.55,threshold:ACTOR_THRESHOLD}},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       playerBurst,rivalBurst,koBurst,podiumBurst,districtPairs,warningContrast,warningLand,
-      hitFx,koFx,podiumFx,scrollChecks,
+      hitFx,koFx,podiumFx,scrollChecks,quietBeats,
       actorScale:Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
         sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,bounds:m.bounds,drawnPixels:m.drawnPixels,
           clipped:m.clipped,probeOverflow:m.probeOverflow,failures:m.assertion.failures}))])),

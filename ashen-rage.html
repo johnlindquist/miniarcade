@@ -36,8 +36,8 @@ const ROAD_L=30,ROAD_R=130,LANES=[46,80,114],PACK_SIZE=7;
 const INK='#07080d',CREAM='#fff3da',GOLD='#ffb02e',AMBER='#ff8a3d',CORAL='#ff5d4f',
   MINT='#67e8a2',CYAN='#59d8f5',STEEL='#9aa7b8',BLOOD='#c92c3c',ASPHALT='#171a22';
 const DISTRICTS=[
-  {name:'DOWNTOWN CORE',sky:'#141828',road:'#323a54',walk:'#463f68',curb:'#7a6ca8',
-    roof:'#2c2650',roof2:'#453a6e',accent:'#ff4fa7',light:'#59d8f5',kind:'downtown'},
+  {name:'DOWNTOWN CORE',sky:'#0c0e1c',road:'#3a4260',walk:'#2c2648',curb:'#8a7abc',
+    roof:'#1e1a3a',roof2:'#2c2450',accent:'#ff4fa7',light:'#59d8f5',kind:'downtown'},
   {name:'SUBURB ROW',sky:'#18222e',road:'#262b34',walk:'#4c5a48',curb:'#9aa886',
     roof:'#54443a',roof2:'#745e4a',accent:'#ffd166',light:'#ffe9a8',kind:'suburb'},
   {name:'FARMLAND',sky:'#222414',road:'#322e22',walk:'#5c5c38',curb:'#a89452',
@@ -83,7 +83,7 @@ let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLaps
 // edge pulse tags each beat gold (good) or coral (bad) at a glance; feedback
 // is the append-only ledger evals/feedback.js crops against a same-seed
 // __NO_PAYOFF_FX twin. Nothing here is read by physics or either RNG stream.
-let goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,scars=[],usedPickups=new Set();
+let goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,scars=[],usedPickups=new Set(),marks=[];
 function cue(kind,id,x,y,pulse){
   const wy=y===undefined?player.y:y;
   feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
@@ -95,6 +95,7 @@ function cue(kind,id,x,y,pulse){
 const stats={markers:0,districts:1,kos:0,hits:0,hitsTaken:0,overtakes:0,drops:0,boosts:0,
   nitros:0,wrenches:0,weapons:0,nearMisses:0,trafficHits:0,oils:0,barrierThreads:0,barrierHits:0,
   wrecks:0,lapses:0,acts:0,grudgeKos:0,actClears:0,podiums:0,dodges:0,whiffs:0,counters:0,
+  contacts:0,packTrafficHits:0,
   events:0,progress:0,maxEventLull:0,maxProgressLull:0,maxStep:0,appliedIntents:0,admireIntents:0};
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
   1:{frames:12},2:{frames:44,minGap:100},
@@ -149,12 +150,22 @@ function blockInfo(b){
 }
 function makePlayer(x,y){return{x,y,vx:0,speed:1.4,yaw:0,angle:0,va:0,damage:0,boost:20,boostT:0,isPlayer:true,
   weapon:0,swingPhase:'ready',swingT:0,swingSide:1,swingHit:false,cooldown:0,
-  wobbleT:0,wreckT:0,settleT:0,hitFlashT:0,gloryT:0,invulnT:0,
+  wobbleT:0,wreckT:0,settleT:0,hitFlashT:0,gloryT:0,invulnT:0,contactT:0,
   intent:null,lastX:x,lastY:y,rank:PACK_SIZE};}
 function makeRival(kind,x,y){const spec=RIVAL_KINDS[kind];return{id:rivalSerial++,kind,x,y,vx:0,
   speed:spec.cruise,angle:0,yaw:0,va:0,grit:spec.grit,gritMax:spec.grit,state:'pace',stateT:0,side:1,
-  dodgeT:0,windupPose:0,swingsLeft:0,engageT:0,respawnT:0,downY:0,spin:0,
+  dodgeT:0,carCd:0,windupPose:0,swingsLeft:0,engageT:0,respawnT:0,downY:0,spin:0,
   ahead:y>player.y,glanceT:0,hitFlashT:0,face:0};}
+// Traffic anticipation for the pack: rivals read the commute up to 70px out
+// and bend their line around it, the same honest lookahead the player gets.
+function rivalTrafficBias(r){
+  let bias=0;
+  for(const t of traffic){
+    const dy=t.y-r.y;
+    if(dy>4&&dy<70&&Math.abs(t.x-r.x)<11){bias=(r.x<t.x?-1:1)*(1-dy/70)*10;if(Math.abs(t.x-r.x)<6)bias*=1.4;}
+  }
+  return bias;
+}
 function spawnRivals(){
   rivals=[];const kinds=Object.keys(RIVAL_KINDS),offset=Math.floor(hash(worldSeed,1)*4);
   for(let i=0;i<PACK_SIZE;i++){
@@ -170,7 +181,7 @@ function makeTraffic(b,j){
   return{id:trafficSerial++,x:lane+(hash(b*17+j,worldSeed*23)-.5)*10,
     y:b*BLOCK+40+j*94+(hash(b+j,worldSeed)-.5)*20,vx:0,
     speed:.52+hash(b*7+j,worldSeed*13)*.5,kind:['sedan','pickup','box'][mod(b+j,3)],
-    color:['#c96a5a','#6aa8b8','#c9a24e','#7a8cc9','#8a9a6a'][mod(b*3+j+worldSeed,5)],hit:false,wob:0};
+    color:['#c96a5a','#6aa8b8','#c9a24e','#7a8cc9','#8a9a6a'][mod(b*3+j+worldSeed,5)],hit:false,hitCd:0,wob:0};
 }
 function ensureTraffic(){
   const target=currentBlock()+4;
@@ -454,10 +465,11 @@ const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playin
 function stepRival(r){
   const spec=RIVAL_KINDS[r.kind];
   if(r.hitFlashT>0)r.hitFlashT--;
+  if(r.carCd>0)r.carCd--;
   if(r.respawnT>0){r.respawnT--;
     if(r.respawnT<=0){
       r.x=LANES[mod(r.id+worldSeed,3)]+(hash(r.id,runFrame)-.5)*12;r.y=player.y-460-hash(r.id*3,worldSeed)*160;
-      r.vx=0;r.speed=spec.cruise+.3;r.grit=r.gritMax;r.state='pace';r.stateT=0;r.spin=0;r.downY=0;
+      r.vx=0;r.speed=spec.cruise+.3;r.grit=r.gritMax;r.state='pace';r.stateT=0;r.spin=0;r.downY=0;r.carCd=0;
     }
     return;}
   if(r.state==='down'){
@@ -505,7 +517,7 @@ function stepRival(r){
     // and pose for every rider); rubber-band keeps the fiction honest —
     // leaders ease off, stragglers push.
     const want=dy>420?spec.cruise+.34:dy<-380?spec.cruise-.3:spec.cruise;
-    const wantX=LANES[mod(r.id*2+worldSeed,3)]+Math.sin(showFrame*.011+r.id*2.1)*9;
+    const wantX=LANES[mod(r.id*2+worldSeed,3)]+((r.id%3)-1)*10+Math.sin(showFrame*.011+r.id*2.1)*7+rivalTrafficBias(r);
     advanceBike(r,{steer:clamp((wantX-r.x)*.03,-1,1)*.6,throttle:clamp(want/(spec.cruise+.18),.6,1.15),
       brake:false,boost:false,swing:0,targetX:wantX,tactic:'PACE'},{offroad:offroadX(r.x),wet:false});
     r.face=clamp(-r.vx*.4,-.3,.3);
@@ -519,7 +531,7 @@ function stepRival(r){
     // Hunt the flank: pull alongside the player's rear quarter on the side
     // committed at engage entry, matching speed before the windup. The side
     // never re-picks mid-hunt — no indecision jitter under the player.
-    const tx=clamp(player.x-r.side*13,15,145),ty=player.y-2;
+    const tx=clamp(player.x-r.side*13+rivalTrafficBias(r),15,145),ty=player.y-2;
     const steer=clamp((tx-r.x)*.12,-1,1);
     const throttle=clamp(1+(ty-r.y)*.02,.5,1.2);
     advanceBike(r,{steer,throttle,brake:false,boost:false,swing:0,targetX:tx,tactic:'ENGAGE'},
@@ -583,7 +595,10 @@ function stepFeatures(){
     }
     if(q.oil&&Math.abs(player.y-q.oil.y)<4&&Math.abs(player.x-q.oil.x)<8&&player.wobbleT<=0&&player.wreckT<=0){
       stats.oils++;player.wobbleT=24;markEvent(6);cue('bad','oil',player.x,player.y,.5);
-      fxAt(player.x,player.y-2,7,CORAL,1.4);fxAt(player.x,player.y-2,6,'#2c3444',1.2);say('OIL SLICK!',CORAL,player.y+38,44);}
+      fxAt(player.x,player.y-2,10,CORAL,1.5);fxAt(player.x,player.y-2,6,'#2c3444',1.2);
+      ringAt(player.x,player.y,CORAL,1.6,18);
+      marks.push({kind:'oil',x:player.x,y:player.y,f:runFrame});if(marks.length>40)marks.shift();
+      say('OIL SLICK!',CORAL,player.y+38,44);}
     if(q.pickup&&!usedPickups.has(q.pickup.id)&&Math.abs(player.y-q.pickup.y)<6&&Math.abs(player.x-q.pickup.x)<9){
       usedPickups.add(q.pickup.id);
       if(q.pickup.kind==='nitro'){stats.nitros++;player.boost=clamp(player.boost+45,0,100);
@@ -603,20 +618,83 @@ function stepTraffic(){
   for(const t of traffic){
     t.y+=t.speed;
     if(t.wob>0){t.wob--;t.x+=Math.sin(showFrame*.4+t.id)*.5;}
+    if(t.hitCd>0)t.hitCd--;
     const d=Math.hypot((t.x-player.x)*1.2,t.y-player.y);
-    if(d<9&&player.wreckT<=0&&!t.hit){t.hit=true;t.wob=60;lastTrafficHit=runFrame;
+    if(d<9&&player.wreckT<=0&&t.hitCd<=0){t.hit=true;t.hitCd=100;t.wob=60;lastTrafficHit=runFrame;
       player.damage+=10;player.speed*=.82;player.wobbleT=Math.max(player.wobbleT,18);player.hitFlashT=8;
+      player.vx+=(player.x-t.x)*.06; // the impact shoves the rider aside, never through
       stats.trafficHits++;markEvent(8);cue('bad','traffic-hit',player.x,player.y,.6);
       fxAt(player.x,player.y,10,t.color,1.6);fxAt(player.x,player.y,5,CORAL,1.7);shake(2);
       say('CLIPPED!',CORAL,player.y+34,40);
       if(player.damage>=100)wreck('DOORED BY A SEDAN');}
-    else if(d<13&&!t.hit&&player.wreckT<=0){const k='nm'+t.id;
+    else if(d<13&&t.hitCd<=0&&player.wreckT<=0){const k='nm'+t.id;
       if(!t.near){t.near=true;stats.nearMisses++;markEvent(4);offer('near',1,player.x,player.y,t.id);
         player.boost=clamp(player.boost+7,0,100);
         cue('good','near-miss',player.x,player.y,.22);fxAt(player.x+(t.x<player.x?5:-5),player.y,6,MINT,1.2);}}
   }
 }
+// ---- contact resolution: nobody rides through anybody --------------------------
+// Rubbing is racing: bikes that touch trade paint and momentum, cars shove
+// back. Contacts resolve AFTER all movement so every actor moved honestly
+// first; the nudge is small and physical, never a teleport.
+function separateBikes(a,b){
+  const dx=b.x-a.x,dy=b.y-a.y;
+  if(Math.abs(dx)>=7||Math.abs(dy)>=12)return false;
+  const dir=dx===0?(a.y<b.y?-1:1):Math.sign(dx);
+  const push=(7-Math.abs(dx))*.5+0.05;
+  a.x=clamp(a.x-dir*push,15,145);b.x=clamp(b.x+dir*push,15,145);
+  const mixv=(a.vx+b.vx)*.5;a.vx=a.vx*.4+mixv*.6;b.vx=b.vx*.4+mixv*.6;
+  if(Math.abs(dy)<7){const s=(a.speed+b.speed)*.5;a.speed+=(s-a.speed)*.07;b.speed+=(s-b.speed)*.07;}
+  // Contact frames pose by their own rules (like wobbles): the pose-honesty
+  // telemetry gives the lean a few frames to re-converge after a bump.
+  if(a.isPlayer)a.contactT=10;else if(b.isPlayer)b.contactT=10;
+  if(push>=1.2)stats.contacts++; // firmer bumps count; constant grazing rubs do not
+  return true;
+}
+function resolveContacts(){
+  // player vs pack
+  if(player.wreckT<=0)for(const r of rivals){
+    if(r.respawnT>0||r.state==='down')continue;
+    if(separateBikes(player,r)&&player.invulnT<=0&&r.state!=='wobble'){/* rub is silent */}
+  }
+  // pack vs pack
+  for(let i=0;i<rivals.length;i++)for(let j=i+1;j<rivals.length;j++){
+    const a=rivals[i],b=rivals[j];
+    if(a.respawnT>0||b.respawnT>0||a.state==='down'||b.state==='down')continue;
+    separateBikes(a,b);
+  }
+  // pack vs traffic: continuous separation ALWAYS applies (nobody sits inside
+  // a car); the wobble event layers on top with a per-rival cooldown. The
+  // separation radius stays INSIDE the hit radius so impacts still happen.
+  for(const t of traffic){
+    for(const r of rivals){
+      if(r.respawnT>0||r.state==='down')continue;
+      const dx=r.x-t.x,dy=r.y-t.y;
+      if(Math.abs(dx)<7.5&&Math.abs(dy)<12){
+        const dir=Math.sign(dx)||(r.y<t.y?-1:1),push=(7.5-Math.abs(dx))*.5+0.05;
+        r.x=clamp(r.x+dir*push*.7,15,145);t.x=clamp(t.x-dir*push*.3,12,148);
+        r.vx+=dir*.12;t.vx=(t.vx||0)-dir*.05;
+        if(r.state!=='wobble'&&r.carCd<=0){
+          r.state='wobble';r.stateT=24+mod(r.id*7,10);r.spin=dir;r.carCd=170;
+          t.wob=Math.max(t.wob,50);t.hit=true;
+          stats.packTrafficHits++;markEvent(5);fxAt(r.x,r.y,7,t.color,1.4);
+        }
+      }
+    }
+    // the player physically separates from cars every frame too; the damage
+    // event lives in stepTraffic on the hit cooldown.
+    if(player.wreckT<=0){
+      const dx=player.x-t.x,dy=player.y-t.y;
+      if(Math.abs(dx)<7.5&&Math.abs(dy)<12){
+        const dir=Math.sign(dx)||(player.y<t.y?-1:1),push=(7.5-Math.abs(dx))*.5+0.05;
+        player.x=clamp(player.x+dir*push*.7,15,145);t.x=clamp(t.x-dir*push*.3,12,148);
+        player.vx+=dir*.12;player.contactT=10;
+      }
+    }
+  }
+}
 function stepPosition(){
+  const wasRank=player.rank;
   let rank=1;
   for(const r of rivals){
     const active=r.respawnT<=0&&r.state!=='down';
@@ -626,11 +704,20 @@ function stepPosition(){
     if(active&&wasAhead&&!r.ahead&&player.wreckT<=0){stats.overtakes++;markEvent(14);markProgress(8);
       player.boost=clamp(player.boost+12,0,100);
       offer('overtake',2,player.x,player.y,r.id);cue('good','overtake',player.x,player.y,.45);
-      fxAt(player.x,player.y,10,GOLD,1.6);say('P'+(rank-1)+' · TAKE IT',GOLD,player.y+46,56);}
+      fxAt(player.x,player.y,14,GOLD,1.7);fxAt(player.x,player.y,5,'#ffffff',1.2);ringAt(player.x,player.y,GOLD,1.6,18);
+      marks.push({kind:'pass',x:player.x,y:player.y,f:runFrame});if(marks.length>40)marks.shift();
+      say('P'+(rank-1)+' · TAKE IT',GOLD,player.y+46,56);}
     if(active&&!wasAhead&&r.ahead&&player.wreckT<=0&&player.invulnT<=0){stats.drops++;markEvent(6);
       cue('bad','dropped',player.x,player.y,.35);fxAt(player.x,player.y,8,CORAL,1.4);say('LOST P'+(rank+1),CORAL,player.y+40,44);}
   }
   player.rank=rank;
+  // Taking the lead is the race's apex: P1 claimed from the pack, on screen.
+  if(rank===1&&wasRank>1&&player.wreckT<=0&&runFrame>600){
+    offer('take-crown',3,player.x,player.y,'P1');cue('good','crown',player.x,player.y,.9);
+    player.gloryT=Math.max(player.gloryT,60);
+    fxAt(player.x,player.y,24,GOLD,2.4,.008);ringAt(player.x,player.y,GOLD,2.2,30);
+    say('P1 · THE CROWN',GOLD,player.y+60,90);markProgress(20);
+  }
 }
 function stepActs(){
   if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';return;}
@@ -666,6 +753,7 @@ function stepPlayer(){
   if(player.hitFlashT>0)player.hitFlashT--;if(player.gloryT>0)player.gloryT--;
   if(player.invulnT>0)player.invulnT--;if(player.settleT>0)player.settleT--;
   if(player.wobbleT>0)player.wobbleT--;
+  if(player.contactT>0)player.contactT--;
   if(player.wreckT>0){
     // The tumble is physical and costly: the pack streams past while the bike
     // cartwheels to the shoulder, then a push-start relaunch beat.
@@ -720,7 +808,7 @@ function resetRun(full){
 function stepWorld(){
   runFrame++;stepActs();ensureTraffic();stepPlayer();for(const r of rivals){stepRival(r);maybeDodge(r);}
   player.swingFresh=false;
-  stepFeatures();stepTraffic();stepPosition();districtProgress();
+  stepFeatures();stepTraffic();resolveContacts();stepPosition();districtProgress();
   if(runFrame>=RACE_FRAMES)finishRace();
 }
 function step(){
@@ -740,6 +828,7 @@ function step(){
     ensureTraffic();traffic=traffic.filter(t=>t.y>player.y-380&&t.y<player.y+1100);
     if(resultT<=0){if(playing())gameOver(outcome);resetRun(true);}}
   goodPulse=goodPulse>.02?goodPulse*.94:0;badPulse=badPulse>.02?badPulse*.93:0;
+  while(marks.length&&runFrame-marks[0].f>60)marks.shift();
   stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
 }
 
@@ -781,59 +870,64 @@ function drawSkyline(p){
 function drawRoadBase(p){
   rect(0,28,W,H-28,mix(p.walk,INK,.18));rect(ROAD_L,28,ROAD_R-ROAD_L,H-28,mix(p.road,INK,.22));
   rect(ROAD_L-3,28,3,H-28,p.curb);rect(ROAD_R,28,3,H-28,p.curb);
+  rect(ROAD_L-1,28,1,H-28,mix(p.curb,CREAM,.5));rect(ROAD_R+2,28,1,H-28,mix(p.curb,CREAM,.5));
+  // Weathered asphalt tone bands alternate cool and warm so no single fill
+  // owns the frame (and the quantized color share stays honest).
+  let band=0;
+  for(let y=28+mod(Math.floor(player.y),64);y<H;y+=64){ctx.globalAlpha=.3;
+    rect(ROAD_L,y,ROAD_R-ROAD_L,32,band++%2?mix(p.road,p.accent,.06):mix(p.road,INK,.08));ctx.globalAlpha=1;}
   rect(20,28,7,H-28,mix(p.road,INK,.42));rect(133,28,7,H-28,mix(p.road,INK,.42));
   rect(19,28,1,H-28,mix(p.curb,CREAM,.3));rect(140,28,1,H-28,mix(p.curb,CREAM,.3));
   // Lane paint follows sy()'s convention (+player.y inside the mod) so the
-  // ground plane flows DOWN-screen with travel, never against it.
+  // ground plane flows DOWN-screen with travel, never against it. Furniture
+  // stays SPARSE (owner directive 2026-07-16): the road is the stage, not the
+  // show — edge lines, a dash rhythm, and a little patchwork, nothing more.
   for(let lane=0;lane<3;lane++){
-    const x=ROAD_L+lane*(ROAD_R-ROAD_L)/3,wet=p.kind==='downtown'?.1:0;
-    ctx.globalAlpha=.15+lane*.04+wet;
+    const x=ROAD_L+lane*(ROAD_R-ROAD_L)/3,wet=p.kind==='downtown'?.08:0;
+    ctx.globalAlpha=.09+lane*.02+wet;
     rect(x,28,(ROAD_R-ROAD_L)/3,H-28,lane===1?p.light:p.accent);ctx.globalAlpha=1;}
-  for(const x of[63,97])for(let y=8+mod(Math.floor(player.y),26);y<H;y+=26)rect(x,y,2,10,mix(p.curb,CREAM,.45));
-  for(let y=4+mod(Math.floor(player.y),34);y<H;y+=34){ctx.globalAlpha=.13;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
-  for(const x of[63,97])for(let y=21+mod(Math.floor(player.y),26);y<H;y+=26){ctx.globalAlpha=.75;rect(x,y,2,1,'#ffe9b0');ctx.globalAlpha=1;}
-  // Asphalt patchwork and gutter seams keep the long highway from reading flat.
-  for(let i=0;i<12;i++){
-    const y=30+mod(i*53+Math.floor(player.y),H-30),x=ROAD_L+5+hash(i,worldSeed)*(ROAD_R-ROAD_L-14),
-      w=5+(hash(i+9,worldSeed)*12|0);ctx.globalAlpha=.11;rect(x,y,w,2,i%2?p.curb:p.light);ctx.globalAlpha=1;}
-  for(const x of[ROAD_L+4,ROAD_R-6]){
-    rect(x,28,3,H-28,mix(p.road,INK,.7));rect(x+1,28,1,H-28,mix(p.curb,CREAM,.68));
-    for(let y=6+mod(Math.floor(player.y),20);y<H;y+=20){
-      rect(x-2,y,7,4,mix(p.road,INK,.8));rect(x-1,y+1,5,1,mix(CREAM,p.light,.55));}
+  for(const x of[63,97])for(let y=8+mod(Math.floor(player.y)+(x===63?0:13),x===63?26:34);y<H;y+=x===63?26:34)rect(x,y,2,x===63?10:14,mix(p.curb,CREAM,.3));
+  for(let y=4+mod(Math.floor(player.y),34);y<H;y+=34){ctx.globalAlpha=.07;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
+  // Painted chevrons in the middle lane: one large calm mark with real edge.
+  for(let y=20+mod(Math.floor(player.y),92);y<H;y+=92){
+    poly([[74,y],[80,y-6],[86,y]],mix(p.curb,CREAM,.42));poly([[74,y+8],[80,y+2],[86,y+8]],mix(p.curb,CREAM,.34));}
+  // A little authored patchwork keeps the asphalt honest; no speckle fields.
+  for(let i=0;i<6;i++){
+    const y=30+mod(i*97+Math.floor(player.y),H-30),x=ROAD_L+5+hash(i,worldSeed)*(ROAD_R-ROAD_L-14),
+      w=6+(hash(i+9,worldSeed)*12|0);ctx.globalAlpha=.1;rect(x,y,w,2,i%2?p.curb:p.light);ctx.globalAlpha=1;}
+  // Manholes with a worn rim: road identity at calm scale.
+  for(let b=currentBlock()-1;b<=currentBlock()+2;b++){
+    const mx=LANES[mod(b*5+worldSeed,3)],my=mod(b*BLOCK+120+((hash(b,worldSeed)*40)|0),H+40)-20+28;
+    if(my>34&&my<H-4){rect(mx-3,my-2,7,4,mix(p.road,INK,.55));rect(mx-3,my-2,7,1,mix(CREAM,p.light,.4));}
   }
-  // Shoulder posts and gravel speckle tie the drivable edge to the roadside.
-  for(const x of[22,137])for(let y=12+mod(Math.floor(player.y),42);y<H;y+=42){
-    rect(x,y,2,8,mix(p.curb,INK,.3));rect(x,y,2,2,mix(CREAM,p.curb,.4));}
-  for(let i=0;i<10;i++){const y=18+mod(i*41+Math.floor(player.y),H-24);
-    ctx.globalAlpha=.3;rect(21+(i%3)*2,y,1,1,mix(p.walk,CREAM,.2));rect(134+(i%3)*2,y+9,1,1,mix(p.walk,CREAM,.2));ctx.globalAlpha=1;}
+  // Shoulder posts: one slow rhythm at the edge, no gravel noise.
+  for(const x of[22,137])for(let y=12+mod(Math.floor(player.y),64);y<H;y+=64){
+    rect(x,y,2,8,mix(p.curb,INK,.35));rect(x,y,2,2,mix(CREAM,p.curb,.35));}
 }
 function drawDistrictRoadDetails(p){
   if(p.kind==='downtown'){
-    for(let i=0;i<5;i++){const y=50+mod(i*83+Math.floor(player.y),H-44);ctx.globalAlpha=.16;
+    for(let i=0;i<3;i++){const y=50+mod(i*83+Math.floor(player.y),H-44);ctx.globalAlpha=.14;
       rect(40+i%3*28,y,16,2,i%2?p.accent:CYAN);rect(44+i%3*28,y+2,8,5,mix(i%2?p.accent:CYAN,p.road,.65));ctx.globalAlpha=1;}
-    // Rain-slick asphalt: every sign and lamp throws a wavering reflection
-    // streak down the avenue — the downtown night reads WET and lit.
-    for(let i=0;i<11;i++){
+    // Rain-slick asphalt: a few sign and lamp reflections waver down the
+    // avenue — the downtown night reads WET without a static field of streaks.
+    for(let i=0;i<8;i++){
       const x=ROAD_L+6+((hash(i*13,worldSeed)*(ROAD_R-ROAD_L-14))|0),
         y=40+mod(i*61+Math.floor(player.y),H-52),
         c=i%3===0?p.accent:i%3===1?p.light:'#ffe9b0',flick=.6+.4*Math.sin(showFrame*.09+i*2.7);
-      ctx.globalAlpha=.45*flick;rect(x,y,2,8+(i%3)*4,c);ctx.globalAlpha=1;
-      ctx.globalAlpha=.24*flick;rect(x-1,y+2,4,4,c);ctx.globalAlpha=1;
+      ctx.globalAlpha=.32*flick;rect(x,y,3,8+(i%3)*4,c);ctx.globalAlpha=1;
     }
-    for(let y=20+mod(Math.floor(player.y),46);y<H;y+=46){ctx.globalAlpha=.1;rect(ROAD_L+3,y,ROAD_R-ROAD_L-6,3,'#cfe4f5');ctx.globalAlpha=1;}
   }else if(p.kind==='suburb'){
     for(let y=14+mod(Math.floor(player.y),22);y<H;y+=22){rect(ROAD_L+2,y,4,2,'#3c4a38');rect(ROAD_R-6,y+9,4,2,'#3c4a38');}
-    for(let i=0;i<4;i++){const y=40+mod(i*97+Math.floor(player.y),H-40);rect(36+i%2*76,y,10,6,mix(p.roof2,p.road,.5));}
+    for(let i=0;i<2;i++){const y=40+mod(i*97+Math.floor(player.y),H-40);rect(36+i%2*76,y,10,6,mix(p.roof2,p.road,.5));}
   }else if(p.kind==='farm'){
-    ctx.globalAlpha=.2;for(const x of[52,74,92,108])line([[x,30],[x,H]],mix(p.curb,p.road,.55));ctx.globalAlpha=1;
+    ctx.globalAlpha=.1;for(const x of[52,74,92,108])line([[x,30],[x,H]],mix(p.curb,p.road,.55));ctx.globalAlpha=1;
     for(let y=10+mod(Math.floor(player.y),30);y<H;y+=30){rect(ROAD_L+3,y,5,3,'#5a4a2c');rect(ROAD_R-8,y+14,5,3,'#5a4a2c');}
   }else if(p.kind==='iron'){
     for(let y=16+mod(Math.floor(player.y),BLOCK);y<H;y+=BLOCK){
       line([[ROAD_L,y],[ROAD_R,y]],'#6a5a48',3);line([[ROAD_L,y+4],[ROAD_R,y+4]],'#6a5a48',3);
       for(let x=ROAD_L+2;x<ROAD_R;x+=9)rect(x,y-1,3,6,'#3a332c');}
-    for(let i=0;i<4;i++){const y=36+mod(i*71+Math.floor(player.y),H-40);ctx.globalAlpha=.3;rect(44+i%2*64,y,14,2,p.accent);ctx.globalAlpha=1;}
+    for(let i=0;i<2;i++){const y=36+mod(i*71+Math.floor(player.y),H-40);ctx.globalAlpha=.25;rect(44+i%2*64,y,14,2,p.accent);ctx.globalAlpha=1;}
   }else{
-    // Harbor boards and bollards; the water itself lives on the left shoulder.
     rect(0,28,10,H-28,'#0c3c50');
     for(let y=16+mod(Math.floor(player.y*1.25),14);y<H;y+=14){ctx.globalAlpha=.5;rect(1,y,7,2,CYAN);ctx.globalAlpha=1;}
     for(let y=30;y<H;y+=7)rect(12,y,5,3,y%14?'#6a4a34':'#8a6242');
@@ -849,17 +943,20 @@ function drawRoadside(b,p){
       // fire-escape zigzags, neon door glow at the base.
       rect(x,y,w,hh,mix(p.roof,INK,.08));
       rect(side<0?x+w-2:x,y,2,hh,mix(p.roof2,CREAM,.15));
-      for(let yy=y+6;yy<y+hh-8;yy+=13){for(let xx=x+3;xx<x+w-4;xx+=6){
-        if(hash(xx+b*7,yy)>.22){rect(xx,yy,4,5,'#141824');rect(xx,yy,1,5,p.light);rect(xx+2,yy+3,2,2,mix(p.light,INK,.3));}}}
-      for(let yy=y+20;yy<y+hh-10;yy+=39){rect(x+2,yy,w-4,2,mix(p.roof2,INK,.2));
+      for(let yy=y+6;yy<y+hh-8;yy+=17){for(let xx=x+3;xx<x+w-4;xx+=7){
+        if(hash(xx+b*7,yy)>.42){rect(xx,yy,4,5,'#141824');rect(xx,yy,2,5,p.light);rect(xx+2,yy+3,2,2,mix(p.light,INK,.3));}}}
+      for(let yy=y+20;yy<y+hh-10;yy+=52){rect(x+2,yy,w-4,2,mix(p.roof2,INK,.2));
         line([[x+3,yy+2],[x+w-4,yy+8]],mix(p.roof2,CREAM,.2));line([[x+w-4,yy+8],[x+3,yy+14]],mix(p.roof2,CREAM,.2));}
       if(hash(b,side+worldSeed)>.25){const sy2=y+14+mod(b*side*13,52);
         rect(side<0?x+w-1:x-4,sy2,5,19,'#10141f');
         const neon=hash(b,side)>.5?p.accent:p.light;
         rect(side<0?x+w-1:x-4,sy2,5,2,neon);rect(side<0?x+w-1:x-4,sy2+17,5,2,neon);
         ctx.fillStyle=neon;ctx.font='bold 5px monospace';ctx.fillText(hash(b,side*3)>.5?'BAR':'GAS',side<0?x+w-8:x-3,sy2+12);
-        ctx.globalAlpha=.3+.1*Math.sin(showFrame*.06+b);ctx.fillStyle=neon;
-        ctx.beginPath();ctx.ellipse(side<0?x+w+2:x-2,sy2+20,6,3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+        // Wet neon: the sign spills a broad glow pool onto the rain-slick road.
+        ctx.globalAlpha=.24+.06*Math.sin(showFrame*.06+b);ctx.fillStyle=neon;
+        ctx.beginPath();ctx.ellipse(side<0?x+w+6:x-6,sy2+18,11,15,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+        ctx.globalAlpha=.09;ctx.fillStyle=neon;
+        ctx.beginPath();ctx.ellipse(side<0?x+w+16:x-16,sy2+22,18,7,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
     }else if(p.kind==='suburb'){
       // Lawns, gabled houses, porch lights, mailboxes, picket fences.
       rect(x,y,w,hh,mix(p.walk,p.accent,.06));
@@ -869,12 +966,12 @@ function drawRoadside(b,p){
         rect(x+4,yy+3,3,4,p.light);rect(x+10,yy+3,3,4,'#20242c');rect(x+7,yy+6,3,4,'#5a3c2c');
         ctx.globalAlpha=.3;rect(x+4,yy+3,3,1,mix(p.light,CREAM,.5));ctx.globalAlpha=1;
         rect(side<0?x+17:x+1,yy+14,2,5,'#7a6248');rect(side<0?x+16:x,yy+13,4,3,'#c94a3c');
-        for(let xx=x+1;xx<x+w-1;xx+=4)rect(xx,yy+20,1,4,mix(CREAM,p.curb,.3));}
+        for(let xx=x+1;xx<x+w-1;xx+=5)rect(xx,yy+20,2,4,mix(CREAM,p.curb,.3));}
     }else if(p.kind==='farm'){
       // Crop rows, fence lines, hay bales, an occasional barn with a silo.
       rect(x,y,w,hh,mix(p.walk,p.accent,.14));
-      for(let yy=y+3;yy<y+hh-3;yy+=7)rect(x,yy,w,2,mix(p.walk,INK,.22));
-      for(let yy=y+6;yy<y+hh-6;yy+=14)rect(x,yy,w,1,mix(p.accent,INK,.25));
+      for(let yy=y+3;yy<y+hh-3;yy+=10)rect(x,yy,w,2,mix(p.walk,INK,.22));
+      for(let yy=y+8;yy<y+hh-6;yy+=20)rect(x,yy,w,1,mix(p.walk,p.accent,.32));
       for(let yy=y+14;yy<y+hh-8;yy+=30){rect(x+4,yy,10,7,'#c9a24e');rect(x+5,yy+1,8,2,'#e8c85a');rect(x+8,yy,1,7,'#8a6a30');}
       for(let yy=y+2;yy<y+hh-2;yy+=11){rect(side<0?x+w-2:x,yy,2,6,'#6a5230');line([[side<0?x+w-2:x,yy+2],[side<0?x:x+w-2,yy+2]],'#6a5230');}
       if(hash(b*3,worldSeed)>.5){const by=y+26+mod(b*7,40);
@@ -1048,6 +1145,23 @@ function drawBike(v,isPlayer,screenY){
 }
 // Swing swoosh: the active arc flashes speed lines on the committed side.
 // This is POSE (like brake lights), drawn regardless of payoff FX.
+// Aftermath decals (render-only, world-clock expiry, __NO_PAYOFF_FX strips
+// them): an oil wobble leaves a coral skid-zigzag where it happened; an
+// overtake leaves a brief gold swoosh at the pass point. Unlike drifting
+// particles these are STATIC, so the payoff lands exactly on the event spot.
+function drawMarks(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined'||!marks.length)return;
+  for(const m of marks){
+    const age=clamp((runFrame-m.f)/60,0,1),y=sy(m.y);if(y<34||y>H+6)continue;
+    ctx.globalAlpha=(1-age)*.85;
+    if(m.kind==='oil'){
+      for(let k=0;k<4;k++)rect(m.x+(k%2?3:-4),y+2+k*4,3,2,k%2?CORAL:'#ffffff');
+    }else{
+      for(let k=0;k<3;k++){const w2=9-k*2;rect(m.x-w2/2,y-2+k*4,w2,2,k===1?'#ffffff':GOLD);}
+    }
+  }
+  ctx.globalAlpha=1;
+}
 function drawSwingArcs(){
   if(player.swingPhase==='swing'){
     const s=player.swingSide,u=1-player.swingT/8;
@@ -1095,7 +1209,7 @@ function drawForeground(p){
   for(const side of[-1,1])for(let i=0;i<4;i++){
     const x=side<0?24:136,y=48+mod(i*96+scroll,H-40);
     rect(x-1,y-10,2,13,'#14161f');
-    ctx.globalAlpha=.24;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(x,y-11,8,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    ctx.globalAlpha=.4;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(x,y-11,8,0,TAU);ctx.fill();ctx.globalAlpha=1;
     rect(x-2,y-13,4,4,p.light);
   }
   const y=70+mod(Math.floor(player.y),BLOCK*2);
@@ -1156,11 +1270,13 @@ function drawEnvironment(p){
     if(q.pickup&&!usedPickups.has(q.pickup.id))drawFeature(q.pickup);}
   for(const f of fixtureFeatures)drawFeature(f);
   drawScars();
-  // Dusk haze: atmospheric perspective pulls the far highway into a warm
-  // sunset band while the foreground stays ink-dark — distance fog, depth
-  // cue, and the frame's bright mass in one.
-  const haze=mix(p.accent,'#ffb98a',.7),haze2=mix(haze,p.sky,.3);
-  for(let y=38;y<110;y++){const u=1-(y-38)/72;ctx.globalAlpha=.55*Math.pow(u,1.6);rect(0,y,W,1,u>.5?mix(haze,CREAM,.32):haze2);}
+  // Dusk haze: layered sunset striations pull the far highway into a bright
+  // band while the foreground stays ink-dark — distance fog, depth cue, and
+  // the frame's bright mass in one. Long horizontal lines only: they carry
+  // edge and value without a single speckle of road noise.
+  const haze=mix(p.accent,'#ffb98a',.7),hazeBright=mix(haze,CREAM,.7),hazeDim=mix(haze,'#ffb98a',.5);
+  for(let y=38;y<110;y++){const u=1-(y-38)/72;ctx.globalAlpha=.6*Math.pow(u,1.6);
+    rect(0,y,W,1,(y%6<2&&u>.25)?hazeBright:hazeDim);}
   ctx.globalAlpha=1;
 }
 // Isolated-subject renders for the drawn-pixel actor-scale gates.
@@ -1192,7 +1308,7 @@ function render(){
     for(let i=0;i<2;i++){ctx.beginPath();ctx.arc(player.x-3+i*6,RIDER_Y+10+(16-t)*.8,2,0,TAU);ctx.fill();}
     ctx.globalAlpha=1;ctx.fillStyle=GOLD;ctx.font='bold 6px monospace';ctx.fillText('GO!',clamp(player.x+9,4,W-16),RIDER_Y-14);
   }
-  drawRings(fxCam());drawParts(fxCam());
+  drawRings(fxCam());drawParts(fxCam());drawMarks();
   for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
     ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;postDraw();
   drawForeground(p);drawActs(p);drawPulses();
@@ -1218,14 +1334,14 @@ globalThis.__ashenRageSignature=()=>JSON.stringify({state,runFrame,worldSeed,ski
     player.swingT,player.swingSide,player.cooldown,player.wobbleT,player.wreckT,player.invulnT,player.rank]
     .map(v=>typeof v==='number'?round(v,5):v),
   r:rivals.map(r=>[r.id,r.kind,round(r.x,4),round(r.y,4),round(r.vx,4),round(r.speed,4),r.grit,r.state,r.stateT,r.side,
-    r.dodgeT,r.respawnT,r.ahead,r.swingsLeft]),
-  t:traffic.map(t=>[t.id,round(t.x,3),round(t.y,3),round(t.speed,3),t.kind,t.hit,t.wob]),
+    r.dodgeT,r.carCd,r.respawnT,r.ahead,r.swingsLeft]),
+  t:traffic.map(t=>[t.id,round(t.x,3),round(t.y,3),round(t.vx||0,3),round(t.speed,3),t.kind,t.hit,t.hitCd,t.wob]),
   a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.marked],
   u:[scars.length,usedPickups.size],
   s:[stats.markers,stats.districts,stats.kos,stats.hits,stats.hitsTaken,stats.overtakes,stats.drops,stats.boosts,
     stats.nitros,stats.wrenches,stats.weapons,stats.nearMisses,stats.trafficHits,stats.oils,stats.barrierThreads,
     stats.barrierHits,stats.wrecks,stats.lapses,stats.acts,stats.grudgeKos,stats.actClears,stats.podiums,stats.dodges,
-    stats.whiffs,stats.counters,stats.events,stats.progress]});
+    stats.whiffs,stats.counters,stats.contacts,stats.packTrafficHits,stats.events,stats.progress]});
 globalThis.__ashenRagePhysical=()=>[round(player.x,7),round(player.y,7),round(player.vx,7),round(player.speed,7),
   player.swingPhase,player.intent&&round(player.intent.steer,7),player.intent&&round(player.intent.throttle,7),
   player.intent&&player.intent.swing,player.intent&&player.intent.boost].join('|');
