@@ -1,0 +1,1793 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKY REIGN</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080d}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#0a0c12}
+  canvas:focus-visible{outline:2px solid #59d8f5;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Sky Reign. A dragon rider soars on rails over five biomes: sweep locks onto sky packs, unleash homing volleys, weave through telegraphed fire, ride out sandstorm fronts, and break the carrier wyrm at the gate."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,RI,hash,clamp,rect,spawn,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,manual,initSession,sessionStep,drawSession,playing,
+  addScore,gameOver,createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// SKY REIGN — a Panzer Dragoon spinoff for the 4:9 strip. The dragon flies
+// on rails over five biomes; the rider steers laterally and in altitude,
+// banks HONESTLY into lateral travel (bank = atan2(vx, speed) with inertia,
+// never a cosmetic intent lean). Tap fire lances straight ahead; hold to
+// sweep lock ticks onto up to four targets; release to unleash the homing
+// volley. Incoming fire is telegraphed by a windup glow ON the shooter and
+// must be physically woven. Nothing pre-draws intent: no route lines, no
+// target predictions, no safe-lane markers — lock reticles live ON the
+// locked enemies, tells live on the actors themselves. One shared
+// integrator flies the dragon, every wing, swarm craft, bolt, missile, the
+// wyrm, the human, the bot, and the copied-state planner rollouts.
+const TAU=Math.PI*2,SECTOR=300,BIOME_SPAN=4200,FLIGHT_FRAMES=43200,DRAGON_Y=300;
+const ALT_MIN=4,ALT_MAX=66,CORR_L=14,CORR_R=146,MAX_LOCKS=4;
+const INK='#070a12',CREAM='#fff3da',GOLD='#ffb02e',AMBER='#ff8a3d',CORAL='#ff5d4f',
+  MINT='#67e8a2',CYAN='#59d8f5',STEEL='#9aa7b8',BLOOD='#c92c3c',VIOLET='#8a7aff';
+const BIOMES=[
+  {name:'DUNE SEA',ground:'#6a4e2e',far:'#8a683c',ridge:'#c9a25e',ridgeD:'#453322',
+    rock:'#7a6244',accent:'#ffd166',haze:'#ffca7a',kind:'dune'},
+  {name:'CLOUD REEF',ground:'#2c4a6a',far:'#3c5e84',ridge:'#dfeaf2',ridgeD:'#9ab4c8',
+    rock:'#5c6a58',accent:'#59d8f5',haze:'#bfe4ff',kind:'reef'},
+  {name:'SUNKEN RUINS',ground:'#11404c',far:'#1a5460',ridge:'#3f8a94',ridgeD:'#0c2e36',
+    rock:'#7a8a7e',accent:'#8affea',haze:'#9af0e0',kind:'ruins'},
+  {name:'ASH FIELDS',ground:'#17161d',far:'#242330',ridge:'#3c3c46',ridgeD:'#0e0d13',
+    rock:'#2c2c34',accent:'#ff8a3d',haze:'#c96a4a',kind:'ash'},
+  {name:'THE GATE',ground:'#0d1024',far:'#1a2044',ridge:'#3c468a',ridgeD:'#090b1a',
+    rock:'#2c3464',accent:'#ffd166',haze:'#8a7aff',kind:'gate'}
+];
+// The recurring sky pack: four wing slots with stable ids and readable kinds.
+// hp is lance hits to down; cruise is forward world speed; turn/drag feed the
+// shared integrator; windup is the telegraph before a bolt leaves.
+const WING_KINDS={
+  vyr:{label:'VYR',color:'#e0483c',trim:'#ffd0b9',hp:1,cruise:.72,turn:.10,turnA:.07,windup:26,boltCd:120,altBand:[18,52]},
+  manta:{label:'MANTA',color:'#67e8a2',trim:'#eafff2',hp:2,cruise:.86,turn:.085,turnA:.06,windup:30,boltCd:160,altBand:[24,60]},
+  wasp:{label:'WASP',color:'#ffd166',trim:'#fff3c4',hp:1,cruise:1.34,turn:.13,turnA:.10,windup:18,boltCd:105,altBand:[12,44]},
+  spire:{label:'SPIRE',color:'#6f8dff',trim:'#dbe6ff',hp:2,cruise:.62,turn:.06,turnA:.045,windup:34,boltCd:180,altBand:[30,62]}
+};
+const PERSONAS=[
+  {name:'LANCE',lockValue:9,dodgeRange:34,engage:1.15,risk:.8,color:GOLD},
+  {name:'VEIL',lockValue:5,dodgeRange:46,engage:.8,risk:.4,color:CYAN},
+  {name:'GALE',lockValue:7,dodgeRange:40,engage:1,risk:.62,color:MINT}
+];
+
+let showFrame=0,runFrame=0,state='flight',resultT=0,outcome='',worldSeed=1,skillSeed=1;
+let dragon=null,wings=[],swarm=[],bolts=[],missiles=[],lances=[],wyrm=null,dust=null;
+let texts=[],plan=null,planAt=-1e9,skill=null,visualIntent=null;
+let persona=PERSONAS[0],personaIndex=0,wingSerial=0,swarmSerial=0,boltSerial=0;
+let generatedTo=-1,lastBiome=0,lastSector=0,volleyStreak=0,lastVolleyFrame=-1e9;
+let volleySerial=0,volleyCounts={};
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLapsed=false;
+// ---- good/bad feedback presentation (all sim-inert) --------------------------
+// Kill bursts, dodge streaks and wound flashes are engine particles on the
+// sim-inert fx stream; the edge pulse tags each beat gold (good) or coral
+// (bad); feedback is the append-only ledger evals/feedback.js crops against a
+// same-seed __NO_PAYOFF_FX twin. marks[] holds STATIC aftermath decals (world
+// anchored, world-clock expiry) so signature colors land exactly on the event
+// spot. Nothing here is read by physics or either RNG stream.
+let goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,marks=[];
+function screenYAt(wy,alt){return(DRAGON_Y-dragon.alt)-(wy-dragon.worldY)-(alt-dragon.alt);}
+function cue(kind,id,x,wy,alt,pulse){
+  feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
+    sx:Math.round(clamp(x,0,W)),sy:Math.round(clamp(screenYAt(wy,alt),34,H-6))});
+  if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.45:pulse);
+  else badPulse=Math.max(badPulse,pulse===undefined?.55:pulse);
+}
+const stats={markers:0,biomes:1,kills:0,volleyKills:0,volleys:0,volleyWipes:0,locks:0,lanceHits:0,
+  lances:0,boltsFaced:0,nearMisses:0,hitsTaken:0,shieldBreaks:0,wounds:0,collisions:0,wrecks:0,
+  lapses:0,acts:0,actClears:0,storms:0,stormClears:0,wyrms:0,phaseBreaks:0,wyrmKills:0,dodges:0,contacts:0,
+  sweeps:0,sweepHits:0,
+  events:0,progress:0,maxEventLull:0,maxProgressLull:0,maxStep:0,appliedIntents:0,admireIntents:0};
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},2:{frames:44,minGap:100},
+  3:{frames:84,minGap:900,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+const act={phase:'calm',type:'sandstorm',warnAt:3000,landAt:3240,endAt:4000,index:0,
+  hitsAtLand:0,wind:0,notes:[]};
+
+const mod=(n,d)=>((n%d)+d)%d;
+const round=(v,n)=>{const p=Math.pow(10,n||4);return Math.round(v*p)/p;};
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),
+  m=s=>Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t);
+  return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1);};
+const poly=(points,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+  for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath();ctx.fill();};
+const line=(points,c,w)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+  for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.stroke();ctx.lineWidth=1;};
+const dragonScreenY=()=>DRAGON_Y-dragon.alt;
+const sy=wy=>DRAGON_Y-(wy-dragon.worldY); // ground-plane transform (alt 0)
+const currentBiome=()=>mod(Math.floor(dragon.worldY/BIOME_SPAN),BIOMES.length);
+const say=(s,c,wy,t,x,alt)=>texts.push({s,c:c||CREAM,wy:wy===undefined?dragon.worldY+40:wy,
+  alt:alt===undefined?(dragon?dragon.alt:30):alt,x:x===undefined?dragon.x:x,t:t||70});
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
+  lastEventFrame=showFrame;if(score&&playing())addScore(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+  lastProgressFrame=showFrame;if(score&&playing())addScore(score);}
+function offer(id,tier,x,wy,tag){return SHOW.offer({id,tier,at:showFrame,x,y:wy,tag,expiresAt:showFrame+30});}
+function allFinite(){return[dragon.x,dragon.alt,dragon.worldY,dragon.vx,dragon.valt,dragon.speed,dragon.shield,dragon.hull,runFrame]
+  .every(Number.isFinite)&&wings.every(finiteBody)&&swarm.every(finiteBody)&&bolts.every(finiteBody)&&
+  missiles.every(finiteBody)&&lances.every(finiteBody)&&(!wyrm||finiteBody(wyrm));}
+function finiteBody(v){return[v.x,v.alt,v.worldY,v.vx,v.valt,v.speed].every(Number.isFinite);}
+const fxAt=(x,y,n,c,sp,grav)=>fxBurst(x,y,n,c,sp,grav);
+const dustAt=(x,y,n,c)=>fxDust(x,y,n,c);
+
+// ---- actors ------------------------------------------------------------------
+function makeDragon(){return{x:80,alt:26,worldY:60,vx:0,valt:0,speed:2.05,cruise:2.05,
+  turn:.105,turnA:.085,drag:.82,dragA:.8,accel:.03,yaw:0,bank:0,va:0,isDragon:true,windFactor:1,
+  shield:45,shieldMax:45,hull:100,shieldT:0,lanceCd:0,locks:[],sweepT:0,lockAge:0,
+  hitFlashT:0,invulnT:0,wreckT:0,settleT:0,gloryT:0,contactT:0,lockGlow:0,dodgeT:0,
+  intent:null,lastX:80,lastY:60};}
+function makeWing(kind,x,wy,alt,slot){const spec=WING_KINDS[kind];return{id:slot,kind,x,worldY:wy,alt,
+  vx:0,valt:0,speed:spec.cruise,cruise:spec.cruise,turn:spec.turn,turnA:spec.turnA,drag:.82,dragA:.8,accel:.03,
+  yaw:0,bank:0,va:0,windFactor:.8,hp:spec.hp,hpMax:spec.hp,state:'pace',stateT:0,windupT:0,boltCd:60+slot*30,
+  respawnT:0,downT:0,spin:1,hitFlashT:0,sineSeed:slot*2.1,fireFlash:0};}
+function makeSwarm(kind,x,wy,alt){const spec=WING_KINDS[kind];return{id:swarmSerial++,kind,x,worldY:wy,alt,
+  vx:0,valt:0,speed:spec.cruise,cruise:spec.cruise,turn:spec.turn,turnA:spec.turnA,drag:.82,dragA:.8,accel:.03,
+  yaw:0,bank:0,va:0,windFactor:.8,hp:spec.hp,state:'pace',windupT:0,boltCd:90+mod(swarmSerial*53,120),
+  sineSeed:swarmSerial*1.7,hitFlashT:0,fireFlash:0,swarm:true};}
+function makeBolt(x,wy,alt,vx,valt,speed,kind,owner){return{id:boltSerial++,kind:kind||'bolt',owner:owner||'foe',
+  x,worldY:wy,alt,vx,valt,speed,cruise:speed,turn:owner==='wyrm'?.035:0,turnA:owner==='wyrm'?.028:0,drag:1,dragA:1,accel:1,yaw:0,bank:0,va:0,
+  windFactor:.5,minD:999,aged:0};}
+function makeTurret(x,wy){return{id:swarmSerial++,kind:'turret',x,worldY:wy,alt:0,vx:0,valt:0,speed:0,cruise:0,
+  turn:0,turnA:0,drag:1,dragA:1,accel:0,yaw:0,bank:0,va:0,windFactor:0,hp:2,state:'pace',windupT:0,
+  boltCd:100+mod(swarmSerial*37,110),hitFlashT:0,fireFlash:0,swarm:true,turret:true,sineSeed:swarmSerial};}
+function makeWyrm(){return{id:'wyrm',kind:'wyrm',x:80,worldY:dragon.worldY+640,alt:40,vx:0,valt:0,
+  speed:.55,cruise:.55,turn:.05,turnA:.04,drag:.86,dragA:.84,accel:.02,yaw:0,bank:0,va:0,windFactor:.3,
+  stage:0,stages:[{name:'ENGINES',hp:10,hpMax:10},{name:'CANNONS',hp:16,hpMax:16},{name:'CORE',hp:22,hpMax:22}],
+  state:'approach',stateT:0,weaveSeed:hash(worldSeed,77)*TAU,boltCd:120,sweepCd:200,sweepT:0,sweep2T:0,sweep2Side:1,
+  staggerT:0,hitFlashT:0,fireFlash:0,dead:false};}
+function wyrmWeakpoints(){
+  if(!wyrm||wyrm.dead)return[];
+  const y=screenYAt(wyrm.worldY,wyrm.alt),s=wyrm.stage;
+  if(s===0)return[{x:wyrm.x-24,y:y+8,stage:0},{x:wyrm.x+24,y:y+8,stage:0}];
+  if(s===1)return[{x:wyrm.x-30,y:y-4,stage:1},{x:wyrm.x+30,y:y-4,stage:1}];
+  return[{x:wyrm.x,y:y+2,stage:2}];
+}
+
+// ---- sector content: deterministic spawns and terrain -------------------------
+function sectorInfo(k){
+  const biome=mod(Math.floor(k*SECTOR/BIOME_SPAN),BIOMES.length),h=hash(k*31+worldSeed*7,biome*19+5);
+  const foes=[];
+  const n=2+(hash(k,worldSeed)>.5?1:0)+(hash(k*3,worldSeed*5)>.85?1:0);
+  const kinds=['vyr','vyr','manta','wasp','spire'];
+  for(let j=0;j<n;j++){
+    const kind=kinds[mod(k+j*2+Math.floor(h*9),5)];
+    if(kind==='spire'&&hash(k*7+j,worldSeed)>.4){ // spire nest: a ground turret instead
+      foes.push({turret:true,x:30+hash(k*11+j,worldSeed*13)*100,wy:k*SECTOR+60+j*120});
+    }else{
+      foes.push({kind,x:26+hash(k*13+j,worldSeed*17)*108,wy:k*SECTOR+50+j*110+hash(k+j,worldSeed)*40,
+        alt:WING_KINDS[kind].altBand[0]+hash(k*17+j,worldSeed*23)*(WING_KINDS[kind].altBand[1]-WING_KINDS[kind].altBand[0])});
+    }
+  }
+  return{k,biome,foes};
+}
+function ensureSwarm(){
+  const target=Math.floor((dragon.worldY+760)/SECTOR);
+  while(generatedTo<target){generatedTo++;
+    if(generatedTo<1)continue;
+    const q=sectorInfo(generatedTo);
+    for(const f of q.foes){
+      if(f.turret)swarm.push(makeTurret(f.x,f.wy));
+      else swarm.push(makeSwarm(f.kind,f.x,f.wy,f.alt));
+    }
+  }
+  swarm=swarm.filter(f=>f.worldY>dragon.worldY-160&&f.hp>0);
+}
+function spawnWings(){
+  wings=[];const kinds=Object.keys(WING_KINDS);
+  for(let i=0;i<4;i++){
+    const kind=kinds[mod(i+Math.floor(hash(worldSeed,1)*4),4)];
+    const spec=WING_KINDS[kind];
+    wings.push(makeWing(kind,30+hash(i*7,worldSeed)*100,dragon.worldY+380+i*130,
+      spec.altBand[0]+hash(i*3,worldSeed)*(spec.altBand[1]-spec.altBand[0]),i));
+  }
+}
+
+// ---- one shared physics path for dragon, wings, swarm, shots, wyrm, human,
+//      bot, and planner rollouts ------------------------------------------------
+function envNow(){return{wind:act.wind||0,speedMul:1};}
+function advanceCraft(body,intent,env){
+  intent=intent||{steer:0,climb:0};
+  env=env||envNow();
+  const mushy=body.wreckT>0?.35:1,steer=clamp(intent.steer||0,-1,1)*mushy;
+  body.vx+=steer*(body.turn||.1)+(env.wind||0)*(body.windFactor===undefined?1:body.windFactor);
+  body.vx*=body.drag===undefined?.82:body.drag;body.x+=body.vx;
+  body.valt+=clamp(intent.climb||0,-1,1)*(body.turnA||.08)*mushy;
+  body.valt*=body.dragA===undefined?.8:body.dragA;body.alt+=body.valt;
+  if(body.x<CORR_L){body.x=CORR_L;body.vx=Math.abs(body.vx)*.3;}
+  if(body.x>CORR_R){body.x=CORR_R;body.vx=-Math.abs(body.vx)*.3;}
+  if(body.alt<ALT_MIN){body.alt=ALT_MIN;body.valt=Math.abs(body.valt)*.3;}
+  if(body.alt>ALT_MAX){body.alt=ALT_MAX;body.valt=-Math.abs(body.valt)*.3;}
+  const cruise=(intent.speed===undefined?body.cruise:intent.speed)*(env.speedMul||1);
+  const acc=body.accel===undefined?.03:body.accel;
+  if(body.speed<cruise)body.speed=Math.min(cruise,body.speed+acc);
+  else body.speed=Math.max(cruise,body.speed-acc*.8);
+  body.worldY+=body.speed;
+  // Honest banking (pocket-league doctrine): the craft banks INTO the actual
+  // lateral travel — atan2(vx, forward speed) with yaw inertia — never a
+  // cosmetic intent lean. bank/yaw/va are pose state only: physics never
+  // reads them and they never enter the replay signature... except vx/speed,
+  // which are physical.
+  const va=Math.atan2(body.vx,Math.max(.5,Math.abs(body.speed)));
+  body.yaw=(body.yaw||0)+(clamp(va,-.5,.5)-(body.yaw||0))*.24;
+  body.bank=body.yaw;body.va=va;
+  return body;
+}
+
+// ---- combat -------------------------------------------------------------------
+function lockables(){
+  const out=[];
+  for(const w of wings){if(w.respawnT<=0&&w.state!=='down')out.push(w);}
+  for(const s of swarm){if(s.hp>0)out.push(s);} // turrets included: the volley owns ground guns too
+  return out;
+}
+function lockTargetScore(t){
+  const d=t.worldY-dragon.worldY;
+  if(d<30||d>280)return-1;
+  const dx=Math.abs(t.x-dragon.x),da=Math.abs(t.alt-dragon.alt);
+  if(dx>64||da>40)return-1;
+  // Locks are diegetic — the reticle lives ON a target the viewer can see.
+  const scr=screenYAt(t.worldY,t.alt);
+  if(scr<36||scr>H-8)return-1;
+  // Formation-first: mid-range targets stay lockable long enough to rack a
+  // full volley; point-blank targets pass under the rack before it fills.
+  return 400-Math.abs(d-150)*2-dx*1.6-da*1.2;
+}
+function acquireLock(){
+  if(dragon.locks.length>=MAX_LOCKS)return false;
+  let best=null,bestScore=0;
+  // During a wyrm act the staged weak point takes repeated lock charges —
+  // concentrating the whole volley on the called break.
+  if(wyrm&&!wyrm.dead&&act.phase==='live'&&act.type==='wyrm'){
+    const d=wyrm.worldY-dragon.worldY;
+    if(d>40&&d<300){dragon.locks.push({kind:'wyrm',t:runFrame});stats.locks++;markEvent(2);
+      offer('lock',1,wyrm.x,wyrm.worldY,'wyrm');cue('good','lock',wyrm.x,wyrm.worldY,wyrm.alt,.2);
+      marks.push({kind:'lock',x:wyrm.x,wy:wyrm.worldY,alt:wyrm.alt,f:runFrame});return true;}
+  }
+  for(const t of lockables()){
+    if(dragon.locks.some(l=>l.ref===t))continue;
+    const s=lockTargetScore(t);
+    if(s>bestScore){bestScore=s;best=t;}
+  }
+  if(!best)return false;
+  dragon.locks.push({kind:'foe',ref:best,t:runFrame});stats.locks++;markEvent(2);
+  offer('lock',1,best.x,best.worldY,best.id);
+  cue('good','lock',best.x,best.worldY,best.alt,.2);
+  marks.push({kind:'lock',x:best.x,wy:best.worldY,alt:best.alt,f:runFrame});
+  return true;
+}
+function pruneLocks(){
+  dragon.locks=dragon.locks.filter(l=>{
+    if(l.kind==='wyrm')return wyrm&&!wyrm.dead&&act.phase==='live';
+    const t=l.ref;
+    return t&&t.hp>0&&(t.respawnT===undefined||t.respawnT<=0)&&t.state!=='down'&&(t.worldY-dragon.worldY)>-16&&(t.worldY-dragon.worldY)<320;
+  });
+}
+function fireLance(){
+  dragon.lanceCd=9;stats.lances++;markEvent(1);
+  lances.push({id:boltSerial++,x:dragon.x,worldY:dragon.worldY+6,alt:dragon.alt,vx:dragon.vx*.3,valt:0,
+    speed:dragon.cruise+3.4,cruise:dragon.cruise+3.4,turn:0,turnA:0,drag:1,dragA:1,accel:1,
+    yaw:0,bank:0,va:0,windFactor:.2,aged:0});
+}
+function releaseVolley(){
+  const locks=dragon.locks.splice(0,dragon.locks.length);
+  if(!locks.length)return;
+  stats.volleys++;markEvent(6);
+  volleyStreak=showFrame-lastVolleyFrame<900?volleyStreak+1:1;lastVolleyFrame=showFrame;
+  const vid=++volleySerial;volleyCounts[vid]=0;
+  let i=0;
+  for(const l of locks){
+    missiles.push({id:boltSerial++,x:dragon.x+(i%2?4:-4),worldY:dragon.worldY+4,alt:dragon.alt,
+      vx:(i%2?.6:-.6),valt:.2,speed:dragon.cruise+1.7,cruise:dragon.cruise+1.7,turn:.16,turnA:.12,
+      drag:.9,dragA:.9,accel:.06,yaw:0,bank:0,va:0,windFactor:.3,target:l,aged:0,volley:vid});
+    i++;
+  }
+  cue('good','volley',dragon.x,dragon.worldY,dragon.alt,.3);
+  marks.push({kind:'volley',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+  if(marks.length>48)marks.shift();
+  fxAt(dragon.x,dragonScreenY(),14,CYAN,2.2);fxAt(dragon.x,dragonScreenY(),6,'#ffffff',1.6);
+}
+function killFoe(t,byVolley,volleyId){
+  t.hp=0;stats.kills++;markEvent(byVolley?14:8);markProgress(byVolley?5:2);
+  if(byVolley){stats.volleyKills++;
+    if(volleyId!==undefined){volleyCounts[volleyId]=(volleyCounts[volleyId]||0)+1;
+      // The apex of the volley fantasy: one release wiping three-plus foes.
+      if(volleyCounts[volleyId]===3){stats.volleyWipes++;markEvent(30);markProgress(12);
+        offer('volley-wipe',3,t.x,t.worldY,volleyId);shake(5);
+        say('FULL VOLLEY WIPE',GOLD,t.worldY,80,t.x,t.alt);}}}
+  const kindLabel=t.turret?'TURRET':WING_KINDS[t.kind].label;
+  cue('good',byVolley?'volley-kill':'lance-kill',t.x,t.worldY,t.alt,byVolley?.7:.4);
+  marks.push({kind:byVolley?'volley-kill':'lance-kill',x:t.x,wy:t.worldY,alt:t.alt,f:runFrame});
+  if(marks.length>48)marks.shift();
+  fxAt(t.x,screenYAt(t.worldY,t.alt),byVolley?20:10,t.turret?'#8a94a8':WING_KINDS[t.kind].color,2.4,.01);
+  fxAt(t.x,screenYAt(t.worldY,t.alt),byVolley?10:5,GOLD,1.8,.008);
+  ring(t.x,screenYAt(t.worldY,t.alt),byVolley?GOLD:CYAN,2,22);shake(byVolley?3:1.5);
+  if(t.swarm){say(kindLabel+' DOWN',byVolley?GOLD:CYAN,t.worldY,44,t.x,t.alt);}
+  else{t.state='down';t.downT=84;t.spin=Math.sign(t.x-dragon.x)||1;}
+  if(byVolley)offer('volley-kill',2,t.x,t.worldY,t.id);
+}
+function hitDragon(dmg,source,x,wy,alt){
+  if(dragon.invulnT>0||dragon.wreckT>0)return;
+  dragon.hitFlashT=12;dragon.invulnT=20;dragon.shieldT=0;
+  stats.hitsTaken++;markEvent(8);
+  let rem=dmg;
+  // Wyrm ordnance rattles the hull THROUGH the shield — a wound the viewer
+  // reads even when the shield holds.
+  if(source==='wyrm'){const share=Math.max(4,Math.round(dmg*.35));
+    dragon.hull-=share;rem-=share;stats.wounds++;
+    cue('bad','wyrm-wound',dragon.x,dragon.worldY,dragon.alt,.85);
+    marks.push({kind:'wound',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+    if(marks.length>48)marks.shift();
+    say('WYRM WOUND',CORAL,dragon.worldY,60,dragon.x,dragon.alt);}
+  if(dragon.shield>0){
+    dragon.shield-=rem;
+    if(dragon.shield<=0){dragon.shield=0;stats.shieldBreaks++;
+      cue('bad','shield-down',dragon.x,dragon.worldY,dragon.alt,.85);
+      marks.push({kind:'shield-down',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+      if(marks.length>48)marks.shift();
+      offer('shield-down',2,dragon.x,dragon.worldY,'shield');
+      fxAt(dragon.x,dragonScreenY(),18,CYAN,2.4);ring(dragon.x,dragonScreenY(),CORAL,2.6,30);
+      say('SHIELD DOWN',CORAL,dragon.worldY,70,dragon.x,dragon.alt);}
+    else if(source!=='wyrm'){cue('bad','hit-taken',dragon.x,dragon.worldY,dragon.alt,.55);}
+  }else if(rem>0){
+    dragon.hull-=rem;stats.wounds++;
+    cue('bad',source==='wyrm'?'wyrm-wound':'hit-taken',dragon.x,dragon.worldY,dragon.alt,source==='wyrm'?.9:.6);
+    marks.push({kind:'wound',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+    if(marks.length>48)marks.shift();
+  }
+  fxAt(dragon.x,dragonScreenY(),10,CORAL,1.9);shake(3);
+  if(dragon.hull<=0)wreckDragon(source==='wyrm'?'BROKEN BY THE WYRM':source==='foe'?'SHOT DOWN':'TORN APART');
+}
+function wreckDragon(reason){
+  if(dragon.wreckT>0)return;
+  dragon.wreckT=92;dragon.hull=0;dragon.speed*=.35;dragon.locks.length=0;
+  stats.wrecks++;markEvent(50);volleyStreak=0;
+  cue('bad','wreck',dragon.x,dragon.worldY,dragon.alt,1);
+  offer('wrecked',2,dragon.x,dragon.worldY,reason);
+  fxAt(dragon.x,dragonScreenY(),26,CORAL,3,.012);fxAt(dragon.x,dragonScreenY(),12,'#ffffff',2.2);
+  ring(dragon.x,dragonScreenY(),CORAL,2.6,38);shake(8);
+  say('DOWN · '+reason,CORAL,dragon.worldY,110,dragon.x,dragon.alt);
+}
+function phaseBreak(){
+  const st=wyrm.stages[wyrm.stage];
+  stats.phaseBreaks++;markEvent(40);markProgress(20);
+  cue('good','boss-break',wyrm.x,wyrm.worldY,wyrm.alt,1);
+  marks.push({kind:'boss-break',x:wyrm.x,wy:wyrm.worldY,alt:wyrm.alt,f:runFrame});
+  offer('phase-break',3,wyrm.x,wyrm.worldY,st.name);
+  fxAt(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),34,GOLD,3,.01);fxAt(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),16,'#ffffff',2.2);
+  ring(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),GOLD,3,40);shake(7);
+  say(st.name+' BROKEN',GOLD,wyrm.worldY,100,wyrm.x,wyrm.alt);
+  wyrm.stage++;wyrm.staggerT=Math.max(wyrm.staggerT,70);wyrm.sweepT=0;
+  if(wyrm.stage>=wyrm.stages.length)killWyrm();
+}
+function killWyrm(){
+  wyrm.dead=true;stats.wyrmKills++;markEvent(120);markProgress(60);
+  cue('good','wyrm-kill',wyrm.x,wyrm.worldY,wyrm.alt,1);
+  offer('wyrm-kill',3,wyrm.x,wyrm.worldY,'CARRIER WYRM');
+  fxAt(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),52,GOLD,3.4,.012);fxAt(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),24,CREAM,2.4);
+  fxAt(wyrm.x-20,screenYAt(wyrm.worldY,wyrm.alt)+8,18,CORAL,2.6);fxAt(wyrm.x+20,screenYAt(wyrm.worldY,wyrm.alt)-6,18,CORAL,2.6);
+  ring(wyrm.x,screenYAt(wyrm.worldY,wyrm.alt),GOLD,3.4,54);shake(10);
+  say('THE WYRM FALLS',GOLD,wyrm.worldY,150,wyrm.x,wyrm.alt);
+  dragon.gloryT=Math.max(dragon.gloryT,80);
+  dragon.hull=Math.min(100,dragon.hull+20);dragon.shield=Math.min(dragon.shieldMax,dragon.shield+15);
+  endAct(true);
+}
+function endAct(settled){
+  if(act.phase==='calm')return;
+  const untouched=!settled&&act.type==='sandstorm'&&stats.hitsTaken===act.hitsAtLand;
+  act.phase='calm';act.index++;act.warnAt=runFrame+4200;act.wind=0;plan=null;planAt=-1e9;
+  if(!settled){stats.actClears++;markProgress(30);
+    if(act.type==='sandstorm')stats.stormClears++;
+    // The crew patches her up between acts — attrition stays readable, not terminal.
+    dragon.hull=Math.min(100,dragon.hull+20);dragon.shield=Math.min(dragon.shieldMax,dragon.shield+15);
+    offer(untouched?'untouched':'act-clear',untouched?3:2,dragon.x,dragon.worldY,act.type);
+    say(untouched?'RODE IT CLEAN':act.type==='sandstorm'?'THE FRONT PASSES':'THE WYRM WITHDRAWS',
+      untouched?GOLD:MINT,dragon.worldY+30,untouched?80:64,dragon.x,dragon.alt);}
+  if(act.type==='wyrm'&&wyrm&&!wyrm.dead){wyrm.state='retreat';}
+  if(act.type==='sandstorm')dust=null;
+}
+
+// ---- route planner: copied-state rollouts on the shared integrator -------------
+function boltThreatAt(b,f){
+  let min=999;
+  for(const bolt of bolts){
+    const rel=(bolt.worldY+bolt.speed*f)-b.worldY;
+    if(rel<-14||rel>90)continue;
+    const bx=bolt.x+bolt.vx*f,ba=bolt.alt+bolt.valt*f;
+    min=Math.min(min,Math.hypot(bx-b.x,(ba-b.alt)*1.3,rel*.7));
+  }
+  return min;
+}
+function foeThreatAt(b,f){
+  let min=999;
+  const near=foe=>{
+    const rel=(foe.worldY+foe.speed*f)-b.worldY;
+    if(rel<-20||rel>70)return;
+    min=Math.min(min,Math.hypot(foe.x-b.x,(foe.alt-b.alt)*1.2,rel*.8)-6);
+  };
+  for(const w of wings)if(w.respawnT<=0&&w.state!=='down')near(w);
+  for(const s of swarm)if(s.hp>0)near(s);
+  return min;
+}
+function simulateSpot(targetX,targetAlt){
+  const b=Object.assign({},dragon,{wreckT:0,locks:[]});
+  let minBolt=999,minFoe=999,risk=0;
+  for(let f=0;f<90;f++){
+    advanceCraft(b,{steer:clamp((targetX-b.x)*.09,-1,1),climb:clamp((targetAlt-b.alt)*.11,-1,1),
+      fire:0,targetX,targetAlt,tactic:'PLAN'},envNow());
+    const bt=boltThreatAt(b,f);minBolt=Math.min(minBolt,bt);if(bt<11)risk+=11-bt;
+    const ft=foeThreatAt(b,f);minFoe=Math.min(minFoe,ft);if(ft<7)risk+=7-ft;
+  }
+  let score=Math.min(42,minBolt)*1.55+Math.min(26,minFoe)*.9-risk*(3-persona.risk);
+  // Engagement value: lockable targets in the sweep envelope of this spot.
+  let engage=0;
+  for(const t of lockables()){
+    const d=t.worldY-b.worldY;
+    if(d>50&&d<230&&Math.abs(t.x-targetX)<52&&Math.abs(t.alt-targetAlt)<34)engage++;
+  }
+  score+=Math.min(4,engage)*persona.lockValue;
+  if(wyrm&&!wyrm.dead&&act.phase==='live'){const d=wyrm.worldY-b.worldY;
+    if(d>60&&d<240)score+=8-Math.abs(wyrm.x-targetX)*.1;}
+  if(act.phase!=='calm'&&act.type==='sandstorm'){
+    score+=(60-Math.abs(targetX-80))*.45+(26-Math.abs(targetAlt-32))*.3;
+  }
+  return{targetX,targetAlt,score,min:Math.min(minBolt,minFoe),projectedY:b.worldY};
+}
+function buildRoutePlan(){
+  if(typeof globalThis.__NO_ROUTE_PLAN!=='undefined')return reactivePlan();
+  const candidates=[];
+  for(const x of[22,46,70,94,118,142])for(const a of[12,26,40,58])candidates.push(simulateSpot(x,a));
+  candidates.sort((a,b)=>b.score-a.score||a.targetX-b.targetX||a.targetAlt-b.targetAlt);
+  return candidates[0];
+}
+function reactivePlan(){
+  // Honest baseline: every corridor spot is available, but it only reacts to
+  // threats already on top of the dragon — no copied-state forecast, no
+  // multi-second bolt prediction, no storm warning, no engagement valuation.
+  const candidates=[];
+  for(const x of[22,46,70,94,118,142])for(const a of[12,26,40,58]){
+    let score=0;
+    for(const bolt of bolts){
+      const rel=bolt.worldY-dragon.worldY;
+      if(rel>-10&&rel<60){const d=Math.hypot(bolt.x-x,(bolt.alt-a)*1.3,rel*.7);score+=Math.min(40,d)*1.4;}
+    }
+    for(const t of lockables()){
+      const d=t.worldY-dragon.worldY;
+      if(d>24&&d<150&&Math.abs(t.x-x)<40)score+=4;
+    }
+    candidates.push({targetX:x,targetAlt:a,score,min:score,projectedY:dragon.worldY+180,reactive:true});
+  }
+  candidates.sort((a,b)=>b.score-a.score||a.targetX-b.targetX||a.targetAlt-b.targetAlt);
+  return candidates[0];
+}
+function routeTactic(target){
+  if(act.phase==='warn')return act.type==='sandstorm'?'FRONT INCOMING':'WYRM ON THE HORIZON';
+  if(act.phase==='live'&&act.type==='sandstorm')return'RIDE THE STORM';
+  if(act.phase==='live'&&act.type==='wyrm')return'BREAK THE '+wyrm.stages[Math.min(wyrm.stage,2)].name;
+  if(dragon.hull<40&&dragon.shield<=0)return'RUN THE GAP';
+  return'REIGN OVER '+BIOMES[currentBiome()].name;
+}
+function rawBotIntent(){
+  if(visualIntent)return Object.assign({},visualIntent);
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){stats.admireIntents++;
+    return{steer:clamp((80-dragon.x)*.04,-1,1),climb:clamp((34-dragon.alt)*.06,-1,1),fire:0,
+      targetX:80,targetAlt:34,tactic:'RIDE THE WIND'};}
+  const dodgeRange=persona.dodgeRange;
+  // Weave first: a live bolt on an intercept course beats every plan. The
+  // dragon breaks for open sky, never through the shooter — and a committed
+  // weave owns the next beat (dodgeT): converging fire inside it connects.
+  if(!dragon.dodgeT||dragon.dodgeT<=0)for(const bolt of bolts){
+    const rel=bolt.worldY-dragon.worldY;
+    if(rel<2||rel>dodgeRange+40)continue;
+    const f=rel/(Math.abs(bolt.speed)+dragon.speed+.001)*1;
+    const bx=bolt.x+bolt.vx*Math.max(0,f),ba=bolt.alt+bolt.valt*Math.max(0,f);
+    if(Math.abs(bx-dragon.x)<13&&Math.abs(ba-dragon.alt)<12){
+      const side=dragon.x<bx?-1:1,vside=dragon.alt<ba?-1:1;
+      const awayX=clamp(dragon.x+side*26,CORR_L,CORR_R),awayA=clamp(dragon.alt+vside*14,ALT_MIN,ALT_MAX);
+      stats.dodges++;markEvent(4);dragon.dodgeT=26;
+      return{steer:clamp((awayX-dragon.x)*.3,-1,1),climb:clamp((awayA-dragon.alt)*.3,-1,1),fire:2,
+        targetX:awayX,targetAlt:awayA,tactic:'WEAVE'};
+    }
+  }
+  // Collision shove: never trade paint with a foe at point blank.
+  for(const t of lockables()){
+    const d=t.worldY-dragon.worldY;
+    if(d>-6&&d<26&&Math.abs(t.x-dragon.x)<16&&Math.abs(t.alt-dragon.alt)<12){
+      const side=dragon.x<t.x?-1:1;
+      const awayX=clamp(dragon.x+side*24,CORR_L,CORR_R);
+      return{steer:clamp((awayX-dragon.x)*.28,-1,1),climb:clamp((dragon.alt>t.alt?8:-8)*.2,-1,1),fire:2,
+        targetX:awayX,targetAlt:clamp(dragon.alt+(dragon.alt>t.alt?8:-8),ALT_MIN,ALT_MAX),tactic:'BREAK AWAY'};
+    }
+  }
+  // Fire control: hold to sweep locks onto the formation, unleash on a full
+  // rack or a thinning field; tap lances into lined-up singles and pairs —
+  // weak direct fire for when the volley isn't worth the rack (PD tap-fire).
+  let fire=0;
+  pruneLocks();
+  const rackFull=dragon.locks.length>=MAX_LOCKS;
+  const envelope=lockables().filter(t=>lockTargetScore(t)>0);
+  const wyrmTarget=wyrm&&!wyrm.dead&&act.phase==='live';
+  const anyTarget=envelope.length>0||wyrmTarget;
+  const wantSweep=wyrmTarget||envelope.length>=3||dragon.locks.length>0;
+  if(rackFull||(dragon.locks.length>0&&(!anyTarget&&dragon.lockAge>60||dragon.lockAge>170)))fire=0; // unleash
+  else if(wantSweep&&anyTarget&&dragon.locks.length<MAX_LOCKS)fire=2;
+  if(fire!==2&&dragon.locks.length===0&&dragon.lanceCd<=0){
+    for(const t of lockables()){
+      const d=t.worldY-dragon.worldY;
+      if(d>26&&d<170&&Math.abs(t.x-dragon.x)<7&&Math.abs(t.alt-dragon.alt)<9){fire=1;break;}
+    }
+  }
+  if(!plan||runFrame-planAt>=36){plan=buildRoutePlan();planAt=runFrame;}
+  const steer=clamp((plan.targetX-dragon.x)*.085,-1,1),climb=clamp((plan.targetAlt-dragon.alt)*.1,-1,1);
+  return{steer,climb,fire,targetX:plan.targetX,targetAlt:plan.targetAlt,tactic:routeTactic(plan)};
+}
+function lapseIntent(context,last){const base=last||rawBotIntent();return Object.assign({},base,{
+  steer:(base.steer||0)*.16,climb:(base.climb||0)*.16,fire:0,tactic:'BUFFETED'});}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined'){lastLapsed=false;return rawBotIntent();}
+  const before=skill.isLapsed(runFrame),intent=skill.decide(runFrame,null,rawBotIntent,lapseIntent),after=skill.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();cue('bad','lapse',dragon.x,dragon.worldY,dragon.alt,.3);
+    fxAt(dragon.x,dragonScreenY()-6,7,CORAL,1.2);say('BUFFETED!',CORAL,dragon.worldY,42,dragon.x,dragon.alt);}
+  lastLapsed=after;return intent||rawBotIntent();
+}
+function humanIntent(){const steer=(keys.right?1:0)-(keys.left?1:0),climb=(keys.up?1:0)-(keys.down?1:0);
+  return{steer,climb,fire:keys.b||keys.c?2:(keys.a?1:0),
+    targetX:clamp(dragon.x+steer*30,CORR_L,CORR_R),targetAlt:clamp(dragon.alt+climb*22,ALT_MIN,ALT_MAX),
+    tactic:'MANUAL REIGN'};}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+// ---- wing FSM: pace -> engage -> windup -> fire; down tumble + respawn -------
+function stepWing(w){
+  const spec=WING_KINDS[w.kind];
+  if(w.hitFlashT>0)w.hitFlashT--;
+  if(w.fireFlash>0)w.fireFlash--;
+  if(w.respawnT>0){w.respawnT--;
+    if(w.respawnT<=0){
+      w.x=26+hash(w.id,runFrame)*108;w.worldY=dragon.worldY+520+hash(w.id*3,worldSeed)*140;
+      w.alt=spec.altBand[0]+hash(w.id*7,runFrame)*(spec.altBand[1]-spec.altBand[0]);
+      w.vx=0;w.valt=0;w.speed=spec.cruise;w.hp=spec.hp;w.state='pace';w.stateT=0;w.windupT=0;
+    }
+    return;}
+  if(w.state==='down'){
+    // The kill tumble is physical: the wing spins out and falls behind,
+    // damping to rest under the dizzy sparks (the authored emote that covers
+    // the pause) before the respawn.
+    w.downT--;w.spin*=.92;w.x+=w.spin*1.2;w.alt=Math.max(ALT_MIN,w.alt-.5);
+    w.speed=Math.max(0,w.speed-.05);w.worldY+=w.speed;
+    w.bank=((w.bank||0)+.3*Math.sign(w.spin||1))%TAU;
+    if(w.downT<=0){w.respawnT=300+mod(w.id*37+worldSeed,220);}
+    return;}
+  const rel0=w.worldY-dragon.worldY;
+  if(w.state==='pace'){
+    // Cruise the corridor through the SHARED integrator (it owns speed, bank,
+    // and pose for every craft); rubber-band keeps the fiction honest — the
+    // pack re-forms ahead of the dragon instead of teleporting.
+    const want=rel0<-80?spec.cruise+.55:rel0>420?Math.max(.35,spec.cruise-.2):spec.cruise;
+    const wantX=80+Math.sin(showFrame*.008+w.sineSeed)*46+Math.sin(showFrame*.031+w.id)*12;
+    const wantAlt=spec.altBand[0]+(spec.altBand[1]-spec.altBand[0])*(.5+.5*Math.sin(showFrame*.011+w.sineSeed*2));
+    advanceCraft(w,{steer:clamp((wantX-w.x)*.02,-1,1)*.7,climb:clamp((wantAlt-w.alt)*.03,-1,1)*.7,
+      speed:want,targetX:wantX,targetAlt:wantAlt,tactic:'PACE'},envNow());
+    const engageRange=w.kind==='wasp'?200:170;
+    if(dragon.wreckT<=0&&rel0>-40&&rel0<engageRange&&hash(w.id,Math.floor(runFrame/340))<.72){
+      w.state='engage';w.stateT=0;}
+    return;}
+  if(w.state==='engage'){
+    // Hold a firing station ahead and off the dragon's shoulder — matching
+    // speed while the windup charges. Stations are owned per wing (staggered
+    // side, offset, and depth) so the pack never stacks onto one slot.
+    const side=w.id%2?1:-1,tx=clamp(dragon.x+side*(20+(w.id%3)*9),CORR_L,CORR_R),td=104+(w.id%3)*26;
+    const ta=clamp(dragon.alt+10,spec.altBand[0],spec.altBand[1]);
+    const rel=w.worldY-dragon.worldY;
+    const wantSpeed=clamp(dragon.speed+(td-rel)*.02,.4,2.6);
+    advanceCraft(w,{steer:clamp((tx-w.x)*.05,-1,1),climb:clamp((ta-w.alt)*.05,-1,1),
+      speed:wantSpeed,targetX:tx,targetAlt:ta,tactic:'STATION'},envNow());
+    w.stateT++;w.boltCd--;
+    const lined=Math.abs(rel-td)<36&&Math.abs(w.x-dragon.x)>8;
+    if(w.boltCd<=0&&lined&&rel>-60&&dragon.wreckT<=0){w.state='windup';w.windupT=spec.windup;}
+    else if(w.stateT>520||rel<-60||rel>330){w.state='pace';w.stateT=0;w.boltCd=Math.max(w.boltCd,40);}
+    return;}
+  if(w.state==='windup'){
+    // The tell: the wing holds station while its bolt chamber glows. The bot
+    // gets its weave window here; the viewer gets the prediction.
+    w.windupT--;
+    const side=w.id%2?1:-1,tx=clamp(dragon.x+side*(20+(w.id%3)*9),CORR_L,CORR_R);
+    advanceCraft(w,{steer:clamp((tx-w.x)*.03,-1,1)*.5,climb:clamp((dragon.alt+10-w.alt)*.03,-1,1)*.5,
+      speed:clamp(dragon.speed+(118-(w.worldY-dragon.worldY))*.02,.4,2.6),targetX:tx,targetAlt:w.alt,tactic:'CHARGE'},envNow());
+    if(w.windupT<=0){
+      w.state='engage';w.stateT=0;w.boltCd=spec.boltCd+mod(w.id*13+Math.floor(runFrame),90);w.fireFlash=8;
+      stats.boltsFaced++;
+      const dx=dragon.x-w.x,da=dragon.alt-w.alt,dd=Math.hypot(dx,da)||1;
+      const lead=.35;
+      bolts.push(makeBolt(w.x,w.worldY-4,w.alt,
+        clamp((dx+dragon.vx*lead*8)/dd*.55,-.8,.8),clamp((da+dragon.valt*lead*8)/dd*.5,-.6,.6),-1.9,'bolt','wing-'+w.id));
+    }
+    return;}
+}
+function stepSwarm(s){
+  if(s.hitFlashT>0)s.hitFlashT--;
+  if(s.fireFlash>0)s.fireFlash--;
+  if(s.turret){
+    // Planted ground gun: a static set piece (motion contract exempts it) that
+    // still telegraphs with a muzzle glow and lobs bolts up at the dragon.
+    const rel=s.worldY-dragon.worldY;
+    if(s.boltCd>0)s.boltCd--;
+    if(rel>-30&&rel<230&&Math.abs(s.x-dragon.x)<70&&dragon.wreckT<=0){
+      if(s.windupT>0){s.windupT--;
+        if(s.windupT<=0){s.boltCd=200+mod(s.id*7,120);s.fireFlash=8;stats.boltsFaced++;
+          const dx=dragon.x-s.x,dd=Math.max(1,Math.hypot(dx,dragon.alt));
+          bolts.push(makeBolt(s.x,s.worldY,2,clamp(dx/dd*.6,-.7,.7),clamp(dragon.alt/dd*.55,.2,.8),-1.35,'lob','turret-'+s.id));}
+      }else if(s.boltCd<=0)s.windupT=30;
+    }
+    return;}
+  if(s.hp<=0)return;
+  const spec=WING_KINDS[s.kind];
+  if(s.windupT>0){
+    s.windupT--;
+    advanceCraft(s,{steer:0,climb:0,targetX:s.x,targetAlt:s.alt,tactic:'CHARGE'},envNow());
+    if(s.windupT<=0){s.boltCd=210+mod(s.id*11,90);s.fireFlash=8;stats.boltsFaced++;
+      const dx=dragon.x-s.x,da=dragon.alt-s.alt,dd=Math.hypot(dx,da)||1;
+      bolts.push(makeBolt(s.x,s.worldY-4,s.alt,clamp(dx/dd*.55,-.8,.8),clamp(da/dd*.5,-.6,.6),-1.9,'bolt','swarm-'+s.id));}
+    return;}
+  if(s.kind==='wasp'){
+    // Dive pass: the wasp spears past the dragon's lane, then keeps going.
+    const want=clamp(dragon.x+Math.sin(s.sineSeed*7)*20,CORR_L,CORR_R);
+    advanceCraft(s,{steer:clamp((want-s.x)*.04,-1,1),climb:clamp((dragon.alt+4-s.alt)*.04,-1,1),
+      speed:s.cruise,targetX:want,targetAlt:s.alt,tactic:'DIVE'},envNow());
+  }else if(s.kind==='manta'){
+    advanceCraft(s,{steer:clamp(Math.sin(showFrame*.024+s.sineSeed)*.8,-1,1)*.7,climb:clamp(Math.sin(showFrame*.017+s.sineSeed*2)*.6,-1,1)*.6,
+      speed:s.cruise,targetX:s.x,targetAlt:s.alt,tactic:'GLIDE'},envNow());
+    if(s.boltCd>0)s.boltCd--;
+    const rel=s.worldY-dragon.worldY;
+    if(s.boltCd<=0&&rel>-30&&rel<170&&Math.abs(s.x-dragon.x)<36&&dragon.wreckT<=0)s.windupT=WING_KINDS.manta.windup;
+  }else{
+    advanceCraft(s,{steer:clamp(Math.sin(showFrame*.01+s.sineSeed)*.4,-1,1)*.5,climb:0,
+      speed:s.cruise,targetX:s.x,targetAlt:s.alt,tactic:'DRIFT'},envNow());
+    if(s.boltCd>0)s.boltCd--;
+    const rel=s.worldY-dragon.worldY;
+    if(s.boltCd<=0&&rel>-30&&rel<150&&Math.abs(s.x-dragon.x)<30&&dragon.wreckT<=0)s.windupT=WING_KINDS.vyr.windup;
+  }
+}
+function stepWyrm(){
+  if(!wyrm)return;
+  if(wyrm.hitFlashT>0)wyrm.hitFlashT--;
+  if(wyrm.fireFlash>0)wyrm.fireFlash--;
+  if(wyrm.dead){ // the fall: the carrier noses down behind the dragon
+    wyrm.alt=Math.max(2,wyrm.alt-.6);wyrm.worldY+=Math.max(.1,wyrm.speed-.02);wyrm.bank+=.04;
+    if(wyrm.alt<=2.5)wyrm=null;
+    return;}
+  const d=wyrm.worldY-dragon.worldY;
+  if(wyrm.state==='approach'){
+    // The warning is PHYSICAL: the carrier advances on the horizon for the
+    // whole 240f — a real body closing and weaving, never idling at a sine
+    // extreme or a station crawl (motion contract).
+    advanceCraft(wyrm,{steer:clamp((80+Math.sin(showFrame*.04+wyrm.weaveSeed)*28-wyrm.x)*.05,-1,1),
+      climb:clamp((40-wyrm.alt)*.02,-1,1),
+      speed:dragon.speed-clamp((d-250)*.03,.5,2.2),targetX:80,targetAlt:40,tactic:'APPROACH'},envNow());
+    return;}
+  if(wyrm.state==='retreat'){
+    advanceCraft(wyrm,{steer:clamp((80-wyrm.x)*.01,-1,1),climb:clamp((60-wyrm.alt)*.02,-1,1),
+      speed:dragon.speed+1.2,targetX:80,targetAlt:60,tactic:'RETREAT'},envNow());
+    if(d>620)wyrm=null;
+    return;}
+  if(wyrm.staggerT>0){
+    // Broken-stage stagger: the carrier slews and pours smoke — readable,
+    // bounded, and the bot's punish window.
+    wyrm.staggerT--;
+    advanceCraft(wyrm,{steer:Math.sin(showFrame*.2)*.4,climb:-.2,speed:dragon.speed-.6,
+      targetX:wyrm.x,targetAlt:wyrm.alt,tactic:'STAGGER'},envNow());
+    return;}
+  // Fight weave: hold station ahead, sine across the corridor — fast enough
+  // that no sine extreme ever reads as parked.
+  const tx=clamp(80+Math.sin(showFrame*.03+wyrm.weaveSeed)*44,CORR_L+20,CORR_R-20);
+  const ta=clamp(dragon.alt+12+Math.sin(showFrame*.02+wyrm.weaveSeed*2)*10,26,58);
+  const wantD=190+Math.sin(showFrame*.007)*40;
+  advanceCraft(wyrm,{steer:clamp((tx-wyrm.x)*.03,-1,1),climb:clamp((ta-wyrm.alt)*.03,-1,1),
+    speed:clamp(dragon.speed+(wantD-d)*.015,.3,2.6),targetX:tx,targetAlt:ta,tactic:'WEAVE'},envNow());
+  // Weak-point batteries: the live stage glows, then a bolt leaves.
+  if(wyrm.boltCd>0)wyrm.boltCd--;
+  if(wyrm.boltCd<=0&&d>60&&d<320&&dragon.wreckT<=0){
+    wyrm.boltCd=95+mod(Math.floor(runFrame),45);wyrm.fireFlash=10;stats.boltsFaced++;
+    const wp=wyrmWeakpoints()[0]||{x:wyrm.x,y:screenYAt(wyrm.worldY,wyrm.alt)};
+    // Wyrm ordnance leads the dragon's current drift — and fires in converging
+    // pairs, so a single-bolt read still has to pick a side honestly.
+    const flight=(wyrm.worldY-dragon.worldY)/4.1;
+    for(const side of[-1,1]){
+      const dx=dragon.x+dragon.vx*flight*.75+side*9-wp.x,da=dragon.alt+dragon.valt*flight*.75-wyrm.alt,dd=Math.hypot(dx,da)||1;
+      bolts.push(makeBolt(wp.x,wyrm.worldY,wyrm.alt,clamp(dx/dd*.62,-.85,.85),clamp(da/dd*.58,-.62,.62),-2.3,'bolt','wyrm'));
+    }
+  }
+  // The sweep: a 40f rear-up telegraph, then a fanned bolt wave around the
+  // dragon's CURRENT lane — dodgeable by breaking hard, costly if read late.
+  if(wyrm.sweepCd<=0&&wyrm.sweepT<=0&&d>80&&d<300&&dragon.wreckT<=0)wyrm.sweepT=40;
+  if(wyrm.sweepCd>0)wyrm.sweepCd--;
+  if(wyrm.sweepT>0){wyrm.sweepT--;
+    if(wyrm.sweepT<=0){wyrm.sweepCd=340+mod(Math.floor(runFrame*7),120);wyrm.fireFlash=12;stats.boltsFaced++;
+      for(let i=-2;i<=2;i++){
+        // A wide fanned wave with a half-second of lead on the dragon's lane —
+        // a single-bolt read clips the edge bolts; only a hard early break clears it.
+        const tx2=clamp(dragon.x+i*14+dragon.vx*24,CORR_L,CORR_R),dx=tx2-wyrm.x,
+          da=dragon.alt+dragon.valt*10-wyrm.alt,dd=Math.hypot(dx,da)||1;
+        bolts.push(makeBolt(wyrm.x+i*8,wyrm.worldY,wyrm.alt,clamp(dx/dd*.66,-.9,.9),clamp(da/dd*.62,-.65,.65),-2.9,'sweep','wyrm'));
+      }
+      // The punish wave: a second fan a third of a second later, inside the
+      // first dodge's commitment window, biased onto the flank the dragon is
+      // dodging TOWARD — the boss's read on the read.
+      wyrm.sweep2T=18;wyrm.sweep2Side=Math.sign(dragon.vx)||(hash(runFrame,9)>.5?1:-1);
+      say('SWEEP!',CORAL,wyrm.worldY,50,wyrm.x,wyrm.alt);
+    }
+    return;}
+  if(wyrm.sweep2T>0){wyrm.sweep2T--;
+    if(wyrm.sweep2T<=0){wyrm.fireFlash=10;stats.boltsFaced++;
+      for(let i=0;i<4;i++){
+        const off=wyrm.sweep2Side*(8+i*8),tx2=clamp(dragon.x+off+dragon.vx*14,CORR_L,CORR_R),
+          dx=tx2-wyrm.x,da=dragon.alt-wyrm.alt,dd=Math.hypot(dx,da)||1;
+        bolts.push(makeBolt(wyrm.x+(i-1)*10,wyrm.worldY,wyrm.alt,clamp(dx/dd*.66,-.9,.9),clamp(da/dd*.62,-.65,.65),-2.9,'sweep','wyrm'));
+      }
+    }
+    return;}
+}
+function stepBolts(){
+  for(const bolt of bolts){
+    // Wyrm ordnance is guided: a gentle honest curve through the integrator,
+    // so the boss's fire keeps asking the question after the first weave.
+    const guide=bolt.owner==='wyrm'?clamp((dragon.x-bolt.x)*.006,-.5,.5):0;
+    const guideA=bolt.owner==='wyrm'?clamp((dragon.alt-bolt.alt)*.006,-.5,.5):0;
+    advanceCraft(bolt,{steer:guide,climb:guideA,targetX:bolt.x,targetAlt:bolt.alt,tactic:'FLY'},envNow());
+    bolt.aged++;
+    const d=bolt.worldY-dragon.worldY,dx=Math.abs(bolt.x-dragon.x),da=Math.abs(bolt.alt-dragon.alt);
+    const dist=Math.hypot(dx,da*1.2,Math.max(0,d)*.5);
+    if(d<30)bolt.minD=Math.min(bolt.minD,Math.hypot(dx,da*1.2));
+    if(Math.abs(d)<5&&dx<5.5&&da<6.5&&dragon.invulnT<=0&&dragon.wreckT<=0){
+      bolt.aged=9999;
+      hitDragon(bolt.kind==='sweep'?26:13,bolt.owner==='wyrm'?'wyrm':'foe',bolt.x,bolt.worldY,bolt.alt);
+    }else if(d<-8&&bolt.minD<14&&bolt.minD>4.5&&!bolt.counted){
+      // The weave worked: the bolt passes close enough to read, wide enough to miss.
+      bolt.counted=true;stats.nearMisses++;markEvent(5);
+      offer('dodge',2,dragon.x,dragon.worldY,bolt.id);
+      cue('good','dodge',dragon.x,dragon.worldY,dragon.alt,.28);
+      marks.push({kind:'dodge',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+      if(marks.length>48)marks.shift();
+      fxAt(dragon.x+(bolt.x<dragon.x?6:-6),dragonScreenY(),5,MINT,1.2);
+    }
+  }
+  bolts=bolts.filter(b=>b.aged<600&&b.worldY>dragon.worldY-120&&b.worldY<dragon.worldY+640);
+}
+function stepMissiles(){
+  for(const m of missiles){
+    m.aged++;
+    let tp=null;
+    if(m.target.kind==='wyrm'){if(wyrm&&!wyrm.dead){const wp=wyrmWeakpoints()[0];tp=wp?{x:wp.x,worldY:wyrm.worldY,alt:wyrm.alt}:null;}}
+    else{const t=m.target.ref;if(t&&t.hp>0&&t.respawnT<=0&&t.state!=='down')tp=t;}
+    if(tp)advanceCraft(m,{steer:clamp((tp.x-m.x)*.14,-1,1),climb:clamp((tp.alt-m.alt)*.14,-1,1),
+      targetX:tp.x,targetAlt:tp.alt,tactic:'HOME'},envNow());
+    else advanceCraft(m,{steer:0,climb:0,targetX:m.x,targetAlt:m.alt,tactic:'LOST'},envNow());
+    // impact checks
+    let hit=null;
+    if(m.target.kind==='wyrm'){
+      if(wyrm&&!wyrm.dead){const wp=wyrmWeakpoints()[0];
+        if(wp&&Math.abs(m.x-wp.x)<9&&Math.abs(m.worldY-wyrm.worldY)<12&&Math.abs(m.alt-wyrm.alt)<10)hit='wyrm';}
+    }else{
+      for(const t of lockables()){if(t.hp>0&&Math.abs(m.x-t.x)<6.5&&Math.abs(m.worldY-t.worldY)<8&&Math.abs(m.alt-t.alt)<8){hit=t;break;}}
+    }
+    if(hit){m.aged=9999;
+      fxAt(m.x,screenYAt(m.worldY,m.alt),8,GOLD,1.8);
+      if(hit==='wyrm'){
+        const st=wyrm.stages[wyrm.stage];st.hp-=2;wyrm.hitFlashT=8;markEvent(6);
+        cue('good','wyrm-hit',m.x,m.worldY,m.alt,.3);
+        if(st.hp<=0)phaseBreak();
+      }else{hit.hp-=2;hit.hitFlashT=8;if(hit.hp<=0)killFoe(hit,true,m.volley);else{markEvent(4);}}
+    }
+  }
+  missiles=missiles.filter(m=>m.aged<300&&m.worldY<dragon.worldY+560);
+}
+function stepLances(){
+  for(const l of lances){
+    advanceCraft(l,{steer:0,climb:0,targetX:l.x,targetAlt:l.alt,tactic:'FLY'},envNow());
+    l.aged++;
+    for(const t of lockables()){
+      if(t.hp<=0)continue;
+      const d=t.worldY-l.worldY;
+      if(Math.abs(d)<7&&Math.abs(t.x-l.x)<5&&Math.abs(t.alt-l.alt)<6.5){
+        l.aged=9999;t.hp--;t.hitFlashT=8;stats.lanceHits++;markEvent(3);
+        cue('good','lance-hit',t.x,t.worldY,t.alt,.25);
+        marks.push({kind:'lance-hit',x:t.x,wy:t.worldY,alt:t.alt,f:runFrame});
+        if(marks.length>48)marks.shift();
+        fxAt(t.x,screenYAt(t.worldY,t.alt),6,CYAN,1.5);
+        if(t.hp<=0)killFoe(t,false);
+        break;}
+    }
+    if(l.aged<9999&&wyrm&&!wyrm.dead&&act.phase==='live'){
+      const wp=wyrmWeakpoints()[0];
+      if(wp&&Math.abs(l.x-wp.x)<8&&Math.abs(l.worldY-wyrm.worldY)<12&&Math.abs(l.alt-wyrm.alt)<9){
+        l.aged=9999;const st=wyrm.stages[wyrm.stage];st.hp--;wyrm.hitFlashT=8;stats.lanceHits++;markEvent(4);
+        cue('good','wyrm-hit',l.x,l.worldY,l.alt,.3);
+        fxAt(l.x,screenYAt(l.worldY,l.alt),6,CYAN,1.5);
+        if(st.hp<=0)phaseBreak();
+      }
+    }
+  }
+  lances=lances.filter(l=>l.aged<240&&l.worldY<dragon.worldY+480);
+}
+// ---- contact resolution: nobody flies through anybody -------------------------
+// Contacts resolve AFTER all movement so every actor moved honestly first;
+// the shove is small and physical, never a teleport.
+function separateCraft(a,b,rx,ry){
+  const dx=b.x-a.x,dy=(b.worldY-a.worldY)*.6+(b.alt-a.alt)*.6;
+  if(Math.abs(dx)>=rx||Math.abs(dy)>=ry)return false;
+  const dir=dx===0?(a.worldY<b.worldY?-1:1):Math.sign(dx);
+  const push=(rx-Math.abs(dx))*.5+0.05;
+  a.x=clamp(a.x-dir*push,CORR_L,CORR_R);b.x=clamp(b.x+dir*push,CORR_L,CORR_R);
+  const mixv=(a.vx+b.vx)*.5;a.vx=a.vx*.4+mixv*.6;b.vx=b.vx*.4+mixv*.6;
+  if(a.isDragon)a.contactT=10;else if(b.isDragon)b.contactT=10;
+  if(push>=1.1)stats.contacts++;
+  return true;
+}
+function resolveContacts(){
+  if(dragon.wreckT<=0){
+    for(const t of lockables()){
+      if(t.hp<=0)continue;
+      const touched=separateCraft(dragon,t,8,10);
+      if(t.touchCd>0)t.touchCd--;
+      // Trading paint with a foe rattles the shield; the shove itself is
+      // continuous and silent, the hit is on a per-foe cooldown.
+      if(touched&&(t.touchCd===undefined||t.touchCd<=0)){
+        t.touchCd=90;stats.collisions++;markEvent(6);
+        hitDragon(9,'foe',t.x,t.worldY,t.alt);
+        t.hp--;t.hitFlashT=8;if(t.hp<=0)killFoe(t,false);
+      }
+    }
+    if(wyrm&&!wyrm.dead){
+      const dx=Math.abs(wyrm.x-dragon.x),d=wyrm.worldY-dragon.worldY,da=Math.abs(wyrm.alt-dragon.alt);
+      if(dx<34&&Math.abs(d)<16&&da<14)separateCraft(dragon,wyrm,34,16);
+    }
+  }
+  for(let i=0;i<wings.length;i++)for(let j=i+1;j<wings.length;j++){
+    const a=wings[i],b=wings[j];
+    if(a.respawnT>0||b.respawnT>0||a.state==='down'||b.state==='down')continue;
+    separateCraft(a,b,9,11);
+  }
+  // Pack vs swarm, and swarm vs swarm: every flier separates continuously —
+  // nobody stacks onto another craft's lane.
+  const fliers=[...wings.filter(w=>w.respawnT<=0&&w.state!=='down'),...swarm.filter(s=>s.hp>0&&!s.turret)];
+  for(let i=0;i<fliers.length;i++)for(let j=i+1;j<fliers.length;j++)separateCraft(fliers[i],fliers[j],8,10);
+}
+function stepDragon(){
+  dragon.lastX=dragon.x;dragon.lastY=dragon.worldY;
+  if(dragon.hitFlashT>0)dragon.hitFlashT--;if(dragon.gloryT>0)dragon.gloryT--;
+  if(dragon.invulnT>0)dragon.invulnT--;if(dragon.settleT>0)dragon.settleT--;
+  if(dragon.contactT>0)dragon.contactT--;
+  if(dragon.lanceCd>0)dragon.lanceCd--;
+  if(dragon.dodgeT>0)dragon.dodgeT--;
+  dragon.shieldT++;
+  if(dragon.shieldT>360&&dragon.shield<dragon.shieldMax)dragon.shield=Math.min(dragon.shieldMax,dragon.shield+.045);
+  if(dragon.wreckT>0){
+    // The fall is physical and costly: the pack streams past while the dragon
+    // spirals down, then a wing-flare recovery beat.
+    dragon.wreckT--;dragon.speed=Math.max(.4,dragon.speed*.985);dragon.worldY+=dragon.speed*.4;
+    dragon.x=clamp(dragon.x+Math.sin(showFrame*.35)*.8,CORR_L,CORR_R);
+    dragon.alt=Math.max(ALT_MIN,dragon.alt-.4);
+    dragon.bank+=.32;
+    if(dragon.wreckT<=0){dragon.hull=50;dragon.shield=30;dragon.invulnT=70;dragon.settleT=16;dragon.bank=0;
+      say('WINGS · FLARE · UP!',GOLD,dragon.worldY,60,dragon.x,dragon.alt);}
+    return;}
+  const intent=controller();dragon.intent=intent;stats.appliedIntents++;
+  // Fire ladder: 1 taps a lance with an empty rack, 2 holds the lock sweep,
+  // and dropping to 0 with a loaded rack unleashes the volley (PD control).
+  if(intent.fire===1&&dragon.lanceCd<=0&&dragon.locks.length===0)fireLance();
+  if(intent.fire===2){
+    stats.sweeps++;dragon.lockGlow=Math.min(20,dragon.lockGlow+2);dragon.sweepT++;dragon.lockAge++;
+    if(dragon.sweepT>=13){dragon.sweepT=0;if(acquireLock())stats.sweepHits++;}
+  }else{
+    dragon.lockGlow=Math.max(0,dragon.lockGlow-2);
+    if(intent.fire===0&&dragon.locks.length)releaseVolley();
+    dragon.sweepT=0;dragon.lockAge=0;
+  }
+  pruneLocks();
+  advanceCraft(dragon,intent,envNow());
+  if(dragon.gloryT>0&&showFrame%3===0)dustAt(dragon.x,dragonScreenY()+8,1,GOLD);
+  const stepLen=Math.hypot(dragon.x-dragon.lastX,dragon.worldY-dragon.lastY);stats.maxStep=Math.max(stats.maxStep,stepLen);
+}
+function biomeProgress(){
+  const sector=Math.floor(dragon.worldY/SECTOR);
+  if(sector!==lastSector){stats.markers+=Math.max(1,sector-lastSector);lastSector=sector;markEvent(2);markProgress(1);}
+  const biome=currentBiome();
+  if(biome!==lastBiome){lastBiome=biome;stats.biomes++;markProgress(40);
+    offer('biome',2,dragon.x,dragon.worldY,BIOMES[biome].name);
+    say(BIOMES[biome].name,BIOMES[biome].accent,dragon.worldY+60,150,80,dragon.alt+20);}
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';act.wind=0;return;}
+  if(act.phase==='calm'&&runFrame>=act.warnAt&&!(SHOW.probe().active&&SHOW.probe().active.tier>=3)){
+    act.phase='warn';act.type=act.index%2?'wyrm':'sandstorm';
+    act.landAt=runFrame+240;act.endAt=act.landAt+(act.type==='sandstorm'?780:1900);plan=null;planAt=-1e9;
+    const n={kind:'act-warning',id:act.type,at:showFrame,tag:runFrame,landsAt:showFrame+240};act.notes.push(n);SHOW.note(n);
+    if(act.type==='wyrm'){wyrm=makeWyrm();say('CARRIER WYRM ON THE HORIZON',CORAL,dragon.worldY+90,120,80,dragon.alt+24);}
+    else{dust={worldY:dragon.worldY+620};say('SANDSTORM FRONT INCOMING',GOLD,dragon.worldY+90,120,80,dragon.alt+24);}
+  }else if(act.phase==='warn'){
+    const warnT=1-(act.landAt-runFrame)/240;
+    if(act.type==='sandstorm'){
+      // Gust front: the arriving wall pushes air ahead of it — a physical
+      // crosswind ramp during the warning, full force at land.
+      act.wind=Math.sin(runFrame*.13+1)*(.02+.07*warnT)+Math.sin(runFrame*.031)*.015*warnT;
+      if(dust)dust.worldY=dragon.worldY+620-620*warnT;
+    }else act.wind=0;
+    if(runFrame>=act.landAt){
+      act.phase='live';stats.acts++;act.hitsAtLand=stats.hitsTaken;
+      const n={kind:'act-land',id:act.type,at:showFrame,tag:runFrame};act.notes.push(n);SHOW.note(n);
+      if(act.type==='sandstorm'){stats.storms++;say('THE FRONT HITS',GOLD,dragon.worldY+60,80,80,dragon.alt+22);shake(3);}
+      else{stats.wyrms++;wyrm.state='fight';say('BREAK ITS STAGES',CORAL,dragon.worldY+60,90,80,dragon.alt+22);}
+    }
+  }else if(act.phase==='live'){
+    if(act.type==='sandstorm'){
+      act.wind=Math.sin(runFrame*.085+2)*.105+Math.sin(runFrame*.023)*.05;
+      if(dust)dust.worldY=dragon.worldY+40;
+      if(showFrame%4===0)dustAt(20+hash(showFrame,3)*120,60+hash(showFrame,7)*240,1,'#c9a25e');
+    }
+    if(runFrame>=act.endAt||(act.type==='wyrm'&&(!wyrm||wyrm.dead)))endAct(false);
+  }else act.wind=0;
+}
+function finishFlight(){
+  if(state!=='flight')return;state='gate';resultT=420;
+  outcome=stats.wyrmKills>0?'GATE CLAIMED · WYRM SLAIN':'GATE CLAIMED · REIGN HELD';
+  dragon.gloryT=140;
+  cue('good','gate',dragon.x,dragon.worldY,dragon.alt,1);markEvent(400);markProgress(10);
+  offer('gate',3,dragon.x,dragon.worldY,outcome);
+  fxAt(dragon.x,dragonScreenY(),52,GOLD,3.2,.01);fxAt(dragon.x,dragonScreenY(),18,CREAM,2,.008);
+  say('THE GATE IS YOURS',GOLD,dragon.worldY+60,260,80,dragon.alt+24);
+}
+function resetRun(full){
+  worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;state='flight';resultT=0;outcome='';
+  dragon=makeDragon();wings=[];swarm=[];bolts=[];missiles=[];lances=[];wyrm=null;dust=null;
+  texts=[];plan=null;planAt=-1e9;visualIntent=null;
+  generatedTo=Math.floor(dragon.worldY/SECTOR);lastBiome=0;lastSector=0;wingSerial=0;swarmSerial=0;boltSerial=0;
+  volleyStreak=0;lastVolleyFrame=-1e9;volleySerial=0;volleyCounts={};
+  feedback.length=0;goodPulse=0;badPulse=0;marks.length=0;
+  lastEventFrame=showFrame;lastProgressFrame=showFrame;lastLapsed=false;
+  for(const k in stats)stats[k]=k==='biomes'?1:0;
+  personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];
+  skill=skillProfile({rng:createRng(skillSeed),skill:.82,precision:.86,risk:persona.risk,recovery:.9,
+    reactionFrames:[4,9],lapseChance:.0009,lapseFrames:[16,34]});
+  Object.assign(act,{phase:'calm',type:'sandstorm',warnAt:3000,landAt:3240,endAt:4000,index:0,hitsAtLand:0,wind:0,notes:[]});
+  spawnWings();ensureSwarm();if(full)SHOW.reset(showFrame);
+  say('SOAR · LOCK · UNLEASH',GOLD,dragon.worldY+150,170,80,40);
+  say('TAKE THE GATE',CYAN,dragon.worldY+118,170,80,40);
+}
+function stepWorld(){
+  runFrame++;stepActs();ensureSwarm();stepDragon();
+  for(const w of wings)stepWing(w);
+  for(const s of swarm)stepSwarm(s);
+  swarm=swarm.filter(s=>s.hp>0);
+  stepWyrm();stepBolts();stepMissiles();stepLances();resolveContacts();biomeProgress();
+  if(runFrame>=FLIGHT_FRAMES)finishFlight();
+}
+function step(){
+  showFrame++;sessionStep({reset:()=>resetRun(true)});pres=SHOW.step(showFrame);
+  if(state==='flight'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  }else if(state==='gate'){resultT--;
+    // Victory glide: the dragon keeps soaring through the gate light while the
+    // pack trails home — presentation motion, no new threats, combat closed.
+    advanceCraft(dragon,{steer:clamp((80-dragon.x)*.02,-1,1),climb:clamp((40-dragon.alt)*.02,-1,1),
+      fire:0,targetX:80,targetAlt:40,tactic:'RIDE THE WIND'},envNow());
+    for(const w of wings){if(w.respawnT<=0&&w.state!=='down'){
+      advanceCraft(w,{steer:clamp((80-w.x)*.01,-1,1)*.4,climb:0,speed:WING_KINDS[w.kind].cruise*.8,
+        targetX:80,targetAlt:w.alt,tactic:'TRAIL HOME'},envNow());}}
+    if(resultT<=0){if(playing())gameOver(outcome);resetRun(true);}}
+  goodPulse=goodPulse>.02?goodPulse*.94:0;badPulse=badPulse>.02?badPulse*.93:0;
+  while(marks.length&&runFrame-marks[0].f>70)marks.shift();
+  stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+}
+
+// ---- authored renderer ---------------------------------------------------------
+// The sky corridor is a QUIET stage (owner doctrine): broad terrain bands, a
+// few big landmarks, long haze striations at the far edge — never a speckle
+// field fighting the actors. Everything terrain-anchored scrolls DOWN-screen
+// through sy() as the dragon flies north; altitude reads through the actor's
+// own screen height and its ground shadow, never through a fake scale hack.
+function drawBiomeBase(p){
+  rect(0,0,W,H,mix(p.ground,INK,.12));
+  // Broad value bands: the ground plane darkens toward the viewer so the far
+  // edge glows — depth with three fills, no noise.
+  rect(0,38,W,86,mix(p.far,p.ground,.35));
+  rect(0,124,W,110,mix(p.ground,p.far,.12));
+  rect(0,234,W,H-234,mix(p.ground,INK,.22));
+  // Long strata seams scrolling with the world: full-width tone steps give
+  // real edge structure; they are lines, never speckle.
+  for(let wy=Math.floor((dragon.worldY-80)/44)*44;wy<dragon.worldY+300;wy+=44){
+    const y=sy(wy);if(y<38||y>H)continue;
+    const ph=Math.floor(wy/44);
+    rect(0,y,W,2,mix(p.far,CREAM,.5));
+    rect(0,y+2,W,2,mix(p.ground,INK,.55));
+    if(hash(ph*3,worldSeed)>.5)rect(mod(ph*37,120),y-2,26,2,mix(p.far,p.accent,.4));
+  }
+  // Sector-scale two-tone fields: big alternating patches give the plane real
+  // value structure without a single speckle of noise.
+  for(let wy=Math.floor((dragon.worldY-120)/150)*150;wy<dragon.worldY+330;wy+=150){
+    const y=sy(wy),ph=Math.floor(wy/150);if(y<36||y>H+8)continue;
+    const split=30+hash(ph*7,worldSeed)*100;
+    ctx.globalAlpha=.6;rect(0,y,split,14,mix(p.ground,p.far,.38));
+    rect(split,y,W-split,14,mix(p.ground,INK,.38));ctx.globalAlpha=1;
+  }
+  // Milled micro-banding (the blockmine/asphalt answer): fine one-pixel tone
+  // lines every four rows, alternating warm and cool. They are horizontal
+  // lines, so they carry edge and material richness with zero speckle.
+  for(let wy=Math.floor((dragon.worldY-80)/4)*4;wy<dragon.worldY+300;wy+=4){
+    const y=sy(wy);if(y<38||y>H)continue;
+    const odd=Math.floor(wy/4)%2;
+    ctx.globalAlpha=.38;rect(0,y,W,1,odd?mix(p.ground,p.far,.45):mix(p.ground,INK,.45));ctx.globalAlpha=1;
+  }
+}
+function drawDuneSea(p){
+  for(let wy=Math.floor((dragon.worldY-80)/48)*48;wy<dragon.worldY+300;wy+=48){
+    const y=sy(wy);if(y<34||y>H+8)continue;
+    const ph=Math.floor(wy/48);
+    // Three-tone dune ridge: lit crest, mid slope, dark lee — the desert's
+    // grammar with real value steps.
+    for(let x=0;x<W;x+=4){
+      const o=Math.sin(x*.045+ph*1.7)*4;
+      rect(x,y+o,4,2,mix(p.ridge,CREAM,.5));
+      rect(x,y+o+2,4,3,p.ridge);
+      rect(x,y+o+5,4,3,p.ridgeD);
+    }
+    // Rock outcrops: flat-topped mesas with lit rims.
+    if(hash(ph,worldSeed)>.5){const rx=14+hash(ph*7,worldSeed)*132;
+      poly([[rx,y-6],[rx+12,y-6],[rx+14,y-1],[rx-2,y-1]],p.rock);
+      rect(rx,y-8,12,3,mix(p.rock,CREAM,.3));rect(rx+1,y-1,12,2,mix(p.rock,INK,.35));}
+    if(hash(ph*13,worldSeed)>.88){ // rare oasis: water glint + two palms
+      const ox=30+hash(ph*17,worldSeed)*100;
+      ctx.fillStyle='#1a5a68';ctx.beginPath();ctx.ellipse(ox,y+8,10,4,0,0,TAU);ctx.fill();
+      rect(ox-7,y+7,5,2,'#3f8a94');rect(ox-2,y-6,1,8,'#5a4a2c');poly([[ox-2,y-6],[ox-6,y-3],[ox-2,y-4],[ox+2,y-3]],'#4a7a3e');
+      rect(ox+5,y-5,1,7,'#5a4a2c');poly([[ox+5,y-5],[ox+2,y-2],[ox+5,y-3],[ox+8,y-2]],'#4a7a3e');
+      rect(ox+12,y-3,2,4,'#8a7350');rect(ox+13,y-5,1,2,'#a8936a');}
+    if(hash(ph*11,worldSeed)>.7){ // bleached thorn skeletons: dead trees in the sand
+      const tx=22+hash(ph*19,worldSeed)*116;
+      line([[tx,y+2],[tx+2,y-6]],'#a8936a',1);line([[tx+2,y-6],[tx-2,y-9]],'#a8936a',1);line([[tx+2,y-6],[tx+6,y-8]],'#8a7350',1);}
+  }
+}
+function drawCloudReef(p){
+  // The cloud sea floor: layered banks in three tones with hard-shaded rims
+  // fill the mid ground — the dragon threads between the reef islets poking through.
+  for(let wy=Math.floor((dragon.worldY-100)/74)*74;wy<dragon.worldY+330;wy+=74){
+    const ph=Math.floor(wy/74),alt=14+hash(ph,worldSeed)*14;
+    const y=screenYAt(wy,alt);if(y<30||y>H+20)continue;
+    const cx=hash(ph*3,worldSeed)>.5?36:118,w=44+hash(ph*5,worldSeed)*26;
+    ctx.globalAlpha=.9;
+    ctx.fillStyle=mix(p.ridgeD,INK,.35);ctx.beginPath();ctx.ellipse(cx,y+5,w*.5,7,0,0,TAU);ctx.fill();
+    ctx.fillStyle=p.ridgeD;ctx.beginPath();ctx.ellipse(cx,y+4,w*.48,6,0,0,TAU);ctx.fill();
+    ctx.fillStyle=mix(p.ridge,p.ridgeD,.35);ctx.beginPath();ctx.ellipse(cx,y+1,w*.5,6,0,0,TAU);ctx.fill();
+    ctx.fillStyle=p.ridge;ctx.beginPath();ctx.ellipse(cx-w*.22,y-2,w*.26,5,0,0,TAU);ctx.fill();
+    ctx.fillStyle=mix(p.ridge,CREAM,.3);ctx.beginPath();ctx.ellipse(cx+w*.24,y-1,w*.22,4,0,0,TAU);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  // Drifting wisps at dragon altitude: fast parallax streaks of thin cloud.
+  for(let wy=Math.floor((dragon.worldY-90)/74)*74;wy<dragon.worldY+320;wy+=74){
+    const ph=Math.floor(wy/74),alt=26+hash(ph,worldSeed)*34;
+    const y=screenYAt(wy,alt);if(y<20||y>H+16)continue;
+    const cx=20+hash(ph*3,worldSeed)*120,w=26+hash(ph*5,worldSeed)*22;
+    ctx.globalAlpha=.55;
+    ctx.fillStyle=p.ridgeD;ctx.beginPath();ctx.ellipse(cx,y+3,w*.5,5,0,0,TAU);ctx.fill();
+    ctx.fillStyle=p.ridge;ctx.beginPath();ctx.ellipse(cx,y,w*.5,5,0,0,TAU);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx-w*.28,y-2,w*.24,4,0,0,TAU);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx+w*.26,y-1,w*.22,4,0,0,TAU);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  // Reef needles: thin stone spires with lit tips punching through the cloud sea.
+  for(let wy=Math.floor((dragon.worldY-90)/200)*200;wy<dragon.worldY+320;wy+=200){
+    const ph=Math.floor(wy/200);if(hash(ph*29,worldSeed)<.45)continue;
+    const alt=18+hash(ph*31,worldSeed)*20,y=screenYAt(wy,alt);if(y<40||y>H+10)continue;
+    const nx=14+hash(ph*37,worldSeed)*132,h=18+hash(ph*41,worldSeed)*16;
+    poly([[nx-3,y],[nx,y-h],[nx+3,y]],mix(p.rock,INK,.15));
+    poly([[nx-1,y-2],[nx,y-h+3],[nx+1,y-2]],mix(p.accent,CREAM,.4));
+    rect(nx-4,y,7,2,mix(p.rock,p.ridgeD,.4));
+  }
+  // Reef islets: floating rock slabs with grass crowns, drip-stone roots,
+  // beacon lights — and cloud shadows on the sea below them.
+  for(let wy=Math.floor((dragon.worldY-90)/120)*120;wy<dragon.worldY+320;wy+=120){
+    const ph=Math.floor(wy/120);if(hash(ph,worldSeed*3)<.3)continue;
+    const alt=30+hash(ph*7,worldSeed)*26,y=screenYAt(wy,alt);if(y<26||y>H+20)continue;
+    const ix=26+hash(ph*11,worldSeed)*108,iw=17+hash(ph*13,worldSeed)*11;
+    ctx.globalAlpha=.3;ctx.fillStyle='#0c1a2c';
+    ctx.beginPath();ctx.ellipse(ix,screenYAt(wy,10)+8,iw*.6,4,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    poly([[ix-iw/2,y],[ix+iw/2,y],[ix+iw/2-3,y+7],[ix-iw/2+3,y+7]],p.rock);
+    rect(ix-iw/2,y-4,iw,5,'#5e8a5a');rect(ix-iw/2+2,y-5,iw-4,2,'#7ab06a');
+    rect(ix-iw/2+3,y+1,iw-6,2,mix(p.rock,CREAM,.25));
+    poly([[ix-3,y+7],[ix,y+15],[ix+3,y+7]],mix(p.rock,INK,.35));
+    poly([[ix-7,y+7],[ix-5,y+12],[ix-4,y+7]],mix(p.rock,INK,.45));
+    if(hash(ph*17,worldSeed)>.4){rect(ix-1,y-10,2,6,'#59d8f5');rect(ix-1,y-12,2,2,'#bfefff');}
+  }
+}
+function drawSunkenRuins(p){
+  for(let wy=Math.floor((dragon.worldY-80)/44)*44;wy<dragon.worldY+300;wy+=44){
+    const y=sy(wy);if(y<34||y>H+8)continue;
+    const ph=Math.floor(wy/44);
+    // Two wave tiers per row: long broken swells, never stipple.
+    ctx.globalAlpha=.9;
+    for(let x=mod(ph*29,40)-40;x<W;x+=64){rect(x,y,22,2,mix(p.ridge,CREAM,.35));rect(x+8,y+3,14,1,mix(p.ridge,CREAM,.2));}
+    ctx.globalAlpha=.5;
+    for(let x=mod(ph*47+20,56)-56;x<W;x+=88)rect(x,y+8,16,1,p.ridgeD);
+    ctx.globalAlpha=1;
+    // Drowned plaza seams: long broken tile joints under the water skin.
+    ctx.globalAlpha=.35;
+    for(let x=mod(ph*53,26)-26;x<W;x+=26)rect(x,y-6,2,14,mix(p.rock,CREAM,.15));
+    ctx.globalAlpha=1;
+    // Drowned complexes: column rows, snapped lintels, statue heads, kelp.
+    if(hash(ph*5,worldSeed)>.3){
+      const rx=16+hash(ph*9,worldSeed)*104;
+      for(let c=0;c<3;c++){const cx=rx+c*13;
+        rect(cx,y-9-c%2*3,4,10+c%2*3,p.rock);rect(cx-1,y-11-c%2*3,6,2,mix(p.rock,CREAM,.25));
+        rect(cx,y-2+c%2,4,2,mix(p.rock,INK,.3));}
+      if(hash(ph*3,worldSeed)>.45)rect(rx-1,y-15,29,3,mix(p.rock,CREAM,.1));
+      if(hash(ph*7,worldSeed)>.55){ // statue head, half sunk
+        rect(rx+32,y-6,8,7,mix(p.rock,p.far,.2));rect(rx+34,y-4,2,2,'#0c2e36');rect(rx+38,y-4,2,2,'#0c2e36');
+        rect(rx+34,y-7,4,1,mix(p.rock,CREAM,.3));}
+      ctx.globalAlpha=.5;rect(rx+1,y-2,2,3,p.accent);rect(rx+15,y-1,2,2,p.accent);ctx.globalAlpha=1;
+    }
+    if(hash(ph*17,worldSeed)>.5){ // kelp strands swaying with the flight
+      const kx=18+hash(ph*23,worldSeed)*124;
+      for(let k=0;k<3;k++){const sway=Math.sin(showFrame*.06+ph+k)*1.5;
+        line([[kx+k*4,y+2],[kx+k*4+sway,y-7-k]],'#2c6a4a',1);}}
+  }
+}
+function drawAshFields(p){
+  for(let wy=Math.floor((dragon.worldY-80)/48)*48;wy<dragon.worldY+300;wy+=48){
+    const y=sy(wy);if(y<34||y>H+8)continue;
+    const ph=Math.floor(wy/48);
+    // Basalt plate seams: big rim-lit plates, two per row — real edge structure.
+    for(let x=mod(ph*31,60)-60;x<W;x+=92){
+      poly([[x,y],[x+34,y+2],[x+38,y+12],[x+6,y+14]],mix(p.rock,p.far,.15));
+      line([[x+2,y+1],[x+34,y+3]],mix(p.ridge,CREAM,.45));
+      line([[x+6,y+13],[x+36,y+11]],mix(p.rock,CREAM,.15));}
+    // Ember cracks: a few LONG glowing fissures, the biome's hot signature.
+    if(hash(ph*7,worldSeed)>.3){
+      const ex=16+hash(ph*11,worldSeed)*128,flick=.6+.4*Math.sin(showFrame*.07+ph);
+      ctx.globalAlpha=.9*flick;
+      poly([[ex,y+2],[ex+16,y+5],[ex+30,y+4],[ex+18,y+7],[ex+4,y+6]],hash(ph,worldSeed)>.5?AMBER:CORAL);
+      poly([[ex+8,y+3],[ex+16,y+4],[ex+22,y+4],[ex+14,y+6]],'#ffd166');
+      ctx.globalAlpha=.35;
+      poly([[ex-2,y+1],[ex+32,y+3],[ex+20,y+8],[ex+2,y+7]],AMBER);
+      ctx.globalAlpha=1;}
+    // Lava pools: broad glow pools with bright rims.
+    if(hash(ph*13,worldSeed)>.62){
+      const lx=26+hash(ph*17,worldSeed)*108,flick=.7+.3*Math.sin(showFrame*.05+ph*2);
+      ctx.fillStyle=mix('#c92c0c',INK,.1);ctx.beginPath();ctx.ellipse(lx,y+6,11,4,0,0,TAU);ctx.fill();
+      ctx.globalAlpha=.85*flick;ctx.fillStyle=AMBER;ctx.beginPath();ctx.ellipse(lx-2,y+5,5,2,0,0,TAU);ctx.fill();
+      ctx.globalAlpha=1;rect(lx+3,y+4,4,1,'#ffd166');}
+    if(hash(ph*19,worldSeed)>.55){ // obsidian spire with a lit edge
+      const sx=24+hash(ph*23,worldSeed)*112,h=16+hash(ph*29,worldSeed)*14;
+      poly([[sx-4,y+2],[sx,y-h],[sx+4,y+2]],mix(p.ridge,INK,.2));
+      poly([[sx-1,y-2],[sx,y-h+3],[sx+2,y-2]],mix(p.ridge,CREAM,.35));
+      rect(sx-3,y-1,6,2,mix(p.rock,CREAM,.2));}
+    // Ember motes: two per sector, rising slow — big enough to never speckle.
+    if(hash(ph*31,worldSeed)>.4)for(let i=0;i<2;i++){
+      const mx=20+hash(ph*37+i,worldSeed)*120,my=y-((showFrame*.4+ph*13+i*30)%60);
+      if(my>40)rect(mx,my,2,2,i%2?AMBER:CORAL);}
+  }
+}
+function drawTheGate(p){
+  // Concentric gate rings ahead: huge slow arcs the corridor threads.
+  for(let wy=Math.floor((dragon.worldY-120)/260)*260;wy<dragon.worldY+360;wy+=260){
+    const ph=Math.floor(wy/260),y=sy(wy);if(y<-90||y>H+90)continue;
+    const r=52+hash(ph,worldSeed)*22;
+    ctx.globalAlpha=.85;ctx.strokeStyle=mix(p.ridge,CREAM,.2);ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(80,y,r,0,TAU);ctx.stroke();
+    ctx.globalAlpha=.4;ctx.strokeStyle=p.far;ctx.lineWidth=6;
+    ctx.beginPath();ctx.arc(80,y,r+8,0,TAU);ctx.stroke();ctx.globalAlpha=1;ctx.lineWidth=1;
+    for(let i=0;i<4;i++){const a=ph*1.3+i*TAU/4+.4;
+      rect(80+Math.cos(a)*r-2,y+Math.sin(a)*r-2,4,4,i%2?GOLD:p.accent);}
+  }
+  // Glyph plates: broad luminous slabs with dark sigil bars.
+  for(let wy=Math.floor((dragon.worldY-80)/84)*84;wy<dragon.worldY+300;wy+=84){
+    const ph=Math.floor(wy/84),y=sy(wy);if(y<32||y>H+12)continue;
+    const gx=20+hash(ph*13,worldSeed)*96;
+    rect(gx,y,24,8,mix(p.rock,p.far,.25));rect(gx+2,y+2,20,1,mix(p.accent,CREAM,.4));
+    rect(gx+3,y+4,4,3,p.ridgeD);rect(gx+10,y+4,4,3,p.ridgeD);rect(gx+17,y+4,4,3,p.ridgeD);
+  }
+  // Light pillars: vertical beams anchored to the plane.
+  for(let wy=Math.floor((dragon.worldY-80)/130)*130;wy<dragon.worldY+300;wy+=130){
+    const ph=Math.floor(wy/130),y=sy(wy);if(y<30||y>H+40)continue;
+    const px=18+hash(ph*23,worldSeed)*124;
+    ctx.globalAlpha=.2;rect(px-3,y-34,7,38,p.accent);ctx.globalAlpha=.55;rect(px-1,y-32,3,34,CYAN);ctx.globalAlpha=1;
+    rect(px-4,y+2,9,2,mix(p.ridge,CREAM,.25));
+  }
+}
+function drawFarHaze(p){
+  // Distance haze: long horizontal striations pull the far corridor into the
+  // biome's glow while the near field stays dark — the frame's bright mass.
+  // Alternating two-row bands give the far field real edge and value.
+  const haze=mix(p.accent,p.haze,.6),hazeBright=mix(haze,CREAM,.85),hazeMid=mix(haze,p.far,.5),hazeDim=mix(haze,INK,.35);
+  for(let y=38;y<116;y++){const u=1-(y-38)/78;ctx.globalAlpha=.72*Math.pow(u,1.35);
+    const band=mod(Math.floor((y-38)/2),4);
+    rect(0,y,W,1,band===0?hazeBright:band===3?hazeDim:hazeMid);}
+  ctx.globalAlpha=1;
+}
+function drawDustWall(){
+  if(!dust)return;
+  const y=sy(dust.worldY);
+  if(y<-110||y>H+30)return;
+  // A physical wall of dust arriving: towering billow bands with hard lit
+  // crests and dark underbellies — a turbulent front, never a flat wash.
+  const h2=110;
+  rect(0,y-h2,W,h2,'#6a4e2e');
+  for(let yy=y-h2;yy<y;yy+=9){
+    const band=mod(Math.floor((y-yy)/9),3),ph=Math.floor(yy/9);
+    for(let x=0;x<W;x+=7){const o=Math.sin(x*.09+ph*1.3)*4;
+      rect(x,yy+o,7,3,band===0?'#c9a25e':band===1?'#8a683c':'#5a3f24');}
+  }
+  for(let x=0;x<W;x+=8){const o=hash(x,Math.floor(dust.worldY))*.16;
+    rect(x,y-h2-6+o,8,10,'#8a683c');rect(x,y-h2-2+o,8,4,'#c9a25e');rect(x+3,y-h2-4+o,2,3,'#e8c88a');}
+  // Lightning inside the front: occasional bright forks, tall and thin.
+  if(hash(Math.floor(showFrame/40),3)>.4){const lx=20+hash(Math.floor(showFrame/40),7)*120;
+    line([[lx,y-h2+14],[lx-6,y-h2+44],[lx+2,y-h2+44],[lx-8,y-h2+76]],'#fff3da',1);
+    ctx.globalAlpha=.3;rect(lx-8,y-h2+10,18,3,'#fff3da');ctx.globalAlpha=1;}
+  ctx.globalAlpha=.4;
+  for(let i=0;i<6;i++){const yy=y-20-i*14;rect(mod(i*53+Math.floor(showFrame*3),W)-20,yy,30,2,'#c9a25e');}
+  ctx.globalAlpha=1;
+}
+function drawStormOverlay(){
+  if(!(act.phase==='live'&&act.type==='sandstorm'))return;
+  // The storm is a physical presence, not a wash: rolling dust billows with
+  // hard lit crests swallow the mid-distance while the near field stays readable.
+  for(let i=0;i<5;i++){
+    const yy=60+mod(i*67+Math.floor(showFrame*1.8),H-80);
+    for(let x=0;x<W;x+=6){const o=Math.sin(x*.06+i*2+showFrame*.03)*5;
+      rect(x,yy+o,6,2,mix('#c9a25e','#fff3da',.35));}
+    for(let x=0;x<W;x+=6){const o=Math.sin(x*.06+i*2+showFrame*.03)*5;
+      rect(x,yy+o+2,6,5,'#8a683c');}
+    for(let x=0;x<W;x+=6){const o=Math.sin(x*.06+i*2+showFrame*.03)*5;
+      rect(x,yy+o+7,6,2,'#6a4e2e');}
+  }
+  ctx.globalAlpha=.14;rect(0,38,W,H-38,'#8a683c');ctx.globalAlpha=1;
+  // Wind streaks: long fast lines showing the crosswind's actual direction.
+  const dir=Math.sign(act.wind)||1;
+  ctx.globalAlpha=.4;
+  for(let i=0;i<9;i++){
+    const yy=52+mod(i*47+Math.floor(showFrame*2.4),H-70),xx=mod(i*71+Math.floor(showFrame*5)*dir,W+40)-20;
+    rect(xx,yy,16,2,i%3?'#c9a25e':'#fff3da');}
+  ctx.globalAlpha=1;
+}
+function drawEnvironment(p){
+  drawBiomeBase(p);
+  if(p.kind==='dune')drawDuneSea(p);
+  else if(p.kind==='reef')drawCloudReef(p);
+  else if(p.kind==='ruins')drawSunkenRuins(p);
+  else if(p.kind==='ash')drawAshFields(p);
+  else drawTheGate(p);
+  drawFarHaze(p);
+  drawDustWall();
+  drawStormOverlay();
+}
+// ---- actors ---------------------------------------------------------------------
+let isolatedSubject=false;
+function drawShadow(x,worldY,alt,r){
+  if(isolatedSubject)return; // ground shadows read as environment, not actor pixels
+  const gy=sy(worldY);if(gy<30||gy>H+10)return;
+  ctx.globalAlpha=clamp(.28-alt*.002,.1,.28);
+  ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(x,gy+3,r,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+}
+function drawTurret(t){
+  const y=screenYAt(t.worldY,0);if(y<30||y>H+14)return;
+  const flash=t.hitFlashT>0&&((showFrame>>1)&1);
+  poly([[t.x-6,y+5],[t.x+6,y+5],[t.x+4,y-2],[t.x-4,y-2]],flash?'#ffffff':'#3a4256');
+  rect(t.x-5,y+3,10,2,'#232a3a');
+  // The barrel tracks the dragon honestly; the muzzle glow is the windup tell.
+  const ang=Math.atan2(dragon.x-t.x,(y-(DRAGON_Y-dragon.alt))*.7);
+  const bx=t.x+Math.sin(ang)*6,by=y-2-Math.cos(ang)*6;
+  line([[t.x,y-2],[bx,by]],'#8a94a8',2);
+  if(t.windupT>0){const g=1-t.windupT/30;
+    ctx.globalAlpha=.4+.6*g;ctx.fillStyle=CORAL;ctx.beginPath();ctx.arc(bx,by,1.5+g*2.5,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  if(t.fireFlash>0){ctx.globalAlpha=t.fireFlash/8;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,by,3,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+}
+function drawFoe(f){
+  const y=screenYAt(f.worldY,f.alt);if(y<24||y>H+18)return;
+  const spec=WING_KINDS[f.kind];
+  drawShadow(f.x,f.worldY,f.alt,4);
+  ctx.save();ctx.translate(Math.round(f.x),Math.round(y));ctx.rotate(f.bank||0);
+  const flash=f.hitFlashT>0&&((showFrame>>1)&1);
+  const main=flash?(((showFrame>>1)&1)?'#ffffff':CORAL):spec.color;
+  if(f.kind==='vyr'){
+    poly([[0,-5],[5,4],[0,2],[-5,4]],main);rect(-1,-4,2,4,mix(main,INK,.3));
+    rect(-1,-6,2,2,spec.trim);
+  }else if(f.kind==='manta'){
+    const flap2=Math.sin(showFrame*.16+f.sineSeed)*1.5;
+    poly([[0,-4],[9,-1-flap2],[7,3],[0,1],[-7,3],[-9,-1-flap2]],main);
+    rect(-2,-3,4,5,mix(main,INK,.25));rect(-1,3,2,4,mix(main,INK,.4));
+  }else if(f.kind==='wasp'){
+    poly([[0,-6],[3,4],[0,7],[-3,4]],main);
+    ctx.globalAlpha=.5;rect(-5,-2-(showFrame%2),4,1,spec.trim);rect(1,-3+(showFrame%2),4,1,spec.trim);ctx.globalAlpha=1;
+    rect(-1,-7,2,2,spec.trim);
+  }else{ // spire gunship
+    rect(-6,-3,12,7,main);rect(-4,-5,8,3,mix(main,INK,.2));
+    poly([[-6,4],[-3,7],[0,4]],mix(main,INK,.3));poly([[6,4],[3,7],[0,4]],mix(main,INK,.3));
+    rect(-5,-6,3,2,spec.trim);rect(2,-6,3,2,spec.trim);
+  }
+  // Windup glow: the bolt chamber brightens ON the shooter — the dodge tell.
+  if(f.windupT>0){const g=1-f.windupT/spec.windup;
+    ctx.globalAlpha=.35+.65*g;ctx.fillStyle=g>.75?'#ffffff':CORAL;
+    ctx.beginPath();ctx.arc(0,0,2+g*3,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  if(f.fireFlash>0){ctx.globalAlpha=f.fireFlash/8;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,-3,3,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  ctx.restore();
+  // Dizzy stun sparks over a downed wing: the authored emote that covers the
+  // tumble pause. Render-only; __NO_EMOTE strips art and flag together.
+  if(f.state==='down'&&typeof globalThis.__NO_EMOTE==='undefined'){
+    for(let i=0;i<3;i++){const a=showFrame*.24+f.id+i*TAU/3;
+      rect(f.x+Math.round(Math.cos(a)*5)-1,y-10+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}
+  }
+}
+function drawWyrm(){
+  if(!wyrm)return;
+  const y=screenYAt(wyrm.worldY,wyrm.alt);if(y<-60||y>H+70)return;
+  drawShadow(wyrm.x,wyrm.worldY,wyrm.alt,16);
+  ctx.save();ctx.translate(Math.round(wyrm.x),Math.round(y));ctx.rotate(wyrm.bank||0);
+  const flash=wyrm.hitFlashT>0&&((showFrame>>1)&1);
+  const hull=flash?'#ffffff':'#5c4a74',plate='#8a6ea8',bone='#e8dcb8';
+  // Segmented carrier body: head horn, armored thorax, tapering tail.
+  poly([[-4,-26],[4,-26],[6,-14],[-6,-14]],plate); // head
+  poly([[-2,-30],[0,-36],[2,-30]],bone); // horn crown
+  rect(-3,-24,2,2,GOLD);rect(1,-24,2,2,GOLD); // eyes
+  for(let i=0;i<4;i++){const w2=16-i*3;
+    rect(-w2/2,-14+i*8,w2,7,i%2?hull:mix(hull,plate,.45));
+    rect(-w2/2,-14+i*8,w2,1,plate);rect(-w2/2,-14+i*8,1,7,mix(plate,bone,.3));}
+  // Sail wings with membrane struts
+  const flap3=Math.sin(showFrame*.1+wyrm.weaveSeed)*2;
+  poly([[-8,-12],[-36,-16-flap3],[-30,-2],[-10,-4]],mix(hull,plate,.25));
+  poly([[8,-12],[36,-16-flap3],[30,-2],[10,-4]],mix(hull,plate,.25));
+  line([[-9,-9],[-33,-14-flap3]],bone,1);line([[9,-9],[33,-14-flap3]],bone,1);
+  line([[-30,-2],[-10,-4]],mix(plate,bone,.2),1);line([[30,-2],[10,-4]],mix(plate,bone,.2),1);
+  // Tail
+  poly([[-4,18],[0,30],[4,18]],mix(hull,INK,.3));
+  // Staged weak points glow on the body: engines / wing cannons / core.
+  const stageColors=[CYAN,AMBER,GOLD];
+  if(!wyrm.dead){
+    const sc=stageColors[wyrm.stage],pulse=.6+.4*Math.sin(showFrame*.12);
+    const pts=wyrm.stage===0?[[-24,8],[24,8]]:wyrm.stage===1?[[-30,-4],[30,-4]]:[[0,2]];
+    ctx.globalAlpha=.5+.5*pulse;ctx.fillStyle=sc;
+    for(const[px,py]of pts){ctx.beginPath();ctx.arc(px,py,3.4,0,TAU);ctx.fill();}
+    ctx.globalAlpha=1;ctx.fillStyle='#fff';
+    for(const[px,py]of pts)rect(px-1,py-1,2,2);
+    // Dead stages smoke
+    for(let s=0;s<wyrm.stage;s++){const ox=s===0?-24:s===1?30:0,oy=s===0?8:s===1?-4:2;
+      if(showFrame%3===0){ctx.globalAlpha=.4;ctx.fillStyle='#5d6474';
+        ctx.beginPath();ctx.arc(ox+(hash(s,showFrame>>3)-.5)*6,oy-4-(showFrame%12)*.5,2,0,TAU);ctx.fill();ctx.globalAlpha=1;}}
+  }
+  // Sweep telegraph: the whole carrier rears and glows coral before the fan.
+  if(wyrm.sweepT>0){const g=1-wyrm.sweepT/40;
+    ctx.globalAlpha=.25+.5*g;ctx.fillStyle=CORAL;ctx.beginPath();ctx.arc(0,-6,18+g*10,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  if(wyrm.fireFlash>0){ctx.globalAlpha=wyrm.fireFlash/10;ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(0,-20,4,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  ctx.restore();
+}
+function drawBolt(b){
+  const y=screenYAt(b.worldY,b.alt);if(y<20||y>H+10)return;
+  const c=b.kind==='sweep'?CORAL:b.kind==='lob'?AMBER:CORAL;
+  ctx.globalAlpha=.4;rect(b.x-1,y+3,2,4,c);ctx.globalAlpha=1;
+  rect(b.x-1,y-1,3,5,c);rect(b.x,y-2,1,2,'#ffffff');
+}
+function drawMissile(m){
+  const y=screenYAt(m.worldY,m.alt);if(y<20||y>H+10)return;
+  ctx.globalAlpha=.5;rect(m.x-1,y+4,2,5,GOLD);ctx.globalAlpha=1;
+  rect(m.x-1,y-2,3,6,CYAN);rect(m.x,y-3,1,2,'#ffffff');
+}
+function drawLance(l){
+  const y=screenYAt(l.worldY,l.alt);if(y<20||y>H+10)return;
+  ctx.globalAlpha=.5;rect(l.x-1,y+5,2,4,CYAN);ctx.globalAlpha=1;
+  rect(l.x-1,y-4,2,8,'#bff4ff');rect(l.x,y-5,1,2,'#ffffff');
+}
+function drawDragon(){
+  const dx=dragon.x,dy=dragonScreenY();
+  // Ground shadow: the honest altitude read — it never leaves the ground plane.
+  ctx.globalAlpha=clamp(.3-dragon.alt*.003,.1,.3);ctx.fillStyle='#000';
+  ctx.beginPath();ctx.ellipse(dx,DRAGON_Y+5,7-dragon.alt*.04,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.save();ctx.translate(Math.round(dx),Math.round(dy));ctx.rotate(dragon.bank||0);
+  const flap=Math.sin(showFrame*.22)*2.2;
+  const flash=dragon.hitFlashT>0&&((showFrame>>1)&1);
+  const body=flash?(((showFrame>>1)&1)?'#ffffff':CORAL):'#e8b23a',membrane=flash?body:'#c98a2e';
+  // Swept wing membranes with finger struts — the dragon's silhouette.
+  poly([[-2,-2],[-13,-6-flap],[-11,2],[-3,4]],membrane);
+  poly([[2,-2],[13,-6-flap],[11,2],[3,4]],membrane);
+  line([[-3,0],[-11,-5-flap]],mix(membrane,CREAM,.3),1);
+  line([[3,0],[11,-5-flap]],mix(membrane,CREAM,.3),1);
+  // Body, head, horns, tail
+  rect(-2,-7,4,12,body);
+  poly([[-2,-7],[0,-11],[2,-7]],mix(body,CREAM,.3)); // head
+  poly([[-2,-10],[-4,-13],[-1,-10]],CREAM);poly([[2,-10],[4,-13],[1,-10]],CREAM); // horns
+  rect(-1,5,2,6,mix(body,INK,.3));poly([[-3,11],[0,8],[3,11]],mix(body,CYAN,.35)); // tail fin
+  // The rider
+  rect(-1,-5,2,3,'#3a2c14');rect(-1,-7,2,2,'#d8a07b');rect(-1,-8,2,1,'#59d8f5');
+  // Chest gem: the lock-charge read — it brightens as the sweep holds.
+  if(dragon.lockGlow>0){ctx.globalAlpha=.4+dragon.lockGlow/20*.6;rect(-1,-2,2,2,CYAN);ctx.globalAlpha=1;}
+  ctx.restore();
+  // Wingtip vortices while banking hard — motion, not a route line.
+  if(Math.abs(dragon.vx)>1.2){ctx.globalAlpha=.25;
+    rect(dx-13,dy+2,3,1,'#fff');rect(dx+10,dy+2,3,1,'#fff');ctx.globalAlpha=1;}
+  if(typeof globalThis.__NO_PAYOFF_FX==='undefined'&&dragon.gloryT>0){
+    ctx.globalAlpha=.5+.3*Math.sin(showFrame*.55);const k=(showFrame>>2)%4,gp=[[-6,-6],[5,-3],[-6,4],[4,7]][k];
+    rect(dx+gp[0],dy+gp[1],2,2,GOLD);ctx.globalAlpha=1;}
+  // Wreck spiral smoke: the fall is readable.
+  if(dragon.wreckT>0){ctx.globalAlpha=.5;
+    for(let i=0;i<3;i++){ctx.fillStyle=i%2?'#5d6474':'#9ba2b5';
+      ctx.beginPath();ctx.arc(dx+(hash(i,showFrame>>2)-.5)*10,dy+8+i*3,2+i*.5,0,TAU);ctx.fill();}
+    ctx.globalAlpha=1;}
+}
+// Lock reticles: diegetic brackets ON the locked targets, ticking as charges
+// land. This is the dragon's own targeting — never a projected path.
+function drawLocks(){
+  for(const l of dragon.locks){
+    let tx,ty;
+    if(l.kind==='wyrm'){if(!wyrm||wyrm.dead)continue;const wp=wyrmWeakpoints()[0]||{x:wyrm.x,y:screenYAt(wyrm.worldY,wyrm.alt)};tx=wp.x;ty=wp.y;}
+    else{const t=l.ref;if(!t||t.hp<=0)continue;tx=t.x;ty=screenYAt(t.worldY,t.alt);}
+    if(ty<28||ty>H+8)continue;
+    const pulse=.6+.4*Math.sin(showFrame*.2+l.t);
+    ctx.globalAlpha=.55+.45*pulse;ctx.strokeStyle=l.kind==='wyrm'?GOLD:CYAN;ctx.lineWidth=1;
+    const r=7+Math.sin(showFrame*.15+l.t)*1.5;
+    for(const[ sx2,sy2]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
+      ctx.beginPath();ctx.moveTo(tx+sx2*r,ty+sy2*r-sy2*3);ctx.lineTo(tx+sx2*r,ty+sy2*r);ctx.lineTo(tx+sx2*r-sx2*3,ty+sy2*r);ctx.stroke();}
+    ctx.globalAlpha=1;
+    const idx=dragon.locks.indexOf(l);
+    rect(tx-4+idx*2,ty-r-5,2,2,l.kind==='wyrm'?GOLD:CYAN); // charge pip
+  }
+  // The hold shimmer: two faint scan rays from the dragon while the sweep runs.
+  if(dragon.lockGlow>4){ctx.globalAlpha=.12;const dy=dragonScreenY();
+    line([[dragon.x-2,dy-4],[dragon.x-16,dy-60]],CYAN,1);line([[dragon.x+2,dy-4],[dragon.x+16,dy-60]],CYAN,1);
+    ctx.globalAlpha=1;}
+}
+// Static aftermath decals (render-only, world-clock expiry, __NO_PAYOFF_FX
+// strips them): a volley kill leaves a gold crossburst where it happened; a
+// dodge leaves a mint streak on the dragon's lane; wounds scorch coral.
+// Unlike drifting particles these are STATIC in world space, so the payoff
+// lands exactly on the event spot.
+function drawMarks(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined'||!marks.length)return;
+  for(const m of marks){
+    const age=clamp((runFrame-m.f)/70,0,1),y=screenYAt(m.wy,m.alt);if(y<26||y>H+6)continue;
+    ctx.globalAlpha=(1-age)*.95;
+    if(m.kind==='volley-kill'){
+      rect(m.x-2,y-2,5,5,GOLD);rect(m.x-1,y-1,3,3,'#ffffff');
+      for(let k=0;k<4;k++){const a=k*TAU/4+.4;
+        rect(m.x+Math.cos(a)*(5+age*7)-1,y+Math.sin(a)*(5+age*7)-1,3,3,k%2?'#ffffff':GOLD);}
+    }else if(m.kind==='lance-kill'||m.kind==='lance-hit'){
+      rect(m.x-4,y-1,9,3,CYAN);rect(m.x-1,y-4,3,9,CYAN);rect(m.x-1,y-1,3,3,'#ffffff');
+    }else if(m.kind==='dodge'){
+      for(let k=0;k<3;k++)rect(m.x-8+k*3,y-4+k*4,8-k*2,2,k===1?'#ffffff':MINT);
+    }else if(m.kind==='lock'){
+      rect(m.x-2,y-2,5,5,CYAN);rect(m.x-1,y-1,3,3,'#ffffff');
+      for(const[ox,oy]of[[-7,0],[7,0],[0,-7],[0,7]])rect(m.x+ox-1,y+oy-1,3,3,CYAN);
+    }else if(m.kind==='volley'){
+      for(let k=0;k<3;k++){const w2=10-k*3;
+        rect(m.x-w2/2,y+2-k*4,w2,2,k===1?'#ffffff':CYAN);}
+    }else if(m.kind==='wound'||m.kind==='shield-down'){
+      rect(m.x-2,y-2,5,5,CORAL);
+      for(let k=0;k<4;k++)rect(m.x+(k%2?3:-7),y+2+k*3,5,3,k%2?'#ffffff':CORAL);
+    }else if(m.kind==='boss-break'){
+      rect(m.x-3,y-3,7,7,GOLD);
+      for(let k=0;k<6;k++){const a=k*TAU/6;rect(m.x+Math.cos(a)*(7+age*10)-1,y+Math.sin(a)*(7+age*10)-1,3,3,k%2?CREAM:GOLD);}
+    }
+  }
+  ctx.globalAlpha=1;
+}
+function drawPulses(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined')return;
+  if(badPulse>.04){ctx.globalAlpha=.4*badPulse;
+    rect(0,31,W,3,CORAL);rect(0,H-3,W,3,CORAL);rect(0,31,3,H-31,CORAL);rect(W-3,31,3,H-31,CORAL);ctx.globalAlpha=1;}
+  if(goodPulse>.04){ctx.globalAlpha=.36*goodPulse;
+    rect(3,34,W-6,2,GOLD);rect(3,H-6,W-6,2,GOLD);rect(3,34,2,H-40,GOLD);rect(W-5,34,2,H-40,GOLD);ctx.globalAlpha=1;}
+}
+function drawWarning(){
+  if(act.phase!=='warn')return;
+  ctx.globalAlpha=.34;rect(0,38,W,10,INK);rect(0,H-10,W,10,INK);
+  rect(0,38,8,H-38,INK);rect(W-8,38,8,H-38,INK);ctx.globalAlpha=1;
+  const strobe=.55+.35*Math.max(0,Math.sin(showFrame*.22)),c=act.type==='wyrm'?CORAL:GOLD;
+  ctx.globalAlpha=strobe;rect(0,49,W,3,c);rect(0,H-6,W,3,c);ctx.globalAlpha=1;
+  ctx.globalAlpha=.8;rect(18,54,124,13,INK);ctx.globalAlpha=1;
+  ctx.strokeStyle=c;ctx.strokeRect(18.5,54.5,123,12);
+  ctx.fillStyle=c;ctx.font='bold 7px monospace';
+  const s=act.type==='wyrm'?'CARRIER WYRM':'SANDSTORM FRONT';ctx.fillText(s,80-s.length*2.1,63);
+}
+const displayedTactic=()=>dragon.wreckT>0?'FLARING WINGS':dragon.intent&&dragon.intent.tactic||'TAKE THE GATE';
+// The bottom status cluster: the dragon's own numbers live next to it at the
+// bottom of the strip (owner directive), never exiled to the far top. The
+// probe exposes the box so the visual eval can pin it near the dragon.
+const HUD_STATUS={x:0,y:H-17,width:W,height:17};
+function drawHud(p){
+  ctx.globalAlpha=.94;rect(0,0,W,31,INK);ctx.globalAlpha=1;
+  ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('SKY REIGN',4,10);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(displayedTactic().slice(0,24),4,21);
+  rect(0,29,W,2,'#1a2030');rect(0,29,Math.round(W*clamp(runFrame/FLIGHT_FRAMES,0,1)),2,mix(GOLD,INK,.2));rect(W-2,29,2,2,GOLD);
+  ctx.fillStyle=p.accent;ctx.font='bold 5px monospace';ctx.fillText(BIOMES[currentBiome()].name,W-4-BIOMES[currentBiome()].name.length*3,10);
+  const sy2=HUD_STATUS.y;
+  ctx.globalAlpha=.72;rect(0,sy2,W,17,INK);ctx.globalAlpha=1;
+  rect(0,sy2,W,1,'#2a3040');
+  ctx.font='bold 5px monospace';
+  ctx.fillStyle='#8a90a8';ctx.fillText('SHD',4,sy2+6);
+  rect(16,sy2+3,32,4,'#252b3c');rect(16,sy2+3,32*clamp(dragon.shield/dragon.shieldMax,0,1),4,CYAN);
+  ctx.fillStyle='#8a90a8';ctx.fillText('HUL',52,sy2+6);
+  rect(64,sy2+3,32,4,'#252b3c');rect(64,sy2+3,32*clamp(dragon.hull/100,0,1),4,dragon.hull>40?MINT:CORAL);
+  ctx.fillStyle='#8a90a8';ctx.fillText('LOCK',100,sy2+6);
+  for(let i=0;i<MAX_LOCKS;i++)rect(118+i*6,sy2+3,5,4,i<dragon.locks.length?GOLD:'#30364a');
+  // Wyrm stage bar lives in the same cluster while a carrier is on the field.
+  if(wyrm&&!wyrm.dead){
+    const st=wyrm.stages[Math.min(wyrm.stage,wyrm.stages.length-1)];
+    ctx.fillStyle=CORAL;ctx.fillText(wyrm.stage>=wyrm.stages.length?'DOWN':st.name,4,sy2+14);
+    rect(34,sy2+10,60,4,'#252b3c');rect(34,sy2+10,60*clamp(st.hp/st.hpMax,0,1),4,CORAL);
+    for(let i=0;i<3;i++)rect(98+i*6,sy2+10,5,4,i<wyrm.stage?GOLD:'#30364a');
+  }else{
+    ctx.fillStyle='#8a90a8';ctx.fillText('KILLS',4,sy2+14);
+    ctx.fillStyle=GOLD;ctx.fillText(''+stats.kills,26,sy2+14);
+    ctx.fillStyle='#8a90a8';ctx.fillText('VOLLEY',52,sy2+14);
+    ctx.fillStyle=CYAN;ctx.fillText(''+stats.volleyKills,76,sy2+14);
+  }
+  if(state==='gate'){
+    ctx.globalAlpha=.9;rect(8,128,144,86,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(8.5,128.5,143,85);
+    ctx.fillStyle=GOLD;ctx.font='bold 10px monospace';ctx.fillText('THE GATE',40,152);
+    ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(outcome,80-outcome.length*2.1,172);
+    ctx.fillStyle=MINT;ctx.fillText(stats.kills+' KILLS · '+stats.volleyKills+' VOLLEY',30,190);
+    ctx.fillStyle=STEEL;ctx.fillText(stats.hitsTaken+' TAKEN · '+stats.wrecks+' FALLS',34,202);
+  }
+  drawSession();
+}
+// Isolated-subject renders for the drawn-pixel actor-scale gates.
+function renderIsolated(only){
+  rect(0,0,W,H,INK);
+  isolatedSubject=true;
+  const p=BIOMES[currentBiome()];
+  if(only==='env')drawEnvironment(p);
+  else if(only==='dragon')drawDragon();
+  else if(only==='wyrm')drawWyrm();
+  else if(only.startsWith('wing-')){const w=wings.find(q=>'wing-'+q.id===only);if(w)drawFoe(w);}
+  else if(only.startsWith('swarm-')||only.startsWith('turret-')){
+    const s=swarm.find(q=>(q.turret?'turret-':'swarm-')+q.id===only);
+    if(s){if(s.turret)drawTurret(s);else drawFoe(s);}}
+  isolatedSubject=false;
+}
+function render(){
+  const only=typeof globalThis.__SK_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__SK_VISUAL_ONLY_SUBJECT:null;
+  if(only!==null){renderIsolated(String(only));return;}
+  const p=BIOMES[currentBiome()];
+  drawEnvironment(p);
+  preDraw();
+  // far-to-near: turrets on the ground first, then fliers, then the dragon
+  for(const s of swarm)if(s.turret)drawTurret(s);
+  for(const s of swarm)if(!s.turret)drawFoe(s);
+  for(const w of wings)if(w.respawnT<=0)drawFoe(w);
+  drawWyrm();
+  for(const b of bolts)drawBolt(b);
+  for(const m of missiles)drawMissile(m);
+  for(const l of lances)drawLance(l);
+  drawDragon();
+  drawLocks();
+  drawRings();drawParts();drawMarks();
+  for(const t of texts){const y=screenYAt(t.wy,t.alt),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;
+    ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
+    ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;postDraw();
+  drawWarning();drawPulses();
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.055;rect(0,31,W,H-31,GOLD);ctx.globalAlpha=1;
+    ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,33.5,W-5,H-37);
+    for(let i=0;i<5;i++){ctx.globalAlpha=.42-i*.07;rect(8+i*5,52+i*52,24+i*3,1,GOLD);rect(W-35-i*4,76+i*48,26+i*2,1,GOLD);}ctx.globalAlpha=1;}
+  drawHud(p);
+}
+
+// ---- probes and deterministic visual fixtures -----------------------------------
+globalThis.__skyReignProbe=()=>({state,runFrame,showFrame,worldSeed,skillSeed,persona:persona.name,
+  biome:BIOMES[currentBiome()].name,finite:allFinite(),outcome,
+  dragon:{x:dragon.x,alt:dragon.alt,worldY:dragon.worldY,vx:dragon.vx,valt:dragon.valt,speed:dragon.speed,
+    shield:dragon.shield,hull:dragon.hull,locks:dragon.locks.length,lockGlow:dragon.lockGlow,
+    wreckT:dragon.wreckT,lanceCd:dragon.lanceCd,tactic:dragon.intent&&dragon.intent.tactic,
+    targetX:dragon.intent&&dragon.intent.targetX,targetAlt:dragon.intent&&dragon.intent.targetAlt},
+  wings:wings.length,activeWings:wings.filter(w=>w.respawnT<=0&&w.state!=='down').length,
+  swarm:swarm.length,bolts:bolts.length,missiles:missiles.length,lances:lances.length,
+  wyrm:wyrm?{x:wyrm.x,alt:wyrm.alt,worldY:wyrm.worldY,stage:wyrm.stage,state:wyrm.state,dead:wyrm.dead,
+    hp:wyrm.stages[Math.min(wyrm.stage,2)].hp}:null,
+  stats:Object.assign({},stats),
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  act:{phase:act.phase,type:act.type,wind:round(act.wind,4),notes:act.notes.slice()},show:SHOW.probe(),playing:playing()});
+globalThis.__skyReignSignature=()=>JSON.stringify({state,runFrame,worldSeed,skillSeed,persona:persona.name,lastBiome,lastSector,
+  volleyStreak,lastVolleyFrame,generatedTo,
+  d:[dragon.x,dragon.alt,dragon.worldY,dragon.vx,dragon.valt,dragon.speed,dragon.shield,dragon.hull,dragon.shieldT,
+    dragon.lanceCd,dragon.sweepT,dragon.lockAge,dragon.wreckT,dragon.invulnT,dragon.hitFlashT,dragon.contactT,dragon.dodgeT,
+    dragon.locks.map(l=>[l.kind,l.ref?l.ref.id:-1])]
+    .map(v=>Array.isArray(v)?v:typeof v==='number'?round(v,5):v),
+  w:wings.map(w=>[w.id,w.kind,round(w.x,4),round(w.alt,4),round(w.worldY,4),round(w.vx,4),round(w.speed,4),w.hp,w.state,w.stateT,
+    w.windupT,w.boltCd,w.respawnT,w.downT]),
+  s:swarm.map(s=>[s.id,s.kind,round(s.x,4),round(s.alt,4),round(s.worldY,4),round(s.vx,4),round(s.speed,4),s.hp,s.windupT,s.boltCd]),
+  b:bolts.map(b=>[b.id,b.kind,round(b.x,4),round(b.alt,4),round(b.worldY,4),round(b.vx,4),round(b.valt,4),round(b.speed,4),b.aged,b.minD]),
+  m:missiles.map(m2=>[m2.id,round(m2.x,4),round(m2.alt,4),round(m2.worldY,4),round(m2.vx,4),round(m2.speed,4),m2.aged]),
+  l:lances.map(l2=>[l2.id,round(l2.x,4),round(l2.worldY,4),l2.aged]),
+  wy:wyrm?[round(wyrm.x,4),round(wyrm.alt,4),round(wyrm.worldY,4),round(wyrm.vx,4),round(wyrm.speed,4),wyrm.stage,
+    wyrm.stages.map(st=>st.hp),wyrm.state,wyrm.boltCd,wyrm.sweepCd,wyrm.sweepT,wyrm.staggerT,wyrm.dead]:null,
+  du:dust?round(dust.worldY,4):null,
+  a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,round(act.wind,5),act.hitsAtLand],
+  st:[stats.markers,stats.biomes,stats.kills,stats.volleyKills,stats.volleys,stats.volleyWipes,stats.locks,stats.lanceHits,
+    stats.lances,stats.boltsFaced,stats.nearMisses,stats.hitsTaken,stats.shieldBreaks,stats.wounds,stats.collisions,
+    stats.wrecks,stats.lapses,stats.acts,stats.storms,stats.stormClears,stats.wyrms,stats.phaseBreaks,stats.wyrmKills,
+    stats.dodges,stats.contacts,stats.sweeps,stats.sweepHits,stats.events,stats.progress]});
+globalThis.__skyReignPhysical=()=>[round(dragon.x,7),round(dragon.alt,7),round(dragon.worldY,7),round(dragon.vx,7),
+  round(dragon.valt,7),round(dragon.speed,7),dragon.intent&&round(dragon.intent.steer,7),dragon.intent&&round(dragon.intent.climb,7),
+  dragon.intent&&dragon.intent.fire,
+  wings.map(w=>[round(w.x,4),round(w.alt,3),round(w.worldY,4),w.state].join(',')).join(';'),
+  bolts.map(b=>[round(b.x,3),round(b.worldY,3)].join(',')).join(';'),
+  wyrm?[round(wyrm.x,4),round(wyrm.worldY,4),wyrm.state].join(','):'',
+  dust?round(dust.worldY,4):'',round(act.wind,6)].join('|');
+globalThis.__skyReignVisualBeats=['opening','lock-sweep','volley','volley-kill','dodge','reef','ruins',
+  'storm-warn','storm-live','wyrm-warn','wyrm-fight','phase-break','ash','gate'];
+// The good/bad feedback ledger for evals/feedback.js: every entry is a sim
+// event the viewer must be able to SEE, with screen coordinates at fire time.
+globalThis.__feedbackProbe=()=>({finite:allFinite(),serial:feedbackSerial,events:feedback.slice(),
+  pulses:{good:round(goodPulse,4),bad:round(badPulse,4)},
+  dragon:{bank:round(dragon.bank,5),va:round(dragon.va||0,5),vx:round(dragon.vx,5),speed:round(dragon.speed,5),
+    shield:round(dragon.shield,2),hull:dragon.hull,locks:dragon.locks.length,lockGlow:dragon.lockGlow,
+    hitFlashT:dragon.hitFlashT,gloryT:dragon.gloryT,wreckT:dragon.wreckT}});
+function visualActors(){
+  const out=[{id:'dragon',kind:'dragon',type:'player',
+    box:{x:dragon.x-13,y:dragonScreenY()-13,width:26,height:24}}];
+  for(const w of wings){if(w.respawnT>0)continue;const yy=screenYAt(w.worldY,w.alt);if(yy<40||yy>H-8)continue;
+    out.push({id:'wing-'+w.id,kind:'wing',type:w.kind,state:w.state,
+      box:{x:w.x-10,y:yy-9,width:20,height:18}});}
+  for(const s of swarm){const yy=screenYAt(s.worldY,s.alt);if(yy<40||yy>H-8||s.hp<=0)continue;
+    out.push({id:(s.turret?'turret-':'swarm-')+s.id,kind:s.turret?'turret':'swarm',type:s.kind,
+      box:{x:s.x-9,y:yy-8,width:18,height:16}});}
+  if(wyrm&&!wyrm.dead){const yy=screenYAt(wyrm.worldY,wyrm.alt);if(yy>-20&&yy<H+40)
+    out.push({id:'wyrm',kind:'boss',type:'wyrm',state:wyrm.state,
+      box:{x:wyrm.x-44,y:yy-44,width:88,height:92}});}
+  return out;
+}
+globalThis.__skyReignVisualProbe=()=>({frame:showFrame,biome:BIOMES[currentBiome()].name,
+  tactic:displayedTactic(),danger:act.phase!=='calm',act:act.phase,actType:act.type,state,finite:allFinite(),
+  persona:persona.name,
+  wingCount:wings.filter(w=>w.respawnT<=0&&w.state!=='down').length,
+  swarmCount:swarm.filter(s=>s.hp>0).length,
+  wyrmState:wyrm?{stage:wyrm.stage,state:wyrm.state,dead:wyrm.dead}:null,
+  pose:{bank:round(dragon.bank,5),va:round(dragon.va||0,5),vx:round(dragon.vx,5),alt:round(dragon.alt,3)},
+  feedback:{hitFlashT:dragon.hitFlashT,gloryT:dragon.gloryT,goodPulse:round(goodPulse,4),badPulse:round(badPulse,4),
+    shield:round(dragon.shield,2),hull:dragon.hull,locks:dragon.locks.length,lockGlow:dragon.lockGlow},
+  layout:{playfield:{x:0,y:38,width:160,height:322},
+    approach:{enter:38,contact:268,visible:230,travel:322},
+    hudStatus:HUD_STATUS},
+  actors:visualActors(),
+  playerBox:{x:dragon.x-15,y:dragonScreenY()-15,width:30,height:30},
+  foeBoxes:lockables().map(t=>({x:t.x-12,y:screenYAt(t.worldY,t.alt)-10,width:24,height:20,kind:t.kind,state:t.state})),
+  wyrmBox:(()=>{if(!wyrm||wyrm.dead)return null;const yy=screenYAt(wyrm.worldY,wyrm.alt);
+    return{x:wyrm.x-44,y:yy-44,width:88,height:92,stage:wyrm.stage,state:wyrm.state};})(),
+  weakpointBoxes:wyrmWeakpoints().map(wp=>({x:wp.x-8,y:wp.y-8,width:16,height:16,stage:wp.stage})),
+  dustBox:(()=>{if(!dust)return null;const y=sy(dust.worldY);return{x:0,y:y-116,width:W,height:116};})()});
+let fixtureSwarm=[];
+function visualPrime(biome){
+  worldSeed=777;runFrame=0;state='flight';outcome='';
+  dragon=makeDragon();dragon.worldY=biome*BIOME_SPAN+900;dragon.x=80;dragon.alt=26;
+  lastBiome=biome;lastSector=Math.floor(dragon.worldY/SECTOR);
+  wings=[];swarm=[];bolts=[];missiles=[];lances=[];wyrm=null;dust=null;
+  texts=[];marks=[];feedback=[];goodPulse=0;badPulse=0;plan=null;planAt=-1e9;visualIntent=null;
+  generatedTo=Math.floor((dragon.worldY+760)/SECTOR);swarmSerial=0;boltSerial=0;
+  Object.assign(act,{phase:'calm',type:'sandstorm',warnAt:999999,landAt:999999,endAt:999999,index:0,hitsAtLand:0,wind:0,notes:[]});
+  dragon.intent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'TAKE THE GATE'};
+}
+function fixtureWing(kind,x,dy,alt,slot,state){
+  const w=makeWing(kind,x,dragon.worldY+dy,alt===undefined?WING_KINDS[kind].altBand[0]+8:alt,slot);
+  if(state){w.state=state[0];w.stateT=state[1]||0;if(state[0]==='windup')w.windupT=state[1]||spec0(kind).windup;}
+  wings.push(w);return w;
+}
+function spec0(kind){return WING_KINDS[kind];}
+function fixtureSwarmFoe(kind,x,dy,alt){
+  const s=makeSwarm(kind,x,dragon.worldY+dy,alt===undefined?WING_KINDS[kind].altBand[0]+8:alt);
+  swarm.push(s);return s;
+}
+globalThis.__skyReignSetVisualBeat=name=>{
+  if(name==='opening'){visualPrime(0);
+    fixtureWing('manta',58,150,34,0);fixtureWing('spire',104,196,44,1);
+    fixtureSwarmFoe('vyr',70,96,30);fixtureSwarmFoe('wasp',96,120,22);
+    visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'TAKE THE GATE'};}
+  else if(name==='lock-sweep'){visualPrime(0);
+    const a=fixtureSwarmFoe('vyr',62,120,30),b=fixtureSwarmFoe('wasp',98,104,24),c=fixtureSwarmFoe('manta',80,168,38);
+    fixtureWing('spire',112,210,44,0);
+    dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0}];dragon.lockGlow=16;
+    visualIntent={steer:0,climb:0,fire:2,targetX:80,targetAlt:26,tactic:'SWEEP · LOCK'};}
+  else if(name==='volley'){visualPrime(0);
+    const a=fixtureSwarmFoe('vyr',60,110,28),b=fixtureSwarmFoe('wasp',100,100,24),
+      c=fixtureSwarmFoe('vyr',80,150,34),d=fixtureSwarmFoe('manta',72,190,40);
+    dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0},{kind:'foe',ref:c,t:0},{kind:'foe',ref:d,t:0}];
+    dragon.lockGlow=20;
+    visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'UNLEASH'};}
+  else if(name==='volley-kill'){visualPrime(0);
+    const a=fixtureSwarmFoe('vyr',66,86,26),b=fixtureSwarmFoe('wasp',94,78,22),c=fixtureSwarmFoe('vyr',80,120,30);
+    dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0},{kind:'foe',ref:c,t:0}];dragon.lockGlow=20;
+    visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'UNLEASH'};}
+  else if(name==='dodge'){visualPrime(1);
+    fixtureWing('manta',60,170,36,0,['windup',20]);fixtureWing('vyr',104,140,26,1);
+    bolts.push(makeBolt(74,dragon.worldY+64,30,.18,-.04,-1.9,'bolt','fixture'));
+    bolts.push(makeBolt(92,dragon.worldY+88,34,-.15,-.05,-1.9,'bolt','fixture'));
+    visualIntent={steer:.8,climb:-.4,fire:0,targetX:104,targetAlt:16,tactic:'WEAVE'};}
+  else if(name==='reef'){visualPrime(1);
+    fixtureWing('manta',56,140,40,0);fixtureWing('vyr',106,180,30,1);fixtureSwarmFoe('wasp',84,110,24);
+    visualIntent={steer:0,climb:.2,fire:0,targetX:80,targetAlt:34,tactic:'THREAD THE REEF'};}
+  else if(name==='ruins'){visualPrime(2);
+    fixtureWing('spire',64,150,40,0);fixtureSwarmFoe('manta',100,120,32);
+    swarm.push(makeTurret(48,dragon.worldY+70),makeTurret(118,dragon.worldY+150));
+    visualIntent={steer:.1,climb:-.1,fire:0,targetX:84,targetAlt:20,tactic:'SKIM THE DROWNED SPIRES'};}
+  else if(name==='storm-warn'){visualPrime(0);
+    fixtureWing('vyr',64,170,30,0);fixtureSwarmFoe('manta',98,140,34);
+    Object.assign(act,{phase:'warn',type:'sandstorm',landAt:runFrame+40,endAt:runFrame+940});
+    dust={worldY:dragon.worldY+268};
+    visualIntent={steer:-.2,climb:.1,fire:0,targetX:76,targetAlt:30,tactic:'FRONT INCOMING'};}
+  else if(name==='storm-live'){visualPrime(0);
+    fixtureWing('vyr',66,160,30,0);fixtureSwarmFoe('wasp',94,120,24);
+    Object.assign(act,{phase:'live',type:'sandstorm',landAt:runFrame-50,endAt:runFrame+700,wind:.08});
+    dust={worldY:dragon.worldY+40};
+    visualIntent={steer:-.3,climb:0,fire:0,targetX:72,targetAlt:28,tactic:'RIDE THE STORM'};}
+  else if(name==='wyrm-warn'){visualPrime(4);
+    fixtureWing('manta',58,150,36,0);
+    Object.assign(act,{phase:'warn',type:'wyrm',landAt:runFrame+200,endAt:runFrame+2100});
+    wyrm=makeWyrm();wyrm.worldY=dragon.worldY+560;
+    visualIntent={steer:0,climb:.2,fire:0,targetX:80,targetAlt:36,tactic:'WYRM ON THE HORIZON'};}
+  else if(name==='wyrm-fight'){visualPrime(4);
+    fixtureWing('vyr',48,120,26,0);fixtureWing('manta',116,150,36,1);
+    Object.assign(act,{phase:'live',type:'wyrm',landAt:runFrame-60,endAt:runFrame+1800});
+    wyrm=makeWyrm();wyrm.state='fight';wyrm.worldY=dragon.worldY+205;wyrm.x=84;wyrm.alt=42;
+    dragon.locks=[{kind:'wyrm',t:0},{kind:'wyrm',t:0}];dragon.lockGlow=18;
+    visualIntent={steer:.1,climb:.1,fire:2,targetX:84,targetAlt:34,tactic:'BREAK THE ENGINES'};}
+  else if(name==='phase-break'){visualPrime(4);
+    Object.assign(act,{phase:'live',type:'wyrm',landAt:runFrame-60,endAt:runFrame+1800});
+    wyrm=makeWyrm();wyrm.state='fight';wyrm.worldY=dragon.worldY+200;wyrm.x=80;wyrm.alt=42;
+    wyrm.stages[0].hp=2;
+    dragon.locks=[{kind:'wyrm',t:0},{kind:'wyrm',t:0}];dragon.lockGlow=20;
+    visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:34,tactic:'BREAK THE ENGINES'};}
+  else if(name==='ash'){visualPrime(3);
+    fixtureWing('spire',60,150,44,0);fixtureWing('wasp',102,120,26,1);fixtureSwarmFoe('vyr',84,180,32);
+    visualIntent={steer:-.1,climb:.1,fire:0,targetX:76,targetAlt:32,tactic:'SKIRT THE EMBERS'};}
+  else if(name==='gate'){visualPrime(4);
+    fixtureWing('manta',62,160,38,0);
+    dragon.alt=34;stats.kills=41;stats.volleyKills=23;stats.wyrmKills=1;runFrame=FLIGHT_FRAMES-1;
+    visualIntent={steer:0,climb:.2,fire:0,targetX:80,targetAlt:40,tactic:'RIDE THE WIND'};}
+  else return false;
+  return true;
+};
+globalThis.__skyReignPlannerFixture=()=>{const before=globalThis.__skyReignSignature(),a=buildRoutePlan(),
+  mid=globalThis.__skyReignSignature(),b=buildRoutePlan(),after=globalThis.__skyReignSignature();
+  return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),plan:a,finite:allFinite()};};
+globalThis.__skyReignActFixture=type=>{resetRun(true);dragon.x=80;dragon.alt=26;dragon.worldY=5*SECTOR+40;
+  lastSector=Math.floor(dragon.worldY/SECTOR);generatedTo=Math.floor((dragon.worldY+760)/SECTOR);swarm=[];
+  wings=[makeWing('vyr',64,dragon.worldY+150,30,0),makeWing('manta',100,dragon.worldY+220,40,1),
+    makeWing('wasp',80,dragon.worldY-90,20,2)];
+  Object.assign(act,{phase:'calm',type:type||'sandstorm',warnAt:runFrame+1,landAt:runFrame+241,
+    endAt:runFrame+1141,index:type==='wyrm'?1:0,wind:0,notes:[]});plan=null;planAt=-1e9;
+  return globalThis.__skyReignProbe();};
+globalThis.__skyReignManual=()=>({playing:playing(),x:dragon.x,alt:dragon.alt,
+  intent:dragon.intent&&Object.assign({},dragon.intent)});
+globalThis.__skyReignIntentSchemas=()=>{const h=humanIntent(),b=rawBotIntent();return{human:h,bot:b,
+  humanKeys:Object.keys(h).sort(),botKeys:Object.keys(b).sort()};};
+globalThis.__skyReignAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};
+  delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;
+  return{admired:a,gated:b};};
+globalThis.__skyReignNextRandom=()=>E.random();
+// Motion contract (evals/motion.js): the watched actors are the dragon and the
+// four recurring wings (stable ids, respawning). Swarm foes are transient
+// traffic; turrets are planted set pieces. emote covers exactly the authored
+// pauses: the dragon's wreck spiral + wing-flare, a downed wing's dizzy
+// tumble. __NO_EMOTE strips art and flag together.
+globalThis.__motionProbe=()=>{const on=typeof globalThis.__NO_EMOTE==='undefined';
+  const actors=[{id:'dragon',x:dragon.x,y:dragon.worldY,emote:on&&(dragon.wreckT>0||dragon.settleT>0)}];
+  for(const w of wings){if(w.respawnT>0)continue;
+    actors.push({id:'wing-'+w.id,x:w.x,y:w.worldY,emote:on&&w.state==='down'});}
+  if(wyrm&&!wyrm.dead)actors.push({id:'wyrm',x:wyrm.x,y:wyrm.worldY,emote:on&&wyrm.staggerT>0});
+  return{finite:allFinite(),actors};};
+globalThis.__soakProbe=()=>({sig:[Math.round(dragon.x*10),Math.round(dragon.alt*10),Math.round(dragon.worldY),
+  Math.round(dragon.speed*10),wings.reduce((n,w)=>n+Math.round(w.x+w.worldY),0),
+  swarm.reduce((n,s)=>n+Math.round(s.x+s.worldY),0),bolts.length+missiles.length*3].join('|'),
+  events:eventSerial,progress:progressSerial,finite:allFinite()});
+
+initSession('sky-reign',[["ARROWS","STEER · CLIMB"],["X","HOLD · LOCK"],["RELEASE X","UNLEASH"],
+  ["SPACE","LANCE"],["ESC","AUTOPILOT"]]);
+resetRun(true);start(()=>step(),()=>render());
+</script>
+</html>

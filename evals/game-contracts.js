@@ -59,6 +59,9 @@ const contracts=Object.freeze([
   covered('ricochet-foundry','RICOCHET FOUNDRY'),
   covered('lantern-line','LANTERN LINE'),
   covered('ashen-rage','ASHEN RAGE'),
+  covered('star-roller','STAR ROLLER'),
+  covered('sky-reign','SKY REIGN'),
+  covered('demon-fist','DEMON FIST'),
 ]);
 
 module.exports=Object.freeze({

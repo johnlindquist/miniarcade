@@ -35,5 +35,8 @@
   {id:'crystal-mesa',title:'CRYSTAL MESA',label:'crystal mesa',tagline:'grab · hurl · ascend',tone:'cm'},
   {id:'ricochet-foundry',title:'RICOCHET FOUNDRY',label:'ricochet foundry',tagline:'bank · temper · cast',tone:'rf'},
   {id:'lantern-line',title:'LANTERN LINE',label:'lantern line',tagline:'route · refine · light the skyline',tone:'ll'},
-  {id:'ashen-rage',title:'ASHEN RAGE',label:'ashen rage',tagline:'swing · slam · take the crown',tone:'ar'}
+  {id:'ashen-rage',title:'ASHEN RAGE',label:'ashen rage',tagline:'swing · slam · take the crown',tone:'ar'},
+  {id:'star-roller',title:'STAR ROLLER',label:'star roller',tagline:'roll · grow · eclipse',tone:'sr'},
+  {id:'sky-reign',title:'SKY REIGN',label:'sky reign',tagline:'soar · lock · unleash',tone:'pz'},
+  {id:'demon-fist',title:'DEMON FIST',label:'demon fist',tagline:'jab · launch · obliterate',tone:'df'}
 ]));

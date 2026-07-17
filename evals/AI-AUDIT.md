@@ -1379,3 +1379,321 @@ visual probe carries the status-cluster box, and the visual eval requires it
 to sit within 80px of the rider and to contain live health and boost bar
 pixels — "keep user status near the main character" is now a failing test,
 not a preference.
+# STAR ROLLER — implementation audit (draft)
+
+Date: 2026-07-17. Author: Kimi (agent build).
+
+## What shipped
+
+`star-roller.html` — a Katamari Damacy spinoff for the 160x360 strip. The
+katamari rolls north through five cycling zones (KITCHEN FLOOR, GARDEN, MAIN
+STREET, HARBOR, ORBIT TIDE, 14 blocks x 210px each) and sticks to itself
+anything strictly smaller than its diameter: bits(1-4), toys(5-9), pets(10-19),
+furniture(20-39), vehicles(40-79), structures(80+). Pure area-add growth with a
+size-scaled coefficient (`growthK(s)=.105+.0018s` capped .30) — crumbs barely
+feed, vehicles and structures are feasts. Timed 5-minute runs ("make a star
+2.00m"), star/fizzle celebration laps, seeded resets. The King of All Cosmos
+drops authored commentary. Acts alternate by index with exact 240f physical
+warnings: MAGNET RAIN (herald items tumble from the royal portal through the
+whole warning, then the shower lands) and THE KING WATCHES (the King's face
+physically descends, pets scurry to the baseboards, x3 glory). ROYAL SWEEPER
+enemy: patrol -> chase -> windup (brush-flare tell) -> lunge (leads the ball)
+-> recover / stunned (dizzy-spark emote), shelf-clank self-stun, and at d>60
+the ball can EAT it (tier-3 apex). Size-gated shelves: full-width ledges with
+one gap — clearance = gapW/2 - |dx| - min(d*.22,18); small balls thread (good),
+misaligned or fat balls bump (bad). Graze-vs-crash bump grammar by size ratio:
+<1.25x = soft wobble, >=1.25x knocks 1-3 stuck pickups off (real size loss,
+25% bulk cap — the anti-death-spiral rule).
+
+Bot: copied-state rollout on the SAME integrator (`simulateLane` — honest
+wobble, moving cars, fleeing/stalking pets, shelf clearance, growth forecast,
+milestone pressure, hunger risk-scaling so the ball can't starve itself by
+risk-aversion), lane candidates + top-2 cluster lanes + shelf gap lane,
+replan 40f. `__NO_ROUTE_PLAN` honest reactive baseline: nearest reachable
+bite + panic swerve + bump-shy lane counting — no forecast, no shelf/act
+knowledge, still plays. Human takeover shares the intent schema
+{steer,throttle,brake,tuck,dash,targetX,tactic}; full keyboard chord coverage.
+
+## Measured numbers (2026-07-17 sweep, seeds 0x5f00+i*37)
+
+- Route-policy A/B, 10 paired 5-min seeds: score wins 10/10, failure wins
+  10/10; aggregates score 895727 vs 617462 (1.45x), failures 1401 vs 2149
+  (0.65x), stars 18 vs 11. Baseline participation: reactive pickups 371..507,
+  events 760..907, progress 157..172 per window — the plow line still stars on
+  friendly seeds but pays in shelf/hazard churn and slower class progress.
+- Star timing: planned windows carry 1-2 stars each (18 stars across the ten
+  5-min windows); reactive 11; the 5-min timer keeps roughly half of baseline
+  runs honest-to-fizzle territory without a single planned fizzle in the sweep.
+- Soaks (2 x 10 min): still 0s, quiet <=2s, stall <=3s, events 1789..1803,
+  progress 340..348, runs 3..4, maxD 211..214; tiers strictly ordered t1>t2>t3
+  with s3 5..9; held=6*s3, slowed=24*s3, admire=48*s3 exact; act pairs magnet
+  [4..5,4..5] / king [2..3,2..3], warn->land exactly 240f on the sim clock.
+- Motion: ball worst bare still 10f, sweepers emote-paused only while stunned
+  (80f < 160f budget); ball pace 2.97..3.62 px/f in-eval (floor 1.5), sweeper
+  pace 0.944..1.094 px/f (floor 0.75); __NO_EMOTE re-exposes 2-4 bare-still
+  violations and stays byte-identical in sim.
+- Feedback legibility: 64 sampled beats across the 13 required categories plus
+  big-pickup/star/flawless, palette-separated, thinnest 17px, ablated twins
+  byte-identical. Rain-catch needed three fixes (fall vs travel geometry,
+  lane-clustered landing, 210f window) before it fired reliably.
+- Visual: edge median .0289 vs .0280 floor (references .0295), rich .989,
+  entropy 3.74, luma .161; actor caps measured via isolated renders (ball
+  42x40 max, sweeper 20x16, pets <=34x27, vehicles <=46x33); footprint <=16%;
+  approach .79. Quiet-corridor calibration: calm floors .0006-.0042 / sides
+  .0005-.0249; deliberate 1px-gravel busy build floors .0273-.0300 fails
+  QUIET_FLOOR_MAX (.016) at ~1.9x; ceilings floor .016 / sides .045.
+- Receipts: montage sha256 f2c002322f3065920cc24ea0001b5bfcdd4214c45ca256ebac9466f6cd1892a7,
+  review identity 88d48539d726348aeda3ad6b414702b3bbc7b240150a925a36d1237dce399d78,
+  clip sha256 bbd4fc9f838a81567baa073c42c29ff477f2e7bee5f44651b406908698d5151b
+  (5,534,828 bytes, h264 320x720 30s).
+
+## Lessons (what the audit trail showed)
+
+1. **The rollout's world model must be the sim's world model.** The planner
+   originally grew its simulated ball with raw area while the sim used the
+   damped coefficient — the planner "outgrew" hazards it never actually
+   outgrew and routed the real ball into them. One copied formula
+   (`b.bulk += s^2*growthK(s)`) killed the worst bump spirals.
+2. **Total risk-aversion starves.** With honest collision forecasts, the
+   planner judged every lane negative at small sizes and wall-hugged without
+   eating (2 pickups in 1650 frames). Hunger-scaled risk weights (eat or die
+   trying) fixed it without touching avoidance when fed.
+3. **Adaptive content beats a fixed ramp.** Class-by-block-index spawning
+   punished any run that fell behind the curve into a permanent oversized
+   bump loop. Spawning relative to ball class (mostly edible, some stretch,
+   few hazards) kept every seed recoverable while preserving the ladder.
+4. **Bumps need a size-ratio grammar.** A flat scatter cost made borderline
+   hits as expensive as monster hits and churned runs flat. Graze (<1.25x,
+   wobble only) vs crash (knock 1-3 pieces, 25% bulk cap) reads better and
+   keeps the death-spiral impossible.
+5. **Separation never sleeps.** Gating ball-sweeper separation on
+   invulnerability let a sweeper sit inside the ball for 18 frames after a
+   hit. Events ride cooldowns; separation is always on.
+6. **Draw-scale caps are a real gate.** True relative size at d<=25 put pets
+   at 40+px (Grave Garden's failure). Capping item world-scale at 1.75 keeps
+   the bigger/smaller read while honoring small-actors-big-worlds; critters
+   and vehicles draw at .85/.72 of nominal and stay honest.
+7. **Fixture truth matters.** The finale card originally showed zeroed stats
+   because visualPrime resets them; fixtures must populate the run story they
+   claim to show.
+# SKY REIGN — AI-AUDIT draft entry (2026-07-17)
+
+Panzer Dragoon spinoff for the 4:9 strip: on-rails dragon flight over five
+biomes (DUNE SEA / CLOUD REEF / SUNKEN RUINS / ASH FIELDS / THE GATE), tap
+lances, hold-sweep lock ticks onto up to four targets, release homing volleys,
+telegraphed dodges, an exact-240f SANDSTORM FRONT (physical dust wall +
+crosswind) and CARRIER WYRM (three staged weak points, two-wave sweep) act
+pair alternating by index.
+
+## Measured numbers (all from dated sweeps, sources recorded in the evals)
+
+### Route-planner A/B — ten paired five-minute seeds, 0x4f00+i*37 (2026-07-17)
+
+- Per-seed wins: **10/10 score, 10/10 failures** (bands measured, not guessed).
+- Aggregate score **22584 vs 14394** (ratio **1.534**); failures **558 vs
+  1079** (planned pays **0.517** of the baseline's cost); hitsTaken **293 vs
+  550**; wrecks **0 vs 14**; volleyWipes **166 vs 102**.
+- Honest baseline participation: __NO_ROUTE_PLAN still kills **1354**, volleys
+  **946**, locks **3890**, events **10794** — it fights, it just can't forecast.
+- Planned-route band highlights (extrema): kills 143..176, volleyWipes 10..23,
+  nearMisses 66..99, hitsTaken 22..36, wounds 0..5, events 1013..1254.
+
+### Soaks — six ten-minute runs (0x5200, 0x52d4, 0x5468, 0x55fc, 0x5788, 0x5914)
+
+- **still 0s, quiet 2s, stall 2s** on all six; events 2064..2308, progress
+  535..612, continuityMax 2.34px (cap 3.4).
+- Tier ladder strictly ordered on both eval seeds: shown t1/t2/t3 = 638..672 /
+  154..176 / **16..22** (s3 ≥ 2 with big margin); exact kernel budgets
+  held=6*s3, slowed=24*s3, admire=48*s3 verified.
+- Act note pairs: 4 storms + 3 wyrms per soak, warn→land exactly 240 sim
+  frames, viewer clock only stretches.
+- Pack composition: all four wing kinds (vyr/manta/wasp/spire) ride every run.
+
+### Motion contract
+
+- dragon pace **2.054..2.064 px/f** (floor 1.8); pack mean **1.079..1.083 px/f**
+  (floor .9); worst bare still 25f (limit 30f); worst emote pause 110f
+  (limit 160f); wyrm emote share 20.3% (limit 30%).
+- __NO_EMOTE re-exposes 4 bare-still violations (downed wings) while staying a
+  byte-identical sim no-op; __NO_PAYOFF_FX byte-identical through 1086 events.
+
+### Feedback legibility (two seeds, 59 sampled beats)
+
+- 16 categories fire palette-separated at the event location (thinnest 24px):
+  lock/volley/volley-kill/dodge/lance-hit/lance-kill/wyrm-hit/boss-break/
+  wyrm-kill good; hit-taken/shield-down/wyrm-wound/lapse bad. Live vs
+  __NO_PAYOFF_FX twins byte-identical sims.
+
+### Visual gates (seed 0x5e100001)
+
+- Candidate medians beat BOTH reference medians outright on 3 of 4 axes:
+  edge .0306 (ref .0295), rich cells .967 (ref .611), entropy 4.15 (ref 3.39);
+  luma .1653 vs ref .1666 (gate is ref×.90 = .150 — passes).
+- Quiet-corridor ceilings: sky/ground/sides all ≤ .010; measured calm build
+  sky 0..0062 / ground .0015..0031 / sides 0..0004; deliberately busier build
+  (injected grain) sky .0243..0479 / ground .0253..0544 / sides .0221..0522 —
+  **ceilings fail the busy build at 2.2-2.5x**.
+- Actor scale: dragon 26×24-27×25, wings 9..18 wide, turret 12×8, wyrm 70×64
+  (boss cap 96×96); footprint far under 20%; approach ratio .714 ≥ .55.
+- Montage sha256 `8c2f6f3ed0fd41d5e050ce87e340990b8a5b81469babc15d788848793558ff84`;
+  review identity `3a77c57335d4164144d6a15cb26236b8afcefd7c72b6b5659a9631a68ab38044`;
+  clip `6dec5b5b60003198c69cd83fe6d46c544fc3034f295d7519ac00ca2b2338e88f`
+  (5,424,429 bytes).
+
+## Lessons
+
+1. **Probe-every-object before trusting counters.** The volley economy
+   silently churned ~700 locks because `pruneLocks` treated the swarm's
+   `respawnT===undefined` as expired. Volley sizes of 1 told the story; one
+   debug footer (volley size histogram) found it in minutes. When a rate
+   looks wrong, histogram the mechanism before tuning constants.
+2. **A boss telegraph that re-arms itself never fires.** The sweep trigger
+   tested `sweepCd<=0` but only the fired sweep reset the cooldown, so the
+   40f telegraph reset every frame and zero sweep bolts ever existed. Gate
+   staged telegraphs on their own state (`sweepT<=0`), and prove the attack
+   exists by counting its projectiles, not its trigger flag.
+3. **Perfect dodges need commitment, not better aim.** The bot wove every
+   bolt by re-reading them each frame. A 26f dodge-commitment window
+   (`dodgeT`) plus guided wyrm ordnance and a punish wave timed INSIDE the
+   commitment turned the boss's fire into real stakes: shieldBreaks 0..5,
+   wounds 0..5, wrecks 0..1 planned — while the reactive baseline pays 2-3x.
+4. **Feedback decals must carry solid palette cores.** Alpha-blended thin
+   strokes washed signature colors past the 55-distance palette tolerance;
+   solid 5×5 cores at .95 alpha keep good/bad palette-true over any biome.
+5. **The quiet-stage/edge-median tension has one honest answer: lines.**
+   Reference edge medians (.0295) fight the speckle ceilings (.010) until
+   you remember horizontal full-width texture can't speckle horizontally —
+   milled micro-banding (1px alternating tone lines every 4 rows) lifted
+   median edge .0134→.0306 with speckle unchanged. Lines for material,
+   shapes for landmarks.
+6. **Bands die by 2-sample soaks.** The first soak bands came from two runs
+   and broke the moment the sim shifted a stat by ±30%. Six-soak sweeps for
+   the final lock, and re-derive after EVERY sim change before declaring
+   done — the eval caught four stale band sets that eyeballing missed.
+7. **Fixture payoffs must be timed to their own events.** The volley-kill
+   and phase-break FX diffs read zero because the captures sampled 20-50f
+   before the missiles actually landed (measured: kill at 25f, break at
+   76f). Measure the event frame, then offset the capture +3-14f.
+# DEMON FIST — build audit draft (2026-07-17)
+
+New game: a God Hand spinoff for the 4:9 strip. Side-view brawler across five
+authored blocks (BACK ALLEY, MARKET ROOF, DOCK SIDE, OLD DOJO, DEMON GATE),
+one shared integrator for fighter/enemies/bot/human/planner, jab-chain /
+launcher / air-slam / sweep / counter-dodge / GOD WHEEL move grammar, combo
+meter, four street demons plus the crowned GATEKEEPER elite, alternating
+DEMON GATE / THE MOB acts with exact 240f physical warnings, tier-3 show
+ladder, good/bad feedback ledger with static aftermath decals.
+
+## Proven numbers (all measured on the shipped build)
+
+### Behavior eval (evals/demon-fist-eval.js) — PASSED
+- Determinism/render parity/chunk parity byte-identical; renderer exercised
+  (1.6M draw calls in 3600f; fillRect/beginPath/fillText present).
+- Planner purity + RNG-inert: signature identical before/mid/after two
+  buildFightPlan calls; next engine RNG byte-identical vs control.
+- A/B, 10 paired 5-min seeds vs __NO_ROUTE_PLAN (goal-weighted score =
+  3*segments + 40*blocks + combat economy − mistakes): scoreWins 8/10,
+  aggregate score 17280 vs 16272, segments ~1.9x (332 vs 185), supers 202 vs
+  156, failures 292 vs 128 (~2.3x — the planner pays for depth: it reaches
+  blocks 4..5 and fights demons/elites the block-3-turtling baseline never
+  meets). Baseline participates honestly: 1213 KOs, 8691 events, 283 supers,
+  20 elite KOs.
+- Bands (10 seeds planned/reactive + 2 soaks): POLICY/REACTIVE/SOAK all
+  inside measured extrema with ~15-25% margin (dated comments in the eval).
+- Acts: both types diverge physically at frame 1 of the 240f warn; warn→land
+  exactly 240f on the sim clock, ≥240f on the viewer clock; __NO_ACTS emits
+  nothing; reset-during-warn leaves no stale land. Soak: 7 lands, note pairs
+  gate 3-4 / mob 3.
+- Manual: two-Enter gate, identical intent schema, applied intents traverse
+  the integrator; all 11 mapped keys responsive individually; X+Z chord fires
+  the wheel; chords compose in the intent fields; opposing pairs cancel.
+- Soaks (2×10min): still 0s, quiet 2-3s, stall 4-6s, 1981-2008 events,
+  729-762 progress, tiers offered {271-284,153-155,66-68}, shown
+  {204-205,43-45,38-39}, s3 38-39, held/slowed/admire exact (truncation-
+  tolerant budget form), blocks 5, kinds seen thug 59-60 / sprinter 50 /
+  bruiser 61-63 / demon 66-70 / elite 4.
+- Motion (4 seeds): zero violations; fighter pace 0.696-0.739 px/f,
+  pack mean 0.977-1.222 px/f; emote budgets fighter ≤240f/35%,
+  pack ≤240f/50%, turnover allowance 4. __NO_EMOTE re-exposes 8-13
+  violations and stays byte-identical. __NO_PAYOFF_FX byte-identical.
+- Contact: staged hard overlap 3→0 in 60f; runs worst 1-2 pairs, longest
+  5-8f, contacts 12-249. Overlap contract: worst ≤2, longest ≤12 (measured).
+- Pose honesty: wrong-way 0, crab 0 over 2×10800f; fixtures face travel and
+  hold authored locked poses.
+- Feedback legibility: 50 sampled beats (40 good / 10 bad) across 2 seeds,
+  all 11 required categories fire (elite-ko 3677/3891, mob-clear 9017/9231,
+  knockdown 10638/10061 frame firsts), palette-separated, thinnest 18px,
+  signatures identical.
+
+### Visual eval (evals/demon-fist-visual-eval.js) — PASSED (31/31 automated gates)
+- Same-seed real pixels deterministic across the whole 21-run evidence build.
+- Opaque/non-flat: colors 129-241, entropy 3.3-4.6, luma .143-.205,
+  largest share ≤ .369, edge1 .0223-.0422 (median .0309 ≥ ref .0307),
+  edge4 > edge1 everywhere, rich .71-.87 (median .78 ≥ ref .591).
+- Aligned bursts: fighter median .264/firstLast .339/grid .80/max .340;
+  gatekeeper median .132/.195/.578/.224; slam burst max .0645; finale burst
+  max .0913.
+- Block structure distance .35-.41 across all pairs (floor .16/.24).
+- Warn vs calm contrast: changed .074, mean .0107, bounds .851; warn vs land
+  (physical duel): changed .101, mean .0205, bounds .963, elite visible.
+- Payoff FX diff crops vs __NO_PAYOFF_FX twins: launcher/super/finale all
+  nonzero on the actors.
+- Scroll coherence: ground flows left with travel, margin over counter-scroll.
+- Zero-guideline plan pairs byte-identical at 5 beats; banned tokens absent.
+- Actor scale (isolated renders): fighter ≤20x12-20, thug 11x22, sprinter
+  10x22, bruiser 17x26, demon 14x28, elite 17x31 — all inside caps; footprint
+  1.5-2.8% of the playfield (<20%); approach ratio .594 (≥.55).
+- Quiet corridors: street 0, sides .0000-.0068; ceilings .012/.035 fail a
+  deliberately busier build (1px noise peppered at ~2x) measuring .0771/.1149
+  — a 6.4x/3.3x failure ratio.
+- Status-near-fighter: hudStatus box y343 within 35px of the fighter's feet,
+  live health 166/meter 55 palette pixels.
+- Montage sha256 4ffff4d52004a3273bddf9d6c90dcf96e0cb64a14bb23aee2c45d351406c2c05
+- Review identity ed42f82ca34bd4b63d3c3bec304406c6b54d13d4b8e376145a4e6a9cb3388a07
+- Clip 30s @30fps: 3,695,292 bytes, h264 900 frames 320x720, sha256
+  f5cfdbfd17d925382b826e03e880f485ef4da32ee96bef28faf3505408bc89a7
+
+## Lessons (the fights that mattered)
+- The 2px/30f motion contract vs a contact brawler: combos that plant the
+  feet are honest content the metric cannot see. The answer is layered:
+  prowl/orbit movement everywhere, a tiny universal per-enemy drift, an
+  anchor backstop that flips a boxed body to the other flank at full speed,
+  and honest emote flags for the AUTHORED pose states (attack/dodge/hit/
+  slam/super, enemy down/vanish/appear/windup) plus the tier-3 hold/slow-mo
+  presentation window (the show kernel owns the world clock there).
+- KO double-count: a stomped corpse re-ran koEnemy per stomp — guard every
+  payoff transition with a dead flag, not a state check.
+- The armor-clang deadlock: a bruiser whose hold ring outranged its windup
+  gate stood off forever. Windup gates must outrange hold distance, and token
+  holders step inside before committing.
+- The split-pack retreat loop: an anti-boxing rule without a cooldown
+  moonwalked the fighter 950px from the fight. Pressure valves need
+  cooldowns.
+- The elite eaten during the warn: a brawl KO'd the gatekeeper before its
+  land, breaking note pairing. The keeper's march is invulnerable by design;
+  the 240f warn/land pair is inviolable.
+- The interruptible super: a hit mid-wheel destroyed the state and stalled
+  the show. Super armor (iframes for the whole 56f) is both the fantasy and
+  the fix.
+- Stomp economy: free ground stomps 10x'd the KO rate. Two free ones, then
+  they scramble up.
+- The reactive baseline being too good: shared attack branches mean the
+  baseline fights well; its real cost is zero advancement (blocks 3 vs 5) —
+  score the goal, not only the body count.
+- Tier floods: per-KO offers drown the ladder at brawler kill rates. Only
+  authored KOs (slam/super/finisher) climb; supers stay an apex via halved
+  meter income.
+- Progress deserts are a genre problem: attrition fights at low HP stall
+  every progress counter. The answer is in-fiction: adrenaline meter at low
+  HP plus a rally surge on the get-up — the spiral always has a wheel.
+
+## Risks / thin margins
+- Reference-edge median .0309 vs floor .0307 — thin. Any texture deletion
+  re-fails the gate; keep the horizon city-glow row and the wall-base ledge.
+- Planned failures run ~2.3x the baseline (depth cost) — the 4.0x ceiling
+  holds, but hardening the fighter further would flip it; do not tune hits
+  taken upward.
+- The tier ladder depends on the super offer staying tier 3 and rare; meter
+  income changes re-flood tier 2.
+- catalog-eval will flag the demon-fist files as unregistered until the
+  games.js/game-contracts.js entries land (owner registers them).

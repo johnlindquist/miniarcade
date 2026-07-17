@@ -1,0 +1,1657 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STAR ROLLER</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080d}
+  body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(100vw,44.444vh);height:auto;max-height:100vh;aspect-ratio:4/9;
+    image-rendering:pixelated;background:#0a0c12}
+  canvas:focus-visible{outline:2px solid #8a7aff;outline-offset:-3px}
+</style>
+<canvas id="cv" width="320" height="720" tabindex="0"
+  aria-label="Star Roller. A tiny katamari rolls through five zones — kitchen floor, garden, main street, harbor, orbit tide — sticking smaller things to itself, dodging bigger ones, growing into a star while the King of All Cosmos comments."></canvas>
+<script src="engine.js"></script>
+<script src="autoplay.js"></script>
+<script>
+'use strict';
+const{ctx,W,H,random,R,RI,hash,clamp,rect,stepParts,drawParts,ring,stepRings,drawRings,
+  shake,preDraw,postDraw,start,keys,manual,initSession,sessionStep,drawSession,playing,
+  addScore,gameOver,createShow,fxBurst,fxDust}=E;
+const{controllerMux,skillProfile,createRng}=AI;
+
+// STAR ROLLER — a Katamari Damacy spinoff for the 4:9 strip. The katamari
+// rolls north through five zones (KITCHEN FLOOR, GARDEN, MAIN STREET, HARBOR,
+// ORBIT TIDE) and sticks to itself anything STRICTLY smaller than its current
+// diameter: bits, toys, pets, furniture, vehicles, structures. Oversized
+// things bump it — a wobble, and the newest pickups scatter back off the ball
+// (real size loss). The King of All Cosmos descends for authored commentary,
+// MAGNET RAIN telegraphs an item shower with a 240-frame physical warning,
+// and THE KING WATCHES pays triple glory. Reach 2m before the timer and the
+// ball becomes a star. Nothing pre-draws intent (motion contract): no route
+// lines, no pickup highlights, no predicted arcs — tells live on the world
+// (relative size, the shelf gaps, the sweeper's spin-up, the royal portal).
+// One shared integrator rolls the ball, the pets, the sweepers, the human,
+// the bot, and the planner's copied-state rollouts — never touching the
+// engine RNG outside the sim stream.
+const TAU=Math.PI*2,BLOCK=210,ZONE_BLOCKS=14,RUN_FRAMES=18000,BALL_Y=292;
+const X_LO=12,X_HI=148,START_D=5,TARGET_D=200,SWEEPER_D=60;
+// Growth economics: area-add growth with a size-scaled coefficient — crumbs
+// barely feed you, vehicles and structures are feasts. Tuned so efficient
+// routing stars around 3-4.5 minutes and sloppy routing fizzles.
+const GROWTH_K=.105,GROWTH_K2=.0018,GROWTH_K_MAX=.30;
+const growthK=s=>Math.min(GROWTH_K_MAX,GROWTH_K+s*GROWTH_K2);
+const INK='#07080d',CREAM='#fff3da',GOLD='#ffd166',AMBER='#ff8a3d',CORAL='#ff5d4f',
+  MINT='#67e8a2',CYAN='#59d8f5',ROYAL='#8a7aff',BLOOD='#c92c3c',STEEL='#9aa7b8';
+const ZONES=[
+  {name:'KITCHEN FLOOR',kind:'kitchen',floor:'#c2a468',floor2:'#b08f54',line:'#8a6a3c',
+    side:'#6a4a2c',side2:'#503520',accent:'#ff8a3d',light:'#ffe9a8',haze:'#ffd88a',minCls:0,maxCls:2},
+  {name:'GARDEN',kind:'garden',floor:'#4a7a3c',floor2:'#3e6a34',line:'#2c5226',
+    side:'#5c4a30',side2:'#46381f',accent:'#ff5d8f',light:'#fff3da',haze:'#c8e8a0',minCls:0,maxCls:3},
+  {name:'MAIN STREET',kind:'street',floor:'#3c4150',floor2:'#343a48',line:'#8a90a0',
+    side:'#5a5e6a',side2:'#42464f',accent:'#ffd166',light:'#59d8f5',haze:'#ffb98a',minCls:1,maxCls:4},
+  {name:'HARBOR',kind:'harbor',floor:'#7a5c3a',floor2:'#6a4e32',line:'#4c3420',
+    side:'#0c3c50',side2:'#0a3144',accent:'#59d8f5',light:'#b8f0ff',haze:'#8ad8e8',minCls:1,maxCls:4},
+  {name:'ORBIT TIDE',kind:'orbit',floor:'#181b30',floor2:'#131628',line:'#2c3050',
+    side:'#0a0c1c',side2:'#07081a',accent:'#8a7aff',light:'#59d8f5',haze:'#4a5adf',minCls:2,maxCls:5}
+];
+// Size classes in diameter units (1 unit = 1 cm): bits <5, toys <10, pets
+// <20, furniture <40, vehicles <80, structures 80+. The ball starts at 5cm
+// and must reach 200 (a 2m star) before the timer.
+const CLASS_NAMES=['BITS','TOYS','PETS','FURNITURE','VEHICLES','STRUCTURES'];
+const CLASS_AT=[10,20,40,80,160]; // milestone crossings (ball d)
+const CLASS_COLORS=['#fff3da','#ffd166','#67e8a2','#ff8a5d','#59d8f5','#8a7aff'];
+const classOf=s=>s<5?0:s<10?1:s<20?2:s<40?3:s<80?4:5;
+// Item kinds per zone. size is a [min,max] diameter range; c is the read
+// color; mover 'pet' = critter AI through the shared integrator, mover 'car'
+// = lane traffic like ashen-rage's commute.
+const ITEM_KINDS={
+  crumb:{cls:0,size:[1,3],c:'#e8c88a'},pea:{cls:0,size:[2,4],c:'#7ee08a'},tack:{cls:0,size:[2,3],c:'#b8bcc4'},
+  dice:{cls:1,size:[5,7],c:'#fff3da'},block:{cls:1,size:[6,9],c:'#ff8a3d'},marble:{cls:1,size:[5,6],c:'#59d8f5'},
+  mouse:{cls:2,size:[10,14],c:'#a89aa8',mover:'pet'},
+  stool:{cls:3,size:[22,30],c:'#8a5a3a'},pot:{cls:3,size:[24,32],c:'#7a8a9a'},pan:{cls:3,size:[20,28],c:'#4a4a52'},
+  wagon:{cls:4,size:[42,56],c:'#c9403c'},
+  cabinet:{cls:5,size:[85,110],c:'#6a4a2c'},
+  seed:{cls:0,size:[1,3],c:'#e8d8a0'},pebble:{cls:0,size:[2,4],c:'#8a8a80'},berry:{cls:0,size:[3,4],c:'#ff5d8f'},
+  ball8:{cls:1,size:[6,9],c:'#ffd166'},pinwheel:{cls:1,size:[7,9],c:'#ff8ac2'},
+  snail:{cls:2,size:[10,13],c:'#c9a86a',mover:'pet'},beetle:{cls:2,size:[11,15],c:'#3c4a6a',mover:'pet'},
+  frog:{cls:2,size:[14,19],c:'#5ac94a',mover:'pet'},
+  chairG:{cls:3,size:[24,34],c:'#a8763c'},flowerpots:{cls:3,size:[26,36],c:'#c96a4e'},
+  barrow:{cls:4,size:[42,58],c:'#7a8a4a'},mower:{cls:4,size:[55,70],c:'#c9403c'},
+  shed:{cls:5,size:[95,130],c:'#7a5a38'},
+  bolt:{cls:0,size:[1,3],c:'#b8bcc4'},can:{cls:0,size:[2,4],c:'#c9403c'},bottle:{cls:0,size:[3,4],c:'#67e8a2'},
+  coneS:{cls:1,size:[6,9],c:'#ff8a3d'},hydrantS:{cls:1,size:[7,9],c:'#c9403c'},
+  pigeon:{cls:2,size:[10,14],c:'#8a90a0',mover:'pet'},cat:{cls:2,size:[15,19],c:'#e8a84a',mover:'pet'},
+  crateSt:{cls:3,size:[24,38],c:'#a8763c'},chairSt:{cls:3,size:[22,30],c:'#5a6a8a'},
+  car:{cls:4,size:[45,65],c:'#c96a5a',mover:'car'},taxi:{cls:4,size:[48,68],c:'#ffd166',mover:'car'},
+  van:{cls:4,size:[62,78],c:'#6aa8b8',mover:'car'},
+  kiosk:{cls:5,size:[85,120],c:'#4a5a6a'},
+  shell:{cls:0,size:[2,4],c:'#ffd8c2'},fish:{cls:0,size:[3,4],c:'#8ac2d8'},starfish:{cls:0,size:[3,4],c:'#ff8a5d'},
+  bucket:{cls:1,size:[6,8],c:'#c9403c'},buoyS:{cls:1,size:[7,9],c:'#ff5d4f'},
+  crab:{cls:2,size:[10,15],c:'#e86a4a',mover:'pet'},gull:{cls:2,size:[12,18],c:'#e8e8e8',mover:'pet'},
+  barrel:{cls:3,size:[22,32],c:'#7a5a38'},crateHb:{cls:3,size:[26,38],c:'#8a6a42'},
+  scooter:{cls:4,size:[42,60],c:'#59d8f5',mover:'car'},truckHb:{cls:4,size:[60,76],c:'#8a9a6a',mover:'car'},
+  boat:{cls:5,size:[95,140],c:'#8a4a42'},
+  starbit:{cls:0,size:[2,4],c:'#fff3a8'},shard:{cls:0,size:[2,3],c:'#59d8f5'},crystal:{cls:0,size:[3,4],c:'#c98aff'},
+  moonrock:{cls:1,size:[6,9],c:'#9aa0b8'},satcell:{cls:1,size:[7,9],c:'#4a6ac9'},
+  mote:{cls:2,size:[12,18],c:'#8affea',mover:'pet'},
+  panel:{cls:3,size:[24,38],c:'#3a5a9a'},dish:{cls:3,size:[22,30],c:'#b8bcc4'},
+  pod:{cls:4,size:[45,70],c:'#c9d2e8',mover:'car'},rover:{cls:4,size:[50,74],c:'#e8a84a',mover:'car'},
+  satellite:{cls:5,size:[90,130],c:'#b8c4d8'},rocket:{cls:5,size:[120,160],c:'#e8e2d2'},
+  asteroid:{cls:5,size:[140,180],c:'#6a5a52'}
+};
+const ZONE_POOLS={
+  kitchen:['crumb','pea','tack','dice','block','marble','mouse','stool','pot','pan','wagon','cabinet'],
+  garden:['seed','pebble','berry','ball8','pinwheel','snail','beetle','frog','chairG','flowerpots','barrow','mower','shed'],
+  street:['bolt','can','bottle','coneS','hydrantS','pigeon','cat','crateSt','chairSt','kiosk'],
+  harbor:['shell','fish','starfish','bucket','buoyS','crab','gull','barrel','crateHb','boat'],
+  orbit:['starbit','shard','crystal','moonrock','satcell','mote','panel','dish','satellite','rocket','asteroid']
+};
+const CAR_KINDS={street:['car','taxi','van'],harbor:[],orbit:['pod','rover']};
+// Rolling personas: readable plan grammar per run (paired variety, seeded).
+const PERSONAS=[
+  {name:'GOURMET',risk:.45,gain:1.25,shelf:.4,color:GOLD},    // farms dense clusters, respects shelves
+  {name:'DAREDEVIL',risk:.85,gain:1.0,shelf:1.2,color:CORAL}, // threads gaps, hunts big game near sweepers
+  {name:'TIDY',risk:.25,gain:.9,shelf:.2,color:MINT}          // bump-averse, flawless-streak farmer
+];
+
+let showFrame=0,runFrame=0,runSerial=0,state='run',endT=0,outcome='',worldSeed=1,skillSeed=1;
+let ball=null,items=[],cars=[],sweepers=[],stuck=[],texts=[],plan=null,planAt=-1e9,skill=null,visualIntent=null;
+let sweeperSerial=0,scatterSerial=0,itemSerial=0,lastBlock=0,lastZone=0,genBlock=-1,carGenBlock=-1;
+let streak=0,lastPickupFrame=-1e9,bestStreak=0,chainAt=-1e9,chainCount=0,lastBumpFrame=-1e9,pickupsSinceBump=0;
+let rainCaughtAt=-1e9,rainCaughtRun=0,persona=PERSONAS[0],personaIndex=0;
+let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
+let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLapsed=false;
+// ---- good/bad feedback presentation (all sim-inert) --------------------------
+let goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,marks=[],shelfDone=new Set();
+function cue(kind,id,x,y,pulse){
+  const wy=y===undefined?ball.y:y;
+  feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
+    sx:Math.round(clamp(x===undefined?ball.x:x,0,W)),sy:Math.round(clamp(BALL_Y-(wy-ball.y),34,H-6))});
+  if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.45:pulse);
+  else badPulse=Math.max(badPulse,pulse===undefined?.55:pulse);
+}
+const stats={pickups:0,bulk:0,milestones:0,streaks:0,chains:0,threads:0,shelves:0,shelfHits:0,
+  bumps:0,scatters:0,sweeperHits:0,sweepersEaten:0,hazardHits:0,petsEaten:0,carsEaten:0,
+  rainCaught:0,kingBonus:0,stars:0,fizzles:0,dashes:0,lapses:0,acts:0,actClears:0,dodges:0,
+  flawless:0,runs:0,contacts:0,grazes:0,zones:1,events:0,progress:0,maxEventLull:0,maxProgressLull:0,
+  maxStep:0,appliedIntents:0,admireIntents:0};
+const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
+  1:{frames:12},2:{frames:44,minGap:100},
+  3:{frames:84,minGap:600,hold:6,slowEvery:3,slowFrames:24,admire:48}
+}});
+const act={phase:'calm',type:'magnet',warnAt:2400,landAt:2940,endAt:3540,index:0,notes:[],lastSweeper:0};
+const king={y:-90,line:'',lineT:0,serial:0,sayT:0};
+const KING_LINES={
+  start:["ROLL, LITTLE STAR. THE SKY IS HUNGRY.","THE KING IS WATCHING. BEGIN."],
+  milestone:["OHO! BIGGER ALREADY.","YES. GROW. THE SKY NEEDS YOU.","A FINE APPETITE."],
+  bump:["CLUMSY. THE KING SAW THAT.","MIND THE FURNITURE.","THAT WAS EXPENSIVE."],
+  sweeperHit:["THE SWEEPER COLLECTS ITS TAX.","WATCH THE FLOOR, LITTLE STAR."],
+  sweeperEaten:["YOU ATE THE SWEEPER?! THE KING IS IMPRESSED.","DELICIOUS MACHINE."],
+  magnetWarn:["THE KING SHAKES THE SKY. CATCH THE RAIN.","MAGNET RAIN. OUR GENEROSITY FALLS."],
+  magnetLand:["EAT UP.","THE SKY PROVIDES."],
+  kingWarn:["THE KING DESCENDS. DO NOT EMBARRASS US.","ROYAL INSPECTION. CHINS UP."],
+  kingLive:["THE KING WATCHES. TRIPLE GLORY.","DANCE FOR THE KING."],
+  star:["A STAR! THE KING KNEW IT.","INTO THE SKY WITH YOU. MAGNIFICENT."],
+  fizzle:["...THAT WAS NOT A STAR.","THE KING LOOKS AWAY."],
+  streak:["GOOD RHYTHM.","THE KING TAPS HIS FOOT."]
+};
+
+const mod=(n,d)=>((n%d)+d)%d;
+const round=(v,n)=>{const p=Math.pow(10,n||4);return Math.round(v*p)/p;};
+const mix=(a,b,t)=>{const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16),
+  m=s=>Math.round((pa>>s&255)+((pb>>s&255)-(pa>>s&255))*t);
+  return'#'+((1<<24)+(m(16)<<16)+(m(8)<<8)+m(0)).toString(16).slice(1);};
+const poly=(points,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+  for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath();ctx.fill();};
+const line=(points,c,w)=>{ctx.strokeStyle=c;ctx.lineWidth=w||1;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+  for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.stroke();ctx.lineWidth=1;};
+const sy=wy=>BALL_Y-(wy-ball.y);
+// Payoff particles/rings live in inverted world space so engine drawParts can
+// map them back onto the scrolling world (ashen-rage convention): the burst
+// stays on the item that fired it while the road flows past.
+const fxAt=(x,y,n,c,sp,grav)=>fxBurst(x,-y,n,c,sp,grav);
+const dustAt=(x,y,n,c)=>fxDust(x,-y,n,c);
+const ringAt=(x,y,c,dr,t)=>ring(x,-y,c,dr,t);
+const fxCam=()=>-ball.y-BALL_Y;
+// World scale: the camera zooms out as the ball grows. The ball always draws
+// at drawR px radius; items draw at size*worldScale px, so "smaller than me"
+// is always readable at a glance — the honest Katamari read.
+const drawR=d=>clamp(3*Math.sqrt(Math.max(1,d))*1.5,6,20);
+const worldScale=()=>drawR(ball.d)*2/ball.d;
+// Item draw scale caps the zoom: at small diameters the honest relative order
+// (bigger/smaller than the ball) stays, but pets and furniture stop being
+// lane-choking macro lenses (small-actors-big-worlds law). The cap is shared
+// by the renderer, the collisions, and the planner rollout.
+const itemPx=i=>clamp(i.size*Math.min(worldScale(),1.75),2,110);
+const topSpeed=d=>1.66+Math.min(.5,16/(d+8));
+const zoneForBlock=b=>mod(Math.floor(b/ZONE_BLOCKS),ZONES.length);
+const currentBlock=()=>Math.floor(ball.y/BLOCK);
+const currentZone=()=>zoneForBlock(currentBlock());
+const classColor=c=>CLASS_COLORS[c];
+const say=(s,c,wy,t,x)=>{texts.push({s,c:c||CREAM,y:wy===undefined?ball.y+40:wy,x:x===undefined?ball.x:x,t:t||70});
+  if(texts.length>14)texts.shift();};
+function kingSay(key){
+  if(king.sayT>runFrame)return;const pool=KING_LINES[key];if(!pool)return;
+  king.line=pool[Math.floor(hash(worldSeed,++king.serial)*pool.length)];king.lineT=210;king.sayT=runFrame+260;
+}
+function markEvent(score){eventSerial++;stats.events++;stats.maxEventLull=Math.max(stats.maxEventLull,showFrame-lastEventFrame);
+  lastEventFrame=showFrame;if(score&&playing())scoreGain(score);}
+function markProgress(score){progressSerial++;stats.progress++;stats.maxProgressLull=Math.max(stats.maxProgressLull,showFrame-lastProgressFrame);
+  lastProgressFrame=showFrame;if(score&&playing())scoreGain(score);}
+function scoreGain(n){const x3=act.phase==='live'&&act.type==='king';
+  if(x3)stats.kingBonus++;
+  if(playing())addScore(Math.max(1,Math.round(n))*(x3?3:1));}
+function offer(id,tier,x,y,tag){return SHOW.offer({id,tier,at:showFrame,x,y,tag,expiresAt:showFrame+30});}
+function finiteBody(v){return[v.x,v.y,v.vx,v.speed,v.d].every(Number.isFinite);}
+function allFinite(){return[ball.x,ball.y,ball.vx,ball.speed,ball.d,runFrame].every(Number.isFinite)&&
+  items.every(i=>[i.x,i.y,i.size].every(Number.isFinite))&&sweepers.every(finiteBody)&&cars.every(finiteBody);}
+
+// ---- world generation ---------------------------------------------------------
+function maxClsForBlock(b){return 5;} // superseded by adaptive clsFor; kept for fixture compatibility
+// Adaptive class mix: the world stocks itself relative to the ball's current
+// class — a steady diet at and below size, stretch goals one class up, and a
+// few clearly-oversized landmarks as bump hazards. Deterministic: generation
+// reads the same deterministic ball state the sim already has.
+function clsFor(b,zone,j){
+  const ballCls=classOf(ball.d),t=hash(b*7+j*13,worldSeed*3+11);
+  let cls=t<.34?ballCls-1:t<.74?ballCls:t<.92?ballCls+1:ballCls+2;
+  cls=clamp(cls,0,5);
+  return clamp(cls,Math.min(zone.minCls,cls),zone.maxCls);
+}
+function makeItem(kind,x,y){
+  const spec=ITEM_KINDS[kind],id=++itemSerial;
+  return{id,kind,cls:spec.cls,size:round(spec.size[0]+hash(id,worldSeed*13)*(spec.size[1]-spec.size[0]),2),
+    x,y,vx:0,speed:0,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,wobbleT:0,
+    state:'loose',mover:spec.mover||null,hitCd:0,seed:hash(id*3,worldSeed)};
+}
+// Shelves: full-width counters with one gap — the size-gated shortcut. A ball
+// narrow enough threads the gap to the dense cache behind; too wide and it
+// bumps the ledge (wobble + scatter). Physical, readable, planner-visible.
+function blockFeature(b){
+  const zone=ZONES[zoneForBlock(b)];
+  const shelf=mod(b*5+worldSeed,6)===2?{y:b*BLOCK+150,
+    gapX:38+hash(b,worldSeed*11)*84,gapW:40+hash(b*3,worldSeed)*22,id:'sh-'+b}:null;
+  return{b,zone,shelf};
+}
+// The size-gate rule, shared by the real collision and the planner rollout:
+// body radius grows with true diameter, so the same gap is a clean shortcut
+// for a small ball, a tight thread for a mid ball, and a ledge for a giant.
+const shelfClearance=(s,x,d)=>s.gapW/2-Math.abs(x-s.gapX)-Math.min(d*.22,18);
+function spawnBlockItems(b){
+  const zone=ZONES[zoneForBlock(b)],pool=ZONE_POOLS[zone.kind];
+  const nCl=b<3?4:3+(hash(b*3,worldSeed)>.6?1:0);
+  for(let c=0;c<nCl;c++){
+    const cls=clsFor(b,zone,c);
+    const kinds=pool.filter(k=>ITEM_KINDS[k].cls===cls);if(!kinds.length)continue;
+    const kind=kinds[Math.floor(hash(b*17+c,worldSeed*7)*kinds.length)];
+    const cx=26+hash(b*31+c*7,worldSeed)*(W-52),cy=b*BLOCK+26+hash(b*13+c*11,worldSeed)*(BLOCK-64);
+    // Big things stand apart; little things huddle. Cluster count and spread
+    // scale with class so mid-size zones keep honest lanes between landmarks.
+    const n=cls>=3?2+Math.floor(hash(b*7+c*3,worldSeed)*2):3+Math.floor(hash(b*7+c*3,worldSeed)*4);
+    for(let j=0;j<n;j++){
+      const a=hash(b+j*5,c*19+worldSeed)*TAU,rr=(5+hash(b*2+j,c+worldSeed)*17)*(1+cls*.4);
+      items.push(makeItem(kind,cx+Math.cos(a)*rr,cy+Math.sin(a)*rr*.7));
+    }
+  }
+  const ns=3+Math.floor(hash(b*41,worldSeed)*3);
+  for(let j=0;j<ns;j++){
+    const cls=clsFor(b,zone,10+j),kinds=pool.filter(k=>ITEM_KINDS[k].cls===cls);if(!kinds.length)continue;
+    const kind=kinds[Math.floor(hash(b*23+j,worldSeed*5)*kinds.length)];
+    items.push(makeItem(kind,20+hash(b*29+j,worldSeed)*(W-40),b*BLOCK+20+hash(b*37+j,worldSeed)*(BLOCK-50)));
+  }
+  // Crumb baseline: every block scatters a few bits, so a freshly-bumped small
+  // ball always has an honest recovery line back to size.
+  const bits=pool.filter(k=>ITEM_KINDS[k].cls===0);
+  for(let j=0;j<2;j++){
+    const kind=bits.length?bits[Math.floor(hash(b*53+j,worldSeed*7)*bits.length)]:pool[0];
+    items.push(makeItem(kind,24+hash(b*59+j,worldSeed)*(W-48),b*BLOCK+16+hash(b*61+j,worldSeed)*(BLOCK-40)));
+  }
+  // A shelf guards a dense cache of SMALL things behind it.
+  const f=blockFeature(b);
+  if(f.shelf){
+    const kinds=pool.filter(k=>ITEM_KINDS[k].cls<=1);
+    for(let j=0;j<6;j++){
+      const kind=kinds.length?kinds[Math.floor(hash(b*43+j,worldSeed*3)*kinds.length)]:pool[0];
+      items.push(makeItem(kind,f.shelf.gapX+(hash(b*47+j,worldSeed)-.5)*26,f.shelf.y+26+j*11));
+    }
+  }
+}
+function ensureItems(){
+  const target=currentBlock()+4;
+  while(genBlock<target){genBlock++;spawnBlockItems(genBlock);}
+  items=items.filter(i=>i.y>ball.y-420&&i.y<ball.y+1200);
+  if(runFrame<2)items=items.filter(i=>Math.hypot(i.x-ball.x,i.y-ball.y)>44); // spawn clearing
+}
+function makeCar(kind,x,y,b){
+  const spec=ITEM_KINDS[kind],id=++itemSerial;
+  return{id,kind,cls:spec.cls,size:round(spec.size[0]+hash(id,worldSeed*17)*(spec.size[1]-spec.size[0]),2),
+    x,y,vx:0,speed:.5+hash(id*7,worldSeed)*.5,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,wobbleT:0,
+    state:'loose',mover:'car',hitCd:0,wob:0,seed:hash(id*5,worldSeed)};
+}
+function ensureCars(){
+  const target=currentBlock()+4;
+  while(carGenBlock<target){carGenBlock++;
+    const zone=ZONES[zoneForBlock(carGenBlock)],kinds=CAR_KINDS[zone.kind]||[];
+    if(!kinds.length)continue;
+    const n=zone.kind==='street'?1:(hash(carGenBlock,worldSeed)>.62?1:0);
+    for(let j=0;j<n;j++){
+      const kind=kinds[Math.floor(hash(carGenBlock*3+j,worldSeed*19)*kinds.length)];
+      const x=[46,80,114][mod(carGenBlock+j,3)]+(hash(carGenBlock+j*7,worldSeed*23)-.5)*12;
+      cars.push(makeCar(kind,x,carGenBlock*BLOCK+40+j*94,carGenBlock));
+    }
+  }
+  cars=cars.filter(c=>c.y>ball.y-280&&c.y<ball.y+900);
+}
+function makeBall(x,y){return{x,y,vx:0,speed:1.4,d:START_D,bulk:0,yaw:0,angle:0,va:0,roll:0,
+  wobbleT:0,hitFlashT:0,invulnT:0,contactT:0,dashT:0,dashCd:0,gloryT:0,isBall:true,
+  intent:null,lastX:x,lastY:y};}
+function makeSweeper(){
+  return{id:sweeperSerial++,x:30+hash(sweeperSerial,worldSeed)*100,y:ball.y+540,vx:0,speed:1.1,d:SWEEPER_D,
+    yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'roam',stateT:0,lungeX:0,lungeY:0,misses:0,hitCd:0};
+}
+
+// ---- one shared physics path for ball, pets, sweepers, human, bot, planner ----
+function advanceBall(body,intent,env){
+  intent=intent||{steer:0,throttle:1,brake:false,tuck:false,dash:false,targetX:80,tactic:'ROLL'};
+  env=env||{};
+  const mushy=body.wobbleT>0?.55:1;
+  const turn=(intent.tuck?.16:.105)*mushy*(env.grip||1);
+  body.vx+=clamp(intent.steer||0,-1,1)*turn;
+  body.vx*=intent.tuck?.74:.82;
+  body.x+=body.vx;
+  const top=topSpeed(body.d)*(body.dashT>0?1.55:1)*(body.wobbleT>0?.75:1);
+  const target=(intent.throttle===undefined?1:intent.throttle)*top;
+  if(intent.brake||intent.tuck)body.speed=Math.max(.5,body.speed-(intent.tuck?.06:.05));
+  else if(body.speed<target)body.speed=Math.min(target,body.speed+.024);
+  else body.speed=Math.max(target,body.speed-.02);
+  body.y+=body.speed;
+  if(body.x<X_LO){body.x=X_LO;body.vx=Math.abs(body.vx)*.3;}
+  if(body.x>X_HI){body.x=X_HI;body.vx=-Math.abs(body.vx)*.3;}
+  // Honest heading (pocket-league doctrine): the ball tilts INTO actual
+  // lateral travel — atan2(vx, speed) with yaw inertia — never a cosmetic
+  // intent lean. angle/yaw/va/roll are pose only: physics never reads them
+  // and they never enter the replay signature.
+  const va=Math.atan2(body.vx,Math.max(.5,body.speed));
+  body.yaw=(body.yaw||0)+(clamp(va,-.5,.5)-(body.yaw||0))*.24;
+  body.angle=body.yaw;body.va=va;
+  body.roll=(body.roll||0)+body.speed/Math.max(6,drawR(body.d));
+  return body;
+}
+
+// ---- pickups, bumps, scatter ----------------------------------------------------
+function stick(i){
+  stuck.push({a:hash(i.id,runFrame)*TAU,rr:.66+hash(i.id*3,7)*.3,kind:i.kind,size:i.size,cls:i.cls,k:growthK(i.size)});
+  if(stuck.length>70)stuck.shift();
+}
+function collect(i){
+  if(i.state!=='loose')return;i.state='gone';
+  ball.bulk+=i.size*i.size*growthK(i.size);ball.d=Math.sqrt(START_D*START_D+ball.bulk);stats.bulk=round(ball.d,3);stats.pickups++;
+  if(i.mover==='pet')stats.petsEaten++;if(i.mover==='car')stats.carsEaten++;
+  if(i.rain){stats.rainCaught++;rainCaughtRun=runFrame-rainCaughtAt<210?rainCaughtRun+1:1;rainCaughtAt=runFrame;
+    if(rainCaughtRun===4){offer('rain-catch',1,ball.x,ball.y,'rain');cue('good','rain-catch',ball.x,ball.y,.4);
+      fxAt(ball.x,ball.y,10,CYAN,1.8);say('SKY HARVEST x4',CYAN,ball.y+52,60);markEvent(10);}}
+  stick(i);
+  streak=runFrame-lastPickupFrame<50?streak+1:1;lastPickupFrame=runFrame;bestStreak=Math.max(bestStreak,streak);
+  chainCount=runFrame-chainAt<45?chainCount+1:1;chainAt=runFrame;
+  pickupsSinceBump++;markEvent();scoreGain(i.size*i.size);
+  cue('good','pickup',i.x,i.y,.18);dustAt(i.x,i.y,5,CLASS_COLORS[i.cls]);fxAt(i.x,i.y,4,CLASS_COLORS[i.cls],1.4);
+  if(chainCount===4){stats.chains++;offer('chain',1,ball.x,ball.y,'chain');cue('good','chain',ball.x,ball.y,.35);
+    say('VACUUM CHAIN',GOLD,ball.y+46,52);markEvent(8);}
+  if(streak===6){stats.streaks++;offer('streak',1,ball.x,ball.y,'streak');cue('good','streak',ball.x,ball.y,.4);
+    say('STREAK x6',GOLD,ball.y+50,56);kingSay('streak');markEvent(8);}
+  if(i.size>=40){offer('big-pickup',2,i.x,i.y,i.kind);cue('good','big-pickup',i.x,i.y,.5);
+    fxAt(i.x,i.y,14,GOLD,2);ringAt(i.x,i.y,GOLD,1.8,20);
+    say(i.mover==='car'?'ATE THE WHOLE CAR':'BIG SWALLOW',GOLD,i.y+18,60,i.x);markEvent(12);}
+  if(act.phase==='live'&&act.type==='king')cue('good','king-bonus',i.x,i.y,.3);
+}
+// Milestones fire once per threshold per run: class breakthroughs are the
+// run's reliable apexes, not a bump-recross echo chamber.
+let milestoneMask=0;
+function stepMilestones(){
+  for(let t=0;t<CLASS_AT.length;t++){
+    if(milestoneMask&(1<<t))continue;
+    const at=CLASS_AT[t];
+    if(ball.d>=at){
+      milestoneMask|=1<<t;
+      stats.milestones++;markEvent(20);markProgress(12);
+      const apex=at>=80;
+      offer(apex?'breakthrough':'milestone',apex?3:2,ball.x,ball.y,CLASS_NAMES[t+1]);
+      cue('good','milestone',ball.x,ball.y,apex?.9:.55);
+      marks.push({kind:'ring',x:ball.x,y:ball.y,f:runFrame});if(marks.length>40)marks.shift();
+      fxAt(ball.x,ball.y,apex?26:14,apex?ROYAL:GOLD,2.2,.006);ringAt(ball.x,ball.y,apex?ROYAL:GOLD,2.2,26);
+      say(CLASS_NAMES[t+1]+' CLASS!',apex?ROYAL:GOLD,ball.y+56,90);kingSay('milestone');
+      ball.gloryT=Math.max(ball.gloryT,apex?70:40);
+    }
+  }
+}
+function scatterOff(n){
+  let lost=0,dropped=0;
+  const cap=ball.bulk*.25;
+  for(let k=0;k<n&&stuck.length;k++){
+    const s=stuck[stuck.length-1],sk=s.k===undefined?growthK(s.size):s.k;
+    if(dropped>0&&lost+s.size*s.size*sk>cap)break; // never a death-spiral: one bump costs a couple of pieces, not the run
+    stuck.pop();dropped++;
+    lost+=s.size*s.size*sk;
+    items.push({id:++scatterSerial+1e7,kind:s.kind,cls:s.cls,size:s.size,
+      x:clamp(ball.x+(hash(scatterSerial,runFrame)-.5)*30,X_LO+2,X_HI-2),y:ball.y-26-k*22,
+      vx:0,speed:0,d:s.size,yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'loose',mover:null,hitCd:0,
+      seed:hash(scatterSerial,worldSeed),scattered:true});
+    stats.scatters++;cue('bad','scatter',ball.x,ball.y-20,.35);
+  }
+  if(lost>0){ball.bulk=Math.max(0,ball.bulk-lost);ball.d=Math.sqrt(START_D*START_D+ball.bulk);
+    stats.bulk=round(ball.d,3);}
+}
+function bump(source,x,y,heavy,cueId){
+  if(ball.invulnT>0)return false;
+  // Graze vs crash, scaled by the size ratio: clipping something barely
+  // oversized is a soft bounce; a clearly bigger thing knocks pieces off;
+  // a monster takes several. The size ratio, not the item, writes the sentence.
+  const ratio=source&&source.size?source.size/ball.d:2;
+  const graze=ratio<1.25,drops=ratio>=3?3:ratio>=2?2:1;
+  ball.wobbleT=graze?14:heavy?30:22;ball.invulnT=graze?30:heavy?60:48;ball.hitFlashT=graze?6:12;
+  ball.speed*=graze?.92:heavy?.85:.9;
+  if(!graze){
+    ball.vx+=clamp((ball.x-x)*.06,-.55,.55)+Math.sign(ball.x-x||(hash(runFrame,1)-.5))*.3;
+    scatterOff(drops);
+    streak=0;lastBumpFrame=runFrame;pickupsSinceBump=0;
+    stats.bumps++;markEvent(12);
+    // The event lives ON the ball: that is where the wobble, the scatter,
+    // the crack decal, and the pulse all land.
+    cue('bad',cueId||'bump',ball.x,ball.y,.8);
+    marks.push({kind:'crack',x:ball.x,y:ball.y,f:runFrame});if(marks.length>40)marks.shift();
+    fxAt(ball.x,ball.y,10,CORAL,1.9);ringAt(ball.x,ball.y,CORAL,1.8,20);shake(heavy?4:3);
+    say('TOO BIG!',CORAL,ball.y+44,52);kingSay('bump');
+  }else{stats.grazes++;markEvent(3);ball.vx+=clamp((ball.x-x)*.04,-.4,.4);}
+  return graze?'graze':'crash';
+}
+
+// ---- pets: critters with agency, through the shared integrator ------------------
+function stepPet(i){
+  const scared=ball.d>i.size*.6,dist=Math.hypot(i.x-ball.x,i.y-ball.y);
+  let intent;
+  if(act.phase==='warn'&&act.type==='king'){
+    // Royal inspection: critters scurry to the baseboards — a physical tell.
+    const edge=i.x<80?X_LO+8:X_HI-8;
+    intent={steer:clamp((edge-i.x)*.06,-1,1),throttle:.8,brake:false,tuck:false,dash:false,targetX:edge,tactic:'SCURRY'};
+  }else if(scared&&dist<70){
+    const away=clamp(i.x+(i.x<ball.x?-26:26),X_LO,X_HI);
+    intent={steer:clamp((away-i.x)*.12,-1,1),throttle:1,brake:false,tuck:false,dash:false,targetX:away,tactic:'FLEE'};
+  }else if(!scared&&dist<90&&i.size>=ball.d*2.6){
+    // Only a clearly bigger critter stalks the katamari — a slow, readable
+    // menace, not a homing torpedo.
+    intent={steer:clamp((ball.x-i.x)*.03,-1,1),throttle:.2,brake:false,tuck:false,dash:false,targetX:ball.x,tactic:'MENACE'};
+  }else{
+    intent={steer:Math.sin(showFrame*.045+i.id*1.7)*.55,throttle:.3,brake:false,tuck:false,dash:false,targetX:i.x,tactic:'WANDER'};
+  }
+  i.d=i.size;advanceBall(i,intent);
+}
+
+// ---- the ROYAL SWEEPER: patrol -> chase -> windup -> lunge -> recover/stunned ---
+function spawnSweeper(){
+  if(sweepers.length>=2)return;
+  if(runFrame<1500)return;
+  if(runFrame-act.lastSweeper<2200)return;
+  act.lastSweeper=runFrame;sweepers.push(makeSweeper());
+}
+function stepSweeper(s){
+  if(s.hitCd>0)s.hitCd--;
+  const dist=Math.hypot(s.x-ball.x,s.y-ball.y);
+  if(s.state==='stunned'){
+    // The authored pause: dizzy sparks (emote) while the sweeper recovers
+    // from eating a shelf edge or whiffing twice. Render covers the stillness.
+    s.stateT--;s.speed=Math.max(0,s.speed-.05);s.y+=s.speed;s.roll+=.02;
+    if(s.stateT<=0){s.state='roam';s.misses=0;}
+    return;}
+  if(s.state==='roam'){
+    const tx=80+Math.sin(showFrame*.021+s.id*2.3)*46;
+    advanceBall(s,{steer:clamp((tx-s.x)*.05,-1,1),throttle:.5,brake:false,tuck:false,dash:false,targetX:tx,tactic:'PATROL'});
+    if(dist<230&&ball.y<s.y+40)s.state='chase';
+    return;}
+  if(s.state==='chase'){
+    const tx=clamp(ball.x,X_LO,X_HI),ty=ball.y+26;
+    advanceBall(s,{steer:clamp((tx-s.x)*.09,-1,1),throttle:clamp(1+(ty-s.y)*.015,.6,1.2),brake:false,tuck:false,dash:false,targetX:tx,tactic:'HUNT'});
+    s.stateT++;
+    if(dist<92){s.state='windup';s.stateT=18;}
+    else if(s.stateT>420||s.y<ball.y-60)s.state='roam';
+    return;}
+  if(s.state==='windup'){
+    // The tell: hold station, brushes flaring, then commit to the ball's
+    // CURRENT position — the dodge window the viewer can read.
+    s.stateT--;
+    advanceBall(s,{steer:clamp((ball.x-s.x)*.05,-1,1)*.3,throttle:.22,brake:false,tuck:false,dash:false,targetX:s.x,tactic:'SPIN-UP'});
+    if(s.stateT<=0){s.state='lunge';s.stateT=16;
+      s.lungeX=clamp(ball.x+ball.vx*12,X_LO,X_HI);s.lungeY=ball.y+ball.speed*10;}
+    return;}
+  if(s.state==='lunge'){
+    s.stateT--;
+    advanceBall(s,{steer:clamp((s.lungeX-s.x)*.2,-1,1),throttle:1.65,brake:false,tuck:false,dash:false,targetX:s.lungeX,tactic:'LUNGE'});
+    if(s.stateT<=0){s.misses++;
+      if(s.misses>=2){s.state='stunned';s.stateT=80;}
+      else{s.state='recover';s.stateT=42;}
+    }
+    return;}
+  if(s.state==='recover'){
+    s.stateT--;
+    advanceBall(s,{steer:Math.sin(showFrame*.1+s.id)*.3,throttle:.4,brake:false,tuck:false,dash:false,targetX:s.x,tactic:'RECOVER'});
+    if(s.stateT<=0)s.state='roam';
+    return;}
+}
+function stepSweepers(){
+  spawnSweeper();
+  for(const s of sweepers)stepSweeper(s);
+  // Shelf clank: a lunging sweeper that hits the ledge stuns itself — the
+  // dodge-behind-the-shelf play the viewer can learn.
+  for(const s of sweepers){
+    if(s.state!=='lunge')continue;
+    for(let b=currentBlock();b<=currentBlock()+1;b++){
+      const f=blockFeature(b);if(!f.shelf)continue;
+      if(Math.abs(s.y-f.shelf.y)<3&&Math.abs(s.x-f.shelf.gapX)>f.shelf.gapW/2){
+        s.state='stunned';s.stateT=80;s.misses=0;markEvent(8);
+        fxAt(s.x,s.y,8,STEEL,1.6);say('CLANK!',STEEL,s.y+20,44);}
+    }
+  }
+  sweepers=sweepers.filter(s=>s.y>ball.y-320);
+}
+
+// ---- cars: lane traffic (ashen-rage commute pattern), eaten when outgrown -------
+function stepCars(){
+  for(const t of cars){
+    for(const o of cars){
+      if(o===t||o.y<=t.y)continue;
+      const dx=o.x-t.x,dy=o.y-t.y;
+      if(Math.abs(dx)<10&&dy>0&&dy<26){
+        if(t.speed>o.speed)t.speed+=(o.speed-t.speed)*.08;
+        const dir=Math.sign(t.x-o.x)||(t.x<80?-1:1);t.x=clamp(t.x+dir*.05,X_LO,X_HI);}
+      if(Math.abs(dx)<8&&dy>0&&dy<10){
+        const dir=Math.sign(t.x-o.x)||(t.x<80?-1:1),push=(8-Math.abs(dx))*.5;
+        t.x=clamp(t.x+dir*push,X_LO,X_HI);o.x=clamp(o.x-dir*push,X_LO,X_HI);
+        t.speed=Math.min(t.speed,o.speed+.05);}
+    }
+    t.y+=t.speed;
+    if(t.wob>0){t.wob--;t.x+=Math.sin(showFrame*.4+t.id)*.5;}
+    if(t.hitCd>0)t.hitCd--;
+  }
+}
+
+// ---- collisions: ball vs items / cars / sweepers ---------------------------------
+function stepPickup(){
+  const r=drawR(ball.d),ws=worldScale();
+  for(const i of items){
+    if(i.state!=='loose')continue;
+    const px=clamp(i.size*ws,2,110);
+    if(Math.abs(i.x-ball.x)>(r+px)*1.2+8||Math.abs(i.y-ball.y)>(r+px)*1.2+8)continue;
+    const dx=i.x-ball.x,dy=(i.y-ball.y)*1.1,reach=(r*.82+px*.5)*.92;
+    if(dx*dx+dy*dy>reach*reach)continue;
+    if(i.size<ball.d)collect(i);
+    else if(i.hitCd<=0){i.hitCd=160;if(bump(i,i.x,i.y,true,i.mover==='pet'?'hazard-hit':'bump')==='crash')stats.hazardHits++;}
+  }
+  for(const t of cars){
+    const px=clamp(t.size*ws,8,110);
+    const dx=t.x-ball.x,dy=(t.y-ball.y)*1.15,reach=(r+px*.42)*.95;
+    if(dx*dx+dy*dy>reach*reach)continue;
+    if(t.size<ball.d)collect(t);
+    else if(t.hitCd<=0&&ball.invulnT<=0){t.hitCd=140;t.wob=60;
+      if(bump(t,t.x,t.y,true,'hazard-hit')==='crash')stats.hazardHits++;}
+  }
+  cars=cars.filter(t=>t.state!=='gone');
+}
+function stepSweeperContact(){
+  const r=drawR(ball.d);
+  for(const s of sweepers){
+    const spx=13;
+    const dx=s.x-ball.x,dy=(s.y-ball.y)*1.1,reach=r+spx;
+    if(dx*dx+dy*dy>reach*reach)continue;
+    if(ball.d>s.d){
+      // EATEN: the apex reversal — the hunter becomes bulk.
+      s.state='gone';stats.sweepersEaten++;markEvent(40);markProgress(16);
+      ball.bulk+=s.d*s.d*growthK(s.d);ball.d=Math.sqrt(START_D*START_D+ball.bulk);stats.bulk=round(ball.d,3);
+      stuck.push({a:hash(s.id,runFrame)*TAU,rr:.8,kind:'sweeper',size:s.d,cls:4});
+      offer('sweeper-eaten',3,ball.x,ball.y,s.id);cue('good','sweeper-eaten',s.x,s.y,1);
+      fxAt(s.x,s.y,30,GOLD,2.8,.008);fxAt(s.x,s.y,14,CYAN,2.2);ringAt(s.x,s.y,GOLD,2.6,30);shake(6);
+      say('ATE THE SWEEPER!',GOLD,ball.y+60,100);kingSay('sweeperEaten');ball.gloryT=Math.max(ball.gloryT,80);
+    }else if(s.hitCd<=0&&ball.invulnT<=0){
+      s.hitCd=150;stats.sweeperHits++;markEvent(14);
+      if(bump(s,s.x,s.y,true,'sweeper-hit'))kingSay('sweeperHit');
+      marks.push({kind:'scatter',x:ball.x,y:ball.y,f:runFrame});if(marks.length>40)marks.shift();
+      say('SWEPT!',CORAL,ball.y+48,56);
+    }
+  }
+  sweepers=sweepers.filter(s=>s.state!=='gone');
+}
+// Continuous separation: nobody sits inside anybody; events ride cooldowns.
+function resolveContacts(){
+  const bodies=[ball,...sweepers];
+  for(const i of items){
+    if(i.state!=='loose'||i.mover!=='pet')continue;
+    for(const b of bodies){
+      if(b===ball&&(i.size<ball.d||ball.invulnT>0))continue;
+      const dx=b.x-i.x,dy=(b.y-i.y)*1.1,d=Math.hypot(dx,dy),min=(b===ball?drawR(ball.d)*.7:9)+4;
+      if(d>0.01&&d<min){const push=(min-d)*.5,ux=dx/d;
+        b.x=clamp(b.x+ux*push,X_LO,X_HI);i.x=clamp(i.x-ux*push*.6,X_LO,X_HI);
+        if(b===ball){b.contactT=10;stats.contacts++;}}
+    }
+  }
+  for(const s of sweepers){
+    // Continuous separation ALWAYS applies — nobody sits inside the ball; the
+    // hit event rides its own cooldown on top.
+    const dx=ball.x-s.x,dy=(ball.y-s.y)*1.1,d=Math.hypot(dx,dy),min=drawR(ball.d)*.7+8;
+    if(d>0.01&&d<min){const push=(min-d)*.5,ux=dx/d;
+      ball.x=clamp(ball.x+ux*push*.6,X_LO,X_HI);s.x=clamp(s.x-ux*push*.4,X_LO,X_HI);
+      ball.vx+=ux*.1;ball.contactT=10;}
+  }
+  for(const t of cars){
+    if(t.size<ball.d)continue;
+    const dx=ball.x-t.x,dy=(ball.y-t.y)*1.15,d=Math.hypot(dx,dy),min=drawR(ball.d)*.66+9;
+    if(d>0.01&&d<min){const push=(min-d)*.5,ux=dx/d;
+      ball.x=clamp(ball.x+ux*push*.7,X_LO,X_HI);t.x=clamp(t.x-ux*push*.3,X_LO,X_HI);
+      ball.vx+=ux*.12;ball.contactT=10;t.speed=Math.max(.3,t.speed*.995);}
+  }
+}
+
+// ---- shelves, zones, flawless, the star ------------------------------------------
+function stepFeatures(){
+  for(let b=currentBlock()-1;b<=currentBlock()+1;b++){
+    const f=blockFeature(b);if(!f.shelf||shelfDone.has(f.shelf.id))continue;
+    const s=f.shelf;
+    if(ball.lastY<s.y&&ball.y>=s.y){
+      shelfDone.add(s.id);stats.shelves++;markEvent(6);
+      const clear=shelfClearance(s,ball.x,ball.d);
+      if(clear<0){if(bump(null,s.gapX,s.y,true,'shelf-hit')){stats.shelfHits++;markEvent(10);
+        say('LEDGED!',CORAL,ball.y+40,48);}}
+      else if(clear<10){stats.threads++;offer('thread',1,ball.x,ball.y,s.id);cue('good','thread',ball.x,ball.y,.35);
+        marks.push({kind:'dash',x:ball.x,y:ball.y,f:runFrame});if(marks.length>40)marks.shift();
+        fxAt(ball.x,ball.y,8,MINT,1.5);say('THREADED!',MINT,ball.y+42,48);markEvent(10);}
+    }
+  }
+  const b=currentBlock();
+  if(b!==lastBlock){lastBlock=b;markEvent(2);markProgress(1);
+    const z=zoneForBlock(b);
+    if(z!==lastZone){lastZone=z;stats.zones++;markProgress(40);
+      offer('zone',2,ball.x,ball.y,ZONES[z].name);say(ZONES[z].name,ZONES[z].accent,ball.y+76,140);}}
+  // Flawless roll: 60 seconds without a bump while still feeding.
+  if(pickupsSinceBump>=16&&runFrame-lastBumpFrame>3600){
+    lastBumpFrame=runFrame;pickupsSinceBump=0;stats.flawless++;markEvent(30);markProgress(10);
+    offer('flawless',3,ball.x,ball.y,'flawless');cue('good','flawless',ball.x,ball.y,.8);
+    fxAt(ball.x,ball.y,20,MINT,2.2,.006);say('FLAWLESS ROLL',MINT,ball.y+58,90);ball.gloryT=Math.max(ball.gloryT,60);}
+  if(ball.d>=TARGET_D&&state==='run')finishRun(true);
+}
+function finishRun(star){
+  if(state!=='run')return;
+  state=star?'star':'fizzle';endT=star?430:360;
+  outcome=star?'A STAR IS BORN · '+(ball.d/100).toFixed(2)+'m':'ALMOST · '+(ball.d/100).toFixed(2)+'m OF 2m';
+  if(star){stats.stars++;markProgress(20);}else stats.fizzles++;
+  cue(star?'good':'bad',star?'star':'fizzle',ball.x,ball.y,1);markEvent(star?200:60);
+  offer(star?'star':'fizzle',3,ball.x,ball.y,outcome);
+  if(star){fxAt(ball.x,ball.y,52,GOLD,3.2,.01);fxAt(ball.x,ball.y,20,ROYAL,2.6,.008);fxAt(ball.x,ball.y,16,CREAM,2.2);}
+  ball.gloryT=star?160:60;kingSay(star?'star':'fizzle');shake(star?7:3);
+}
+
+// ---- acts: MAGNET RAIN and THE KING WATCHES, exact 240f physical warnings --------
+function spawnRain(burst){
+  const n=burst?26:1;
+  // The shower lands in one or two lane clusters so a routed ball can feast —
+  // full-width scatter would be weather nobody can eat.
+  const lanes=[34+hash(itemSerial,worldSeed*3)*92,34+hash(itemSerial+1,worldSeed*5)*92];
+  for(let k=0;k<n;k++){
+    const s=++itemSerial,sz=round(Math.max(1,ball.d*(.2+hash(s,worldSeed*29)*.7)),2);
+    const lane=lanes[mod(k,burst?2:1)];
+    items.push({id:s,kind:['starbit','shard','crystal'][mod(s,3)],cls:classOf(sz),size:sz,
+      x:clamp(lane+(hash(s*7,worldSeed)-.5)*30,X_LO+2,X_HI-2),y:ball.y+300+hash(s*3,worldSeed)*30,
+      vx:0,speed:0,d:sz,yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'rain',
+      vy:2.0+hash(s*11,worldSeed)*1.0,landY:ball.y+190+hash(s*13,worldSeed)*80,
+      mover:null,hitCd:0,seed:hash(s,worldSeed),rain:true});
+  }
+}
+function stepActs(){
+  if(typeof globalThis.__NO_ACTS!=='undefined'){act.phase='calm';king.y=-90;return;}
+  if(act.phase==='calm'&&runFrame>=act.warnAt&&!(SHOW.probe().active&&SHOW.probe().active.tier>=3)){
+    act.phase='warn';act.type=act.index%2?'king':'magnet';
+    act.landAt=runFrame+240;act.endAt=act.landAt+(act.type==='magnet'?600:900);plan=null;planAt=-1e9;
+    const n={kind:'act-warning',id:act.type,at:showFrame,tag:runFrame,landsAt:showFrame+240};act.notes.push(n);SHOW.note(n);
+    kingSay(act.type==='magnet'?'magnetWarn':'kingWarn');
+    say(act.type==='magnet'?'MAGNET RAIN INCOMING':'THE KING WATCHES',act.type==='magnet'?CYAN:ROYAL,ball.y+96,120,80);
+  }else if(act.phase==='warn'&&runFrame>=act.landAt){
+    act.phase='live';stats.acts++;
+    const n={kind:'act-land',id:act.type,at:showFrame,tag:runFrame};act.notes.push(n);SHOW.note(n);
+    if(act.type==='magnet'){spawnRain(true);kingSay('magnetLand');say('THE SKY FALLS · EAT',CYAN,ball.y+88,80);}
+    else{kingSay('kingLive');say('TRIPLE GLORY',ROYAL,ball.y+88,80);}
+    shake(3);
+  }else if(act.phase==='live'&&runFrame>=act.endAt){
+    act.phase='calm';act.index++;act.warnAt=runFrame+3600;
+    stats.actClears++;markProgress(20);offer('act-clear',2,ball.x,ball.y,act.type);
+    say(act.type==='magnet'?'THE SKY CALMS':'THE KING DEPARTS',MINT,ball.y+64,64);
+  }
+  // MAGNET RAIN heralds: items physically tumble from the portal during the
+  // whole 240f warning — the telegraph is the weather, not an overlay.
+  if(act.phase==='warn'&&act.type==='magnet'&&runFrame%30===0&&runFrame>act.landAt-240+20)spawnRain(false);
+  // The King's descent is physical: his face slides down over the warning.
+  if(act.phase==='warn'&&act.type==='king')king.y=Math.min(40,-90+((runFrame-(act.landAt-240))/240)*130);
+  else if(act.phase==='live'&&act.type==='king')king.y=40+Math.sin(showFrame*.03)*3;
+  else king.y+=((-90)-king.y)*.06;
+}
+
+// ---- route planner: copied-state rollouts on the shared integrator ----------------
+function planSnapshot(){
+  const out=[];
+  for(const i of items){
+    if(i.state==='gone')continue;
+    const y=i.state==='rain'?i.landY:i.y;
+    if(y<ball.y-16||y>ball.y+280)continue;
+    // Movers keep their agency in the forecast: critters flee or stalk, cars
+    // commute — a plan that assumes a frozen world drives into mice.
+    out.push({x:i.x,y,size:i.size,mover:i.mover,rain:!!i.rain});
+  }
+  for(const t of cars)out.push({x:t.x,y:t.y,size:t.size,mover:'car',speed:t.speed});
+  return out;
+}
+function shelfAhead(){
+  for(let b=currentBlock();b<=currentBlock()+1;b++){
+    const f=blockFeature(b);
+    if(f.shelf&&!shelfDone.has(f.shelf.id)&&f.shelf.y>ball.y-8&&f.shelf.y<ball.y+250)return f.shelf;
+  }
+  return null;
+}
+function simulateLane(targetX,snap,shelf){
+  // The rollout starts from the ball's TRUE control state (wobble included):
+  // planning past a fresh wobble with ideal steering is how bump chains were
+  // born. Cars keep moving in the forecast — they commute while you decide.
+  const b={x:ball.x,y:ball.y,vx:ball.vx,speed:ball.speed,d:ball.d,bulk:ball.bulk,wobbleT:ball.wobbleT,dashT:0};
+  let gain=0,risk=0,minClear=999;
+  const seen=new Set();
+  for(let f=0;f<120;f++){
+    if(b.wobbleT>0)b.wobbleT--;
+    advanceBall(b,{steer:clamp((targetX-b.x)*.11,-1,1),throttle:1,brake:false,tuck:false,dash:false,targetX,tactic:'PLAN'});
+    const r=drawR(b.d),ws=r*2/b.d;
+    for(let k=0;k<snap.length;k++){
+      if(seen.has(k))continue;
+      const it=snap[k],iy=it.y+(it.speed||0)*f,py=clamp(it.size*ws,2,110);
+      let ix=it.x;
+      if(it.mover==='pet'){
+        // Critters react in the forecast: small ones scatter from the rolling
+        // path, big ones drift toward it. Same grammar as the real FSM.
+        const scaredF=b.d>it.size*.6;
+        if(scaredF)ix=clamp(it.x+(it.x<b.x?-1:1)*Math.min(30,f*.7),X_LO,X_HI);
+        else if(it.size>=b.d*2.2)ix=clamp(it.x+Math.sign(b.x-it.x)*Math.min(26,f*.3),X_LO,X_HI);
+      }
+      if(Math.abs(ix-b.x)>(r+py)*1.2+8||Math.abs(iy-b.y)>(r+py)*1.2+8)continue;
+      const dx=ix-b.x,dy=(iy-b.y)*1.1,reach=(r*.82+py*.5)*.92;
+      const d2=dx*dx+dy*dy;
+      if(d2>reach*reach){minClear=Math.min(minClear,Math.sqrt(d2)-reach);continue;}
+      seen.add(k);
+      if(it.size<b.d){gain+=it.size*it.size;b.bulk+=it.size*it.size*growthK(it.size);b.d=Math.sqrt(START_D*START_D+b.bulk);}
+      else risk+=8+(it.size-b.d)*2;
+    }
+    if(shelf&&b.y>=shelf.y&&b.y<shelf.y+8){
+      const clear=shelfClearance(shelf,b.x,b.d);
+      if(clear<0)risk+=70;else gain+=clear<10?50:30;
+      shelf=null;
+    }
+    for(const s of sweepers){
+      if(s.state==='gone')continue;
+      const sy2=s.y+(s.speed-ball.speed)*f*.4,sd=Math.hypot(s.x-b.x,sy2-b.y);
+      if(sd<r+22)risk+=(r+22-sd)*1.6;
+    }
+  }
+  // Milestone pressure: plans that cross a class threshold are worth extra —
+  // breakthroughs are the run's reliable apexes.
+  let bonus=0;
+  for(const at of CLASS_AT)if(ball.d<at&&b.d>=at)bonus+=at>=80?220:90;
+  if(act.phase==='warn'&&act.type==='magnet')for(const it of snap)if(it.rain&&Math.abs(it.x-targetX)<24)bonus+=26;
+  const recovering=runFrame-lastBumpFrame<150;
+  // Hunger: a katamari that hasn't eaten recently must accept grazing risk to
+  // feed — total risk-aversion is how the ball starves against the wall.
+  const hunger=clamp((runFrame-lastPickupFrame)/240,0,1);
+  const riskW=(1.6-persona.risk*.6)*(1-hunger*.75);
+  const score=recovering
+    ?gain*.3-risk*3+Math.min(40,Math.max(0,minClear))*2+bonus // escape first, feed second
+    :gain*persona.gain-risk*riskW+Math.min(30,Math.max(0,minClear))*.6+bonus;
+  return{targetX,score,gain,risk,minClear,dProjected:b.d};
+}
+function buildRoutePlan(){
+  if(typeof globalThis.__NO_ROUTE_PLAN!=='undefined')return reactiveRoute();
+  const snap=planSnapshot(),shelf=shelfAhead();
+  const candidates=[18,40,62,80,98,120,142];
+  // dense-lane candidates: the two heaviest pickable clusters ahead
+  const pickable=snap.filter(it=>it.size<ball.d);
+  const scored={};
+  for(const it of pickable){const lane=clamp(Math.round(it.x/20)*20,18,142);scored[lane]=(scored[lane]||0)+it.size*it.size;}
+  const top=Object.entries(scored).sort((a,b)=>b[1]-a[1]).slice(0,2).map(e=>+e[0]);
+  for(const x of top)if(!candidates.includes(x))candidates.push(x);
+  if(shelf)candidates.push(clamp(shelf.gapX,X_LO+4,X_HI-4));
+  const out=candidates.map(x=>simulateLane(x,snap,shelf));
+  out.sort((a,b)=>b.score-a.score||a.targetX-b.targetX);
+  return out[0];
+}
+function reactiveRoute(){
+  // Honest baseline: reacts to what is already rolling over it — nearest
+  // reachable bite, panic-swerve from the closest oversized thing, no shelf
+  // knowledge, no cluster math, no growth forecast, no act awareness.
+  let best=null,bestD=1e9;
+  for(const i of items){
+    if(i.state!=='loose'||i.size>=ball.d)continue;
+    const dy=i.y-ball.y;if(dy<-8||dy>140)continue;
+    const d=Math.hypot(i.x-ball.x,dy);if(d<bestD){bestD=d;best=i;}
+  }
+  let targetX=best?best.x:80+Math.sin(showFrame*.02)*30,panic=null,panicD=1e9;
+  for(const i of items){
+    if(i.state!=='loose'||i.size<ball.d)continue;
+    const dy=i.y-ball.y;if(dy<-6||dy>44)continue;
+    const d=Math.abs(i.x-ball.x);if(d<panicD){panicD=d;panic=i;}
+  }
+  if(panic&&panicD<24)targetX=clamp(ball.x+(ball.x<panic.x?-30:30),X_LO,X_HI);
+  for(const s of sweepers){
+    const d=Math.hypot(s.x-ball.x,s.y-ball.y);
+    if(d<40)targetX=clamp(ball.x+(ball.x<s.x?-30:30),X_LO,X_HI);
+  }
+  // Bump-shy: right after a hit, prefer the nearby lane with the fewest
+  // oversized things in it — local counting only, still no forecast.
+  if(runFrame-lastBumpFrame<70){
+    let bestLane=targetX,bestHeat=1e9;
+    for(const lane of[24,52,80,108,136]){
+      let heat=0;
+      for(const i of items){
+        if(i.state!=='loose'||i.size<ball.d)continue;
+        const dy=i.y-ball.y;if(dy>-4&&dy<70)heat+=Math.max(0,70-Math.abs(i.x-lane));
+      }
+      if(heat<bestHeat){bestHeat=heat;bestLane=lane;}
+    }
+    targetX=bestLane;
+  }
+  return{targetX,score:bestD?100-bestD:0,gain:0,risk:0,minClear:0,reactive:true};
+}
+function routeTactic(target){
+  if(act.phase==='warn')return act.type==='magnet'?'READ THE RAIN':'ROYAL INSPECTION';
+  if(act.phase==='live'&&act.type==='king')return'BASK IN ROYALTY';
+  if(act.phase==='live'&&act.type==='magnet')return'RIDE THE RAIN';
+  const shelf=shelfAhead();
+  if(shelf&&Math.abs(shelf.y-ball.y)<120)return shelfClearance(shelf,ball.x,ball.d)>2?'THREAD THE SHELF':'BRACE FOR THE LEDGE';
+  if(target&&target.gain>1500)return'HERD THE BUFFET';
+  if(target&&target.gain>200)return'FEAST THE LANE';
+  if(ball.d>=TARGET_D*.86)return'STAR PUSH';
+  return'ROLL OUT';
+}
+function rawBotIntent(){
+  if(visualIntent)return Object.assign({},visualIntent);
+  if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){stats.admireIntents++;
+    return{steer:0,throttle:.5,brake:false,tuck:false,dash:false,targetX:ball.x,tactic:'SAVOR THE STAR'};}
+  // Dodge first: a committed sweeper lunge beats every buffet.
+  for(const s of sweepers){
+    if((s.state==='windup'&&s.stateT<8||s.state==='lunge')&&Math.abs(s.y-ball.y)<60&&Math.abs(s.x-ball.x)<60){
+      const away=clamp(ball.x+(ball.x<s.x?-22:22),X_LO,X_HI);
+      stats.dodges++;markEvent(4);
+      return{steer:clamp((away-ball.x)*.3,-1,1),throttle:1,brake:false,tuck:false,dash:ball.dashCd<=0,targetX:away,tactic:'DODGE THE SWEEPER'};
+    }
+  }
+  if(!plan||runFrame-planAt>=40){plan=buildRoutePlan();planAt=runFrame;}
+  const targetX=plan.targetX,steer=clamp((targetX-ball.x)*.105,-1,1);
+  // Post-bump recovery: ease off the throttle while the wobble settles so the
+  // ball can actually aim the lane the planner chose (kills bump chains).
+  const recovering=runFrame-lastBumpFrame<70;
+  let dash=false;
+  if(!recovering&&ball.dashCd<=0&&plan.risk<20&&Math.abs(steer)<.25&&plan.gain>120)dash=true;
+  return{steer,throttle:recovering?.55:1,brake:false,tuck:false,dash,targetX,tactic:routeTactic(plan)};
+}
+function lapseIntent(context,last){const base=last||rawBotIntent();return Object.assign({},base,{steer:(base.steer||0)*.16,
+  throttle:.6,tuck:false,dash:false,tactic:'WOBBLY HANDS'});}
+function botIntent(){
+  if(typeof globalThis.__NO_LAPSE!=='undefined'){lastLapsed=false;return rawBotIntent();}
+  const before=skill.isLapsed(runFrame),intent=skill.decide(runFrame,null,rawBotIntent,lapseIntent),after=skill.isLapsed(runFrame);
+  if(after&&!before&&!lastLapsed){stats.lapses++;markEvent();cue('bad','lapse',ball.x,ball.y,.3);
+    fxAt(ball.x,ball.y,6,CORAL,1.2);say('WOBBLE!',CORAL,ball.y+52,42);}
+  lastLapsed=after;return intent||rawBotIntent();
+}
+function humanIntent(){const steer=(keys.right?1:0)-(keys.left?1:0),targetX=clamp(ball.x+steer*30,X_LO,X_HI);
+  return{steer,throttle:keys.up?1:.78,brake:!!keys.down,tuck:!!keys.c,dash:!!(keys.a||keys.b),
+    targetX,tactic:'MANUAL ROLL'};}
+const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
+
+// ---- world step --------------------------------------------------------------------
+function stepBall(){
+  ball.lastX=ball.x;ball.lastY=ball.y;
+  if(ball.hitFlashT>0)ball.hitFlashT--;if(ball.gloryT>0)ball.gloryT--;
+  if(ball.invulnT>0)ball.invulnT--;if(ball.contactT>0)ball.contactT--;
+  if(ball.wobbleT>0)ball.wobbleT--;if(ball.dashT>0)ball.dashT--;if(ball.dashCd>0)ball.dashCd--;
+  const intent=controller();ball.intent=intent;stats.appliedIntents++;
+  if(intent.dash&&ball.dashCd<=0&&ball.dashT<=0){ball.dashT=60;ball.dashCd=180;stats.dashes++;markEvent(4);
+    dustAt(ball.x,ball.y-4,4,CLASS_COLORS[classOf(ball.d)]);}
+  advanceBall(ball,intent);
+  const stepLen=Math.hypot(ball.x-ball.lastX,ball.y-ball.lastY);stats.maxStep=Math.max(stats.maxStep,stepLen);
+}
+function stepItems(){
+  for(const i of items){
+    if(i.hitCd>0)i.hitCd--;
+    if(i.state==='rain'){i.y-=i.vy;if(i.y<=i.landY){i.y=i.landY;i.state='loose';}continue;}
+    if(i.state==='loose'&&i.mover==='pet')stepPet(i);
+  }
+}
+function stepWorld(){
+  runFrame++;
+  stepActs();ensureItems();ensureCars();
+  stepBall();stepItems();stepSweepers();stepCars();
+  stepPickup();stepSweeperContact();resolveContacts();stepFeatures();stepMilestones();
+  if(runFrame>=RUN_FRAMES)finishRun(false);
+}
+function step(){
+  showFrame++;sessionStep({reset:()=>resetRun(true)});pres=SHOW.step(showFrame);
+  if(state==='run'){
+    if(!pres.holdWorld&&showFrame%pres.physicsEvery===0)stepWorld();
+  }else{
+    // Celebration lap: the ball keeps rolling under the card — pets wander,
+    // traffic commutes, no new hazards or collisions. Presentation motion with
+    // authored lap beats so the story never goes quiet under the card.
+    endT--;
+    advanceBall(ball,{steer:0,throttle:.55,brake:false,tuck:false,dash:false,targetX:80,tactic:'SAVOR THE STAR'});
+    for(const s of sweepers)advanceBall(s,{steer:clamp((80-s.x)*.02,-1,1),throttle:.4,brake:false,tuck:false,dash:false,targetX:80,tactic:'ROLL HOME'});
+    for(const i of items)if(i.state==='loose'&&i.mover==='pet')stepPet(i);
+    for(const t of cars)t.y+=t.speed;
+    ensureItems();ensureCars();
+    if(endT%90===0){markEvent(2);markProgress(1);
+      if(state==='star')fxAt(ball.x,ball.y,4,GOLD,1.6);}
+    if(endT<=0){if(playing())gameOver(outcome);resetRun(true);}
+  }
+  goodPulse=goodPulse>.02?goodPulse*.94:0;badPulse=badPulse>.02?badPulse*.93:0;
+  while(marks.length&&runFrame-marks[0].f>60)marks.shift();
+  if(king.lineT>0)king.lineT--;
+  stepParts();stepRings();for(const t of texts)t.t--;texts=texts.filter(t=>t.t>0);
+}
+function resetRun(full){
+  worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;runSerial++;state='run';endT=0;outcome='';
+  ball=makeBall(80,36);items=[];cars=[];sweepers=[];stuck=[];texts=[];plan=null;planAt=-1e9;visualIntent=null;
+  lastBlock=0;lastZone=0;genBlock=-1;carGenBlock=-1;sweeperSerial=0;itemSerial=0;
+  streak=0;lastPickupFrame=-1e9;bestStreak=0;chainAt=-1e9;chainCount=0;lastBumpFrame=-1e9;pickupsSinceBump=0;
+  rainCaughtAt=-1e9;rainCaughtRun=0;milestoneMask=0;
+  feedback.length=0;goodPulse=0;badPulse=0;marks=[];shelfDone=new Set();
+  lastEventFrame=showFrame;lastProgressFrame=showFrame;lastLapsed=false;
+  for(const k in stats)stats[k]=k==='zones'?1:0;
+  personaIndex=RI(0,PERSONAS.length-1);persona=PERSONAS[personaIndex];
+  skill=skillProfile({rng:createRng(skillSeed),skill:.82,precision:.86,risk:persona.risk,recovery:.9,
+    reactionFrames:[4,9],lapseChance:.00055,lapseFrames:[16,34]});
+  Object.assign(act,{phase:'calm',type:'magnet',warnAt:2400,landAt:2940,endAt:3540,index:0,notes:[],lastSweeper:0});
+  king.y=-90;king.line='';king.lineT=0;king.sayT=0;
+  ensureItems();ensureCars();if(full)SHOW.reset(showFrame);
+  stats.runs++;kingSay('start');
+  say('MAKE A STAR 2.00m',GOLD,ball.y+150,160);
+}
+
+// ---- authored zone renderer ------------------------------------------------------
+// Ground patterns key on world rows (ball.y + (BALL_Y - y)) so the floor
+// flows DOWN-screen with travel, never against it.
+const wyOf=y=>ball.y+(BALL_Y-y);
+function drawZoneBase(p){
+  rect(0,0,W,H,mix(p.floor,INK,.2));
+  const off=Math.floor(ball.y);
+  if(p.kind==='kitchen'){
+    // Checker tiles: two-tone 16px grid with grout, scuffs, and warm pools.
+    for(let y=30+mod(off,32)-32;y<H;y+=16)for(let x=0;x<W;x+=16){
+      const wy=Math.floor(wyOf(y)/16);
+      rect(x,y,16,16,(x/16+wy)%2?p.floor:mix(p.floor2,INK,.32));}
+    for(let y=30+mod(off,16)-16;y<H;y+=16){ctx.globalAlpha=.22;rect(0,y,W,1,mix(p.line,INK,.25));ctx.globalAlpha=1;}
+    for(let x=0;x<W;x+=16){ctx.globalAlpha=.14;rect(x,30,1,H-30,mix(p.line,INK,.25));ctx.globalAlpha=1;}
+    // Scuffed traffic lane: dark worn dashes down the middle where feet roll.
+    for(let y=30+mod(off,22)-22;y<H;y+=22){ctx.globalAlpha=.18;rect(64+(hash(Math.floor(wyOf(y)/22),3)-.5)*40,y,10,2,mix(p.side,INK,.3));ctx.globalAlpha=1;}
+    // Flour dust: broad soft patches, never speckle.
+    for(let i=0;i<3;i++){const y=44+mod(i*137+off,H-56);ctx.globalAlpha=.08;
+      rect(20+mod(i*67,100),y,34,10,CREAM);ctx.globalAlpha=1;}
+    // Warm under-cabinet pools at the edges.
+    for(let y=52+mod(off,128)-128;y<H;y+=128){ctx.globalAlpha=.12;rect(0,y,12,26,p.light);rect(W-12,y+40,12,26,p.light);ctx.globalAlpha=1;}
+  }else if(p.kind==='garden'){
+    // Mow stripes with a sparse flower rhythm — calm grass, authored beds.
+    rect(0,30,W,H-30,mix(p.floor,INK,.34));
+    for(let y=30+mod(off,24)-24;y<H;y+=12)rect(0,y,W,4,Math.floor(wyOf(y)/4)%2?mix(p.floor,CREAM,.08):mix(p.floor2,INK,.22));
+    for(let y=34;y<H;y+=8)for(let x=4;x<W;x+=8){
+      const h2=hash(Math.floor(x/8),Math.floor(wyOf(y)/8));
+      if(h2>.94)rect(x+2,y+2,2,2,h2>.97?p.accent:h2>.955?GOLD:CREAM);}
+    for(let y=30+mod(off,64)-64;y<H;y+=64){ctx.globalAlpha=.2;rect(0,y,W,6,mix(p.line,p.floor,.4));ctx.globalAlpha=1;}
+  }else if(p.kind==='street'){
+    rect(0,30,W,H-30,mix(p.floor,INK,.12));
+    // Weathered asphalt tone bands + lane paint + crosswalks (quiet stage).
+    let band=0;
+    for(let y=30+mod(off,64)-64;y<H;y+=64){ctx.globalAlpha=.4;
+      rect(0,y,W,32,band++%2?mix(p.floor,p.accent,.05):mix(p.floor,INK,.1));ctx.globalAlpha=1;}
+    for(const x of[53,107])for(let y=4+mod(off,26);y<H;y+=26)if(y>32)rect(x-1,y,3,12,mix(p.line,CREAM,.6));
+    for(let y=mod(off,BLOCK*2)-BLOCK;y<H;y+=BLOCK*2){
+      if(y<38)continue;
+      for(let x=X_LO+4;x<X_HI-8;x+=14){if(hash(x,Math.floor(wyOf(y)/BLOCK))>.3)rect(x,y-3,9,6,mix(CREAM,p.line,.2));}
+    }
+    // Manhole rims and steel plates: big calm infrastructure edge.
+    for(let y=30+mod(off,90)-90;y<H;y+=90){
+      const x=34+mod(Math.floor(wyOf(y)/90)*53,92);
+      ctx.strokeStyle=mix(p.line,CREAM,.25);ctx.beginPath();ctx.arc(x,y+4,4,0,TAU);ctx.stroke();
+      rect(x-5,y+3,10,1,mix(p.line,INK,.3));}
+    for(let y=30+mod(off,8)-8;y<H;y+=8){ctx.globalAlpha=.14;rect(0,y,W,1,mix(p.line,INK,.25));ctx.globalAlpha=1;}
+    // Tar seams: long horizontal repair lines, material contrast.
+    for(let y=30+mod(off,44)-44;y<H;y+=44){ctx.globalAlpha=.3;rect(0,y,W,1,mix(p.floor2,INK,.45));ctx.globalAlpha=1;}
+  }else if(p.kind==='harbor'){
+    // Dock planks: horizontal boards, seams, nail rhythm, one darker board row.
+    for(let y=30+mod(off,14)-14;y<H;y+=7){
+      const wy=Math.floor(wyOf(y)/7);
+      rect(0,y,W,7,wy%7===3?mix(p.floor,INK,.14):p.floor);
+      rect(0,y,W,1,mix(p.line,INK,.15));}
+    for(let y=30+mod(off,26)-26;y<H;y+=26)for(let x=10;x<W;x+=26)rect(x,y,1,1,mix(p.line,CREAM,.2));
+    for(let y=30+mod(off,BLOCK)-BLOCK;y<H;y+=BLOCK){ctx.globalAlpha=.2;rect(0,y+3,W,2,mix(p.accent,p.floor,.7));ctx.globalAlpha=1;}
+  }else{
+    // Orbit tide: deep field with hashed stars, nebula bands, one bright mass.
+    rect(0,30,W,H-30,mix(p.floor,INK,.3));
+    for(let y=32;y<H;y+=4)for(let x=0;x<W;x+=4){
+      const h2=hash(Math.floor(x/4),Math.floor(wyOf(y)/4));
+      if(h2>.94)rect(x+1,y+1,h2>.985?2:1,h2>.985?2:1,h2>.978?CREAM:h2>.96?CYAN:'#4a5a8a');}
+    for(let y=40+mod(off,96)-96;y<H;y+=96){ctx.globalAlpha=.14;rect(0,y,W,8,mix(p.accent,INK,.35));
+      rect(0,y+12,W,5,mix(CYAN,INK,.6));ctx.globalAlpha=1;}
+  }
+}
+function drawZoneSide(b,p){
+  const top=sy((b+1)*BLOCK)+8,bottom=sy(b*BLOCK)-8,h=bottom-top;
+  if(h<12||top>H||bottom<30)return;
+  const y=top,hh=Math.min(h,240);
+  for(const side of[-1,1]){
+    const x=side<0?0:X_HI+2,w=W-x-(side<0?X_LO-0:0)+(side<0?X_LO:2);
+    const x0=side<0?0:X_HI+2,w0=side<0?X_LO:W-X_HI-2;
+    if(p.kind==='kitchen'){
+      // Counter fronts with door seams, a stool leg or plate stack silhouette.
+      rect(x0,y,w0,hh,mix(p.side,INK,.12));
+      rect(side<0?x0+w0-2:x0,y,2,hh,mix(p.side2,CREAM,.12));
+      for(let yy=y+8;yy<y+hh-6;yy+=22)rect(x0+2,yy,w0-4,1,mix(p.side,INK,.4));
+      for(let yy=y+18;yy<y+hh-16;yy+=56){
+        rect(x0+2,yy,w0-5,10,mix(p.side2,INK,.1));rect(x0+2,yy,w0-5,2,mix(CREAM,p.side2,.25));
+        if(hash(b,side)>.5){rect(x0+3,yy-5,w0-8,4,CREAM);rect(x0+4,yy-4,w0-10,1,mix(CREAM,INK,.2));}}
+    }else if(p.kind==='garden'){
+      // Soil beds with flower rows; fence posts right, hedge left.
+      rect(x0,y,w0,hh,mix(p.side,INK,.08));
+      for(let yy=y+4;yy<y+hh-4;yy+=6)rect(x0,yy,w0,2,mix(p.side,INK,.22));
+      for(let yy=y+6;yy<y+hh-6;yy+=14)for(let xx=x0+2;xx<x0+w0-2;xx+=7)
+        if(hash(b*3+xx,yy)>.4){rect(xx,yy,2,2,hash(xx,yy+b)>.5?p.accent:GOLD);rect(xx,yy+2,1,2,'#3c6832');}
+      if(side>0){for(let yy=y+4;yy<y+hh-4;yy+=18){rect(x0+w0-3,yy,2,8,'#6a5230');rect(x0+w0-4,yy,4,2,mix('#6a5230',CREAM,.3));}}
+      else for(let yy=y+2;yy<y+hh-6;yy+=10){rect(x0,yy,3,5,'#3c5a34');rect(x0+1,yy-1,2,2,'#4a6a3e');}
+    }else if(p.kind==='street'){
+      // Curb + sidewalk joints, parked silhouettes, hydrant/mailbox props.
+      rect(x0,y,w0,hh,mix(p.side2,INK,.1));
+      rect(side<0?x0+w0-2:x0,y,2,hh,mix(p.line,CREAM,.2));
+      for(let yy=y+6;yy<y+hh-6;yy+=16)rect(x0+1,yy,w0-2,1,mix(p.side2,CREAM,.15));
+      for(let yy=y+16;yy<y+hh-24;yy+=72){
+        const cc=['#c96a5a','#6aa8b8','#c9a24e'][mod(b+(side<0?1:0),3)];
+        rect(x0+1,yy,w0-3,16,mix(cc,INK,.25));rect(x0+2,yy+2,w0-5,5,'#232e3c');
+        rect(x0+1,yy+14,2,2,'#0a0b10');rect(x0+w0-4,yy+14,2,2,'#0a0b10');}
+      if(hash(b,side)>.6){const yy=y+30+mod(b*7,40);rect(x0+2,yy,3,6,CORAL);rect(x0+1,yy+2,5,2,CORAL);}
+    }else if(p.kind==='harbor'){
+      if(side<0){
+        // Open water: swells scroll with the world, a moored hull per stretch.
+        rect(x0,y,w0,hh,p.side);
+        for(let yy=y+6;yy<y+hh-4;yy+=12){ctx.globalAlpha=.5;rect(x0+1+mod(yy,5),yy,w0-3,1,p.light);ctx.globalAlpha=1;}
+        if(hash(b,worldSeed)>.4){const by=y+20+mod(b*7,60);
+          poly([[x0+1,by],[x0+w0-2,by],[x0+w0-4,by+6],[x0+3,by+6]],'#6a4a34');
+          rect(x0+w0/2-1,by-8,1,8,'#d8cba8');poly([[x0+w0/2,by-8],[x0+w0/2+5,by-1],[x0+w0/2,by-1]],'#e8e2d2');}
+        rect(x0+w0-2,y,2,hh,'#6a4a34');
+      }else{
+        // Dock wall: bollards and one crate stack per stretch.
+        rect(x0,y,w0,hh,mix(p.side2,INK,.1));
+        rect(x0,y,2,hh,mix(p.line,CREAM,.15));
+        for(let yy=y+8;yy<y+hh-10;yy+=40){rect(x0+3,yy,w0-6,8,'#4a5a64');rect(x0+3,yy,w0-6,1,p.light);}
+        for(let yy=y+6;yy<y+hh-6;yy+=30){rect(x0+2,yy,3,4,'#2c3438');
+          ctx.fillStyle=p.accent;ctx.beginPath();ctx.arc(x0+3,yy-1,2,0,TAU);ctx.fill();}
+      }
+    }else{
+      // Orbit rims: planet arcs and panel fragments drifting by.
+      rect(x0,y,w0,hh,mix(p.side2,INK,.15));
+      const arc=hash(b,side+worldSeed);
+      if(arc>.45){const cy=y+20+mod(b*13,90),r=16+hash(b,side)*10;
+        ctx.fillStyle=mix(side<0?p.accent:CYAN,INK,.55);
+        ctx.beginPath();ctx.arc(side<0?x0-6:x0+w0+6,cy,r,0,TAU);ctx.fill();
+        ctx.strokeStyle=mix(p.light,INK,.3);ctx.beginPath();ctx.arc(side<0?x0-6:x0+w0+6,cy,r*.6,0,TAU);ctx.stroke();}
+      for(let yy=y+10;yy<y+hh-8;yy+=48){rect(x0+2,yy,w0-4,3,mix('#3a5a9a',INK,.2));rect(x0+2,yy+1,w0-4,1,mix(p.light,INK,.3));}
+    }
+  }
+}
+function drawShelf(s,p){
+  const y=sy(s.y);if(y<30||y>H+16)return;
+  const gw=s.gapW/2;
+  for(const side of[-1,1]){
+    const x0=side<0?X_LO:s.gapX+gw,x1=side<0?s.gapX-gw:X_HI,w=x1-x0;
+    if(w<=0)continue;
+    rect(x0,y-5,w,10,mix(p.side,INK,.05));rect(x0,y-5,w,2,mix(p.side2,CREAM,.2));
+    rect(x0,y+3,w,2,mix(p.side,INK,.45));
+    for(let x=x0+2;x<x1-2;x+=9)rect(x,y-1,3,3,mix(p.side,INK,.3));
+    // Ledge-end trim: physical worn hazard paint on the furniture itself.
+    const ex=side<0?x1-4:x0;
+    rect(ex,y-5,4,2,GOLD);rect(ex,y-3,4,2,INK);rect(ex,y-1,4,2,GOLD);rect(ex,y+1,4,2,INK);
+  }
+}
+// ---- item silhouettes ------------------------------------------------------------
+function drawItem(i){
+  const y=i.state==='rain'?sy(i.y):sy(i.y);if(y<24||y>H+16)return;
+  // Critters draw a touch under nominal item scale (motion sells their size);
+  // pickups and landmarks stay at full honest relative scale.
+  const s=i.mover==='pet'?itemPx(i)*.85:itemPx(i),x=i.x,spec=ITEM_KINDS[i.kind],c=spec?spec.c:'#fff';
+  const bob=i.mover==='pet'?Math.sin(showFrame*.15+i.id)*0:0; // pets stay planted on the floor plane
+  ctx.save();ctx.translate(Math.round(x),Math.round(y+bob));
+  if(i.state==='rain'){ // falling sky-bit: streak + glow
+    line([[0,-s*.8-4],[0,-2]],mix(CYAN,CREAM,.4),1);line([[-1,-s*.6-2],[-1,-1]],mix(CYAN,INK,.2),1);
+    ctx.globalAlpha=.3;ctx.fillStyle=CYAN;ctx.beginPath();ctx.arc(0,0,s*.7,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  const u=s/2; // half-size in px
+  switch(i.kind){
+    // bits
+    case'crumb':rect(-u,-u*.5,s,s*.6,c);rect(-u*.3,-u,2,2,mix(c,CREAM,.3));break;
+    case'pea':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();rect(-1,-1,1,1,mix(c,CREAM,.4));break;
+    case'tack':poly([[-u,u],[u,u],[0,-u]],c);rect(-1,-u-1,2,2,mix(c,CREAM,.4));break;
+    case'seed':rect(-u,-u*.4,s,s*.5,c);rect(u*.2,-u*.6,2,2,mix(c,INK,.2));break;
+    case'pebble':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();rect(-u*.4,-u*.4,2,1,mix(c,INK,.25));break;
+    case'berry':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();rect(-1,-u,1,1,CREAM);break;
+    case'bolt':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,INK,.3));rect(-1,-1,2,2,mix(c,INK,.45));break;
+    case'can':rect(-u*.7,-u,s*.7,s,c);rect(-u*.7,-u,s*.7,1,mix(c,CREAM,.5));rect(-u*.7,u-1,s*.7,1,mix(c,INK,.3));break;
+    case'bottle':rect(-u*.5,-u,s*.5,s,c);rect(-u*.2,-u-2,2,2,mix(c,CREAM,.4));break;
+    case'shell':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,u*.4,u,Math.PI,0);ctx.fill();line([[-u,u*.4],[0,-u*.6]],mix(c,INK,.25));line([[u,u*.4],[0,-u*.6]],mix(c,INK,.25));break;
+    case'fish':poly([[-u,-u*.4],[-u,u*.4],[-u*.2,0]],mix(c,INK,.2));rect(-u*.2,-u*.4,s*.8,s*.8,c);rect(u*.3,-1,1,1,INK);break;
+    case'starfish':ctx.fillStyle=c;for(let k=0;k<5;k++){const a=k*TAU/5-Math.PI/2;rect(Math.cos(a)*u-1,Math.sin(a)*u-1,2,2,c);}rect(-1,-1,2,2,mix(c,CREAM,.3));break;
+    case'starbit':poly([[0,-u],[u*.4,0],[0,u],[-u*.4,0]],c);rect(-1,-1,2,2,CREAM);break;
+    case'shard':poly([[-u,u],[u*.6,u],[u*.2,-u]],c);break;
+    case'crystal':poly([[0,-u],[u,0],[0,u],[-u,0]],c);poly([[0,-u*.5],[u*.5,0],[0,u*.5],[-u*.5,0]],mix(c,CREAM,.45));break;
+    // toys
+    case'dice':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,INK,.2));
+      rect(-u*.5,-u*.5,2,2,INK);rect(u*.5-2,u*.5-2,2,2,INK);if(s>8)rect(-1,-1,2,2,INK);break;
+    case'block':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,CREAM,.4));rect(-u+1,-u+1,s-2,s-2,mix(c,INK,.12));
+      rect(-2,-2,4,4,CREAM);break;
+    case'marble':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();
+      ctx.fillStyle=mix(c,CREAM,.7);ctx.beginPath();ctx.arc(-u*.3,-u*.3,u*.3,0,TAU);ctx.fill();break;
+    case'ball8':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();
+      rect(-u,-2,s,4,mix(CORAL,c,.1));rect(-1,-1,2,2,CREAM);break;
+    case'pinwheel':for(let k=0;k<4;k++){const a=k*TAU/4+showFrame*.02;poly([[0,0],[Math.cos(a)*u,Math.sin(a)*u],[Math.cos(a+.7)*u*.6,Math.sin(a+.7)*u*.6]],k%2?c:mix(c,CREAM,.4));}
+      rect(-1,-1,2,2,INK);break;
+    case'coneS':poly([[-u,u],[u,u],[0,-u]],c);rect(-u*.5,-1,u,2,CREAM);break;
+    case'hydrantS':rect(-u*.6,-u,s*.6,s,c);rect(-u*.3,-u-2,s*.3,2,c);rect(-u,-u*.2,2,2,mix(c,CREAM,.4));rect(u*.4,-u*.2,2,2,mix(c,CREAM,.4));break;
+    case'bucket':poly([[-u,-u*.6],[u,-u*.6],[u*.7,u],[-u*.7,u]],c);line([[-u,-u*.6],[0,-u-2],[u,-u*.6]],mix(c,CREAM,.4));break;
+    case'buoyS':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();rect(-u,-1,s,2,CREAM);break;
+    case'moonrock':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();
+      rect(-u*.4,-u*.3,2,2,mix(c,INK,.3));rect(u*.2,u*.1,2,1,mix(c,INK,.25));break;
+    case'satcell':rect(-u,-u*.6,s,s*.6,c);for(let k=-1;k<=1;k++)rect(k*u*.6-1,-u*.6,1,s*.6,mix(c,CREAM,.4));break;
+    // pets (gait-animated critters)
+    case'mouse':{const g=(showFrame>>3+i.id)&1;
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.7,0,0,TAU);ctx.fill();
+      rect(-u-2,g?0:1,3,1,mix(c,INK,.2));rect(u*.4,-u-2,2,2,c);rect(u*.6,-u*.4,1,1,INK);break;}
+    case'snail':{rect(-u,-1,s,3,mix(c,CREAM,.2));
+      ctx.fillStyle=c;ctx.beginPath();ctx.arc(-u*.1,-u*.4,u*.75,0,TAU);ctx.fill();
+      ctx.strokeStyle=mix(c,INK,.35);ctx.beginPath();ctx.arc(-u*.1,-u*.4,u*.4,0,TAU);ctx.stroke();
+      rect(u*.6,-3,1,3,c);rect(u*.8,-3,1,3,c);rect(u*.5,-4,1,1,CREAM);rect(u*.8,-4,1,1,CREAM);break;}
+    case'beetle':{const g=(showFrame>>3+i.id)&1;
+      for(let k=-1;k<=1;k++){line([[k*u*.5,0],[k*u*.5-2,g?3:2]],mix(c,INK,.4));line([[k*u*.5,0],[k*u*.5+2,g?2:3]],mix(c,INK,.4));}
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,-1,u*.8,u*.6,0,0,TAU);ctx.fill();
+      line([[0,-u],[0,1]],mix(c,INK,.5));rect(-u*.5,-u-1,2,1,'#8affea');break;}
+    case'frog':{const g=(showFrame>>3+i.id)&1;
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.7,0,0,TAU);ctx.fill();
+      rect(-u*.6,-u-1,3,3,c);rect(u*.1,-u-1,3,3,c);rect(-u*.4,-u,1,1,INK);rect(u*.3,-u,1,1,INK);
+      rect(-u-2,g?1:2,3,2,mix(c,INK,.25));rect(u-1,g?2:1,3,2,mix(c,INK,.25));break;}
+    case'pigeon':{const g=(showFrame>>3+i.id)&1;
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u*.8,u*.6,0,0,TAU);ctx.fill();
+      rect(u*.4,-u-1,3,3,c);rect(u+1,-u,2,1,GOLD);rect(-u-2,g?-1:0,3,2,mix(c,INK,.3));break;}
+    case'cat':{ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.6,0,0,TAU);ctx.fill();
+      poly([[u*.2,-u],[u*.4,-u-3],[u*.6,-u]],c);poly([[u*.6,-u],[u*.8,-u-3],[u,-u]],c);
+      line([[-u,0],[-u-3,-3]],c,2);rect(u*.5,-u*.3,1,1,INK);break;}
+    case'crab':{const g=(showFrame>>3+i.id)&1;
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.55,0,0,TAU);ctx.fill();
+      rect(-u-3,-2-(g?1:0),3,3,mix(c,CORAL,.3));rect(u,-2-(g?0:1),3,3,mix(c,CORAL,.3));
+      rect(-u*.4,-u,1,2,INK);rect(u*.3,-u,1,2,INK);break;}
+    case'gull':{const g=(showFrame>>2+i.id)&1;
+      ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.5,0,0,TAU);ctx.fill();
+      poly([[0,0],[-u-2,g?-4:2],[-u*.3,0]],mix(c,INK,.15));poly([[0,0],[u+2,g?-4:2],[u*.3,0]],mix(c,INK,.15));
+      rect(u*.5,-1,2,1,GOLD);break;}
+    case'mote':{ctx.globalAlpha=.5;ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();ctx.globalAlpha=1;
+      rect(-1,-1,2,2,CREAM);rect(-u-2,1,1,1,mix(c,INK,.3));break;}
+    // furniture
+    case'stool':rect(-u,-u,s,3,c);line([[-u*.6,-u+3],[-u*.7,u]],mix(c,INK,.3),2);line([[u*.6,-u+3],[u*.7,u]],mix(c,INK,.3),2);line([[0,-u+3],[0,u]],mix(c,INK,.3),2);break;
+    case'pot':rect(-u,-u*.6,s,s*.8,c);rect(-u*.7,-u,s*.7,2,mix(c,CREAM,.3));rect(-u-2,-u*.2,2,2,mix(c,INK,.3));rect(u,-u*.2,2,2,mix(c,INK,.3));break;
+    case'pan':ctx.fillStyle=c;ctx.beginPath();ctx.arc(-u*.2,0,u*.8,0,TAU);ctx.fill();rect(u*.4,-1,s*.9,2,mix(c,INK,.35));break;
+    case'chairG':case'chairSt':rect(-u,-u,3,s,c);rect(-u,-u,s,3,mix(c,CREAM,.25));rect(-u,0,s,2,c);rect(u-2,0,2,u,mix(c,INK,.3));break;
+    case'flowerpots':poly([[-u,0],[u,0],[u*.7,u],[-u*.7,u]],c);
+      rect(-2,-u-1,4,3,'#3c6832');rect(-3,-u-3,2,2,'#ff5d8f');rect(1,-u-4,2,2,GOLD);break;
+    case'crateSt':case'crateHb':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,CREAM,.3));
+      line([[-u,-u],[u,u]],mix(c,INK,.35));line([[u,-u],[-u,u]],mix(c,INK,.35));break;
+    case'barrel':rect(-u,-u,s,s,c);ctx.fillStyle=mix(c,CREAM,.15);ctx.beginPath();ctx.ellipse(0,-u,s*.5,2,0,0,TAU);ctx.fill();
+      rect(-u,-u*.4,s,1,mix(c,INK,.4));rect(-u,u*.4,s,1,mix(c,INK,.4));break;
+    case'panel':rect(-u,-u*.6,s,s*.6,c);for(let k=-1;k<=1;k++)rect(k*u*.6-1,-u*.6,1,s*.6,mix(c,CREAM,.35));rect(-u,-u*.6,s,1,mix(c,CREAM,.4));break;
+    case'dish':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,-u*.6,u,0,Math.PI);ctx.fill();line([[0,-u*.6],[0,u]],mix(c,INK,.3),2);rect(-1,u-2,2,2,mix(c,INK,.4));break;
+    // vehicles
+    case'wagon':rect(-u,-u*.4,s,s*.6,c);rect(u,-u*.8,2,3,mix(c,INK,.3));
+      ctx.fillStyle='#0a0b10';ctx.beginPath();ctx.arc(-u*.5,u*.4,2,0,TAU);ctx.arc(u*.5,u*.4,2,0,TAU);ctx.fill();break;
+    case'barrow':poly([[-u,-u*.4],[u*.6,-u*.4],[u*.3,u*.3],[-u*.7,u*.3]],c);
+      ctx.fillStyle='#0a0b10';ctx.beginPath();ctx.arc(u*.6,u*.3,2,0,TAU);ctx.fill();
+      line([[-u,-u*.4],[-u-3,-u*.8]],mix(c,INK,.3),2);break;
+    case'mower':rect(-u,-u*.3,s,s*.5,c);rect(-u*.3,-u*.8,s*.4,3,mix(c,INK,.2));
+      line([[u*.3,-u*.6],[u+3,-u-2]],mix(c,INK,.4),2);
+      ctx.fillStyle='#0a0b10';ctx.beginPath();ctx.arc(-u*.5,u*.4,2,0,TAU);ctx.arc(u*.5,u*.4,2,0,TAU);ctx.fill();break;
+    case'scooter':ctx.fillStyle='#0a0b10';ctx.beginPath();ctx.arc(-u*.6,u*.5,2,0,TAU);ctx.arc(u*.6,u*.5,2,0,TAU);ctx.fill();
+      rect(-u*.4,-u*.2,s*.8,3,c);rect(u*.3,-u,2,s*.6,mix(c,CREAM,.3));break;
+    case'pod':ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.7,0,0,TAU);ctx.fill();
+      ctx.fillStyle='#232e3c';ctx.beginPath();ctx.arc(u*.2,-u*.2,u*.4,0,TAU);ctx.fill();
+      rect(-u-2,-1,2,2,CYAN);rect(-1,u*.6,2,2,AMBER);break;
+    case'rover':rect(-u,-u*.3,s,s*.5,c);rect(-2,-u,4,4,mix(c,CREAM,.3));
+      ctx.fillStyle='#0a0b10';for(let k=-1;k<=1;k++){ctx.beginPath();ctx.arc(k*u*.6,u*.4,2,0,TAU);ctx.fill();}break;
+    // structures
+    case'cabinet':rect(-u,-u,s,s*1.1,c);rect(-u,-u,s,2,mix(c,CREAM,.25));
+      line([[0,-u+2],[0,s*.5]],mix(c,INK,.4));rect(-u*.5,0,2,2,GOLD);rect(u*.3,0,2,2,GOLD);break;
+    case'shed':rect(-u,-u*.4,s,s*.8,c);poly([[-u-1,-u*.4],[u+1,-u*.4],[0,-u-3]],mix(c,INK,.3));
+      rect(-2,0,4,u*.4,mix(c,INK,.45));rect(u*.3,-u*.1,2,2,CREAM);break;
+    case'kiosk':rect(-u,-u*.5,s,s,c);for(let k=0;k<4;k++)rect(-u+k*u*.5,-u-3,u*.5-1,3,k%2?CORAL:CREAM);
+      rect(-u*.5,-u*.2,u,3,'#232e3c');break;
+    case'boat':poly([[-u,0],[u,0],[u*.6,u*.5],[-u*.6,u*.5]],c);
+      rect(-1,-u,1,u,'#d8cba8');poly([[0,-u],[u*.7,-u*.2],[0,-u*.2]],'#e8e2d2');break;
+    case'satellite':rect(-u*.4,-u*.4,s*.4,s*.4,mix(c,CREAM,.2));
+      rect(-u,-u*.3,u*.5,s*.25,'#3a5a9a');rect(u*.6,-u*.3,u*.5,s*.25,'#3a5a9a');
+      rect(-u,-u*.3,u*.5,1,CYAN);rect(u*.6,-u*.3,u*.5,1,CYAN);rect(-1,u*.2,2,3,c);break;
+    case'rocket':poly([[0,-u],[u*.5,-u*.3],[-u*.5,-u*.3]],CORAL);rect(-u*.5,-u*.3,u,s*.7,c);
+      poly([[-u*.5,u*.2],[-u,u*.6],[-u*.5,u*.6]],mix(c,INK,.3));poly([[u*.5,u*.2],[u,u*.6],[u*.5,u*.6]],mix(c,INK,.3));
+      ctx.fillStyle='#232e3c';ctx.beginPath();ctx.arc(0,-u*.05,2,0,TAU);ctx.fill();break;
+    case'asteroid':{ctx.fillStyle=c;ctx.beginPath();
+      for(let k=0;k<7;k++){const a=k*TAU/7,rr=u*(0.75+hash(k,i.id)*.35);ctx[k?'lineTo':'moveTo'](Math.cos(a)*rr,Math.sin(a)*rr);}ctx.fill();
+      rect(-u*.3,-u*.2,3,2,mix(c,INK,.35));rect(u*.1,u*.2,2,2,mix(c,INK,.3));break;}
+    default:rect(-u,-u,s,s,c);
+  }
+  ctx.restore();
+}
+function drawCar(t){
+  const y=sy(t.y);if(y<20||y>H+24)return;
+  // Vehicles draw width-dominant and compact: the commute is set dressing the
+  // ball routes around (and later eats), never a lane-choking wall.
+  const s=clamp(t.size*Math.min(worldScale(),1.75)*.72,8,110),u=s/2,spec=ITEM_KINDS[t.kind],c=spec?spec.c:'#c96a5a';
+  ctx.save();ctx.translate(Math.round(t.x),Math.round(y));
+  if(t.wob>0)ctx.rotate(Math.sin(showFrame*.3+t.id)*.14);
+  ctx.fillStyle='#0a0b10';
+  ctx.beginPath();ctx.arc(-u*.6,u*.5,2.2,0,TAU);ctx.arc(u*.6,u*.5,2.2,0,TAU);ctx.arc(-u*.6,-u*.5,2.2,0,TAU);ctx.arc(u*.6,-u*.5,2.2,0,TAU);ctx.fill();
+  rect(-u*.85,-u*.6,s*.85,s*.6,c);rect(-u*.85,-u*.6,s*.85,2,mix(c,CREAM,.35));
+  if(t.kind==='van'||t.kind==='truckHb'){rect(-u*.6,-u*.45,s*.45,s*.3,'#232e3c');rect(-u*.85,0,s*.85,s*.28,mix(c,INK,.25));rect(-u*.6,u*.1,s*.5,1,CREAM);}
+  else{rect(-u*.55,-u*.42,s*.45,s*.34,'#232e3c');rect(-u*.4,-u*.32,s*.3,s*.14,'#7192a5');
+    if(t.kind==='taxi'){rect(-2,-u*.6-3,4,3,GOLD);rect(-1,-u*.6-2,2,1,INK);}}
+  rect(-u*.7,-u*.6,2,1,'#fff3c4');rect(u*.35,-u*.6,2,1,'#fff3c4');rect(-u*.7,u*.4,2,1,CORAL);rect(u*.35,u*.4,2,1,CORAL);
+  ctx.restore();
+}
+// ---- the katamari ------------------------------------------------------------------
+function drawBall(){
+  const r=drawR(ball.d),x=ball.x,y=BALL_Y,cc=classColor(classOf(ball.d));
+  ctx.globalAlpha=.35;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(x,y+r*.85,r*.95,r*.3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.save();ctx.translate(Math.round(x),Math.round(y));
+  const wob=ball.wobbleT>0?Math.sin(showFrame*.5)*.12:0;
+  ctx.rotate(ball.angle*.5+wob);
+  // Dark outline first: the katamari must pop off every floor in every zone.
+  ctx.fillStyle=mix(cc,INK,.55);ctx.beginPath();ctx.arc(0,0,r+1,0,TAU);ctx.fill();
+  // Core: class-colored mass with a shaded rim and a rotating highlight seam.
+  ctx.fillStyle=mix(cc,INK,.18);ctx.beginPath();ctx.arc(0,0,r,0,TAU);ctx.fill();
+  ctx.fillStyle=cc;ctx.beginPath();ctx.arc(0,0,r*.82,0,TAU);ctx.fill();
+  ctx.strokeStyle=mix(cc,CREAM,.6);ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(0,0,r*.6,ball.roll%TAU,ball.roll%TAU+1.4);ctx.stroke();ctx.lineWidth=1;
+  ctx.strokeStyle=mix(cc,INK,.35);
+  ctx.beginPath();ctx.arc(0,0,r*.6,ball.roll%TAU+Math.PI,ball.roll%TAU+Math.PI+.9);ctx.stroke();
+  // Core dimples: permanent katamari texture even before the first pickup —
+  // three bumps riding the spin, then every stuck pickup on the rim.
+  for(let k=0;k<3;k++){const a=k*TAU/3+ball.roll*.7;
+    ctx.fillStyle=mix(cc,CREAM,.25);ctx.beginPath();ctx.arc(Math.cos(a)*r*.42,Math.sin(a)*r*.4,Math.max(1.6,r*.16),0,TAU);ctx.fill();
+    ctx.fillStyle=mix(cc,INK,.3);ctx.beginPath();ctx.arc(Math.cos(a)*r*.42+1,Math.sin(a)*r*.4+1,Math.max(1,r*.1),0,TAU);ctx.fill();}
+  for(const st of stuck){
+    const a=st.a+ball.roll,kx=Math.cos(a)*r*st.rr,ky=Math.sin(a)*r*st.rr*.94;
+    const kc=st.kind==='sweeper'?STEEL:(ITEM_KINDS[st.kind]?ITEM_KINDS[st.kind].c:CLASS_COLORS[st.cls]);
+    const ks=st.size>30?4:st.size>8?3:2;
+    if(st.kind==='sweeper'){rect(kx-3,ky-3,6,6,'#3a3f4c');rect(kx-1,ky-1,2,2,CORAL);}
+    else{ctx.fillStyle=kc;if(st.cls>=3)rect(kx-ks/2,ky-ks/2,ks,ks,kc);
+      else{ctx.beginPath();ctx.arc(kx,ky,ks*.6,0,TAU);ctx.fill();}
+      if(st.size>20)rect(kx-1,ky-1,1,1,mix(kc,INK,.4));}
+  }
+  // Gloss: a small bright arc counter-rotating so the spin is always readable.
+  ctx.strokeStyle=mix(cc,CREAM,.85);ctx.beginPath();ctx.arc(0,0,r*.88,-ball.roll*.6-.9,-ball.roll*.6-.15);ctx.stroke();
+  ctx.restore();
+  // Dash vents and glory rim (render-only payoff dressing).
+  if(ball.dashT>0){const k=(showFrame>>1)%2;dustAtVisual(x-3,y+r*.7,k?AMBER:GOLD);dustAtVisual(x+3,y+r*.7,k?GOLD:AMBER);}
+  if(typeof globalThis.__NO_PAYOFF_FX==='undefined'&&ball.gloryT>0){
+    ctx.globalAlpha=.5+.3*Math.sin(showFrame*.55);const k=(showFrame>>2)%4,gp=[[-r,-r*.4],[r*.7,-r],[r,r*.5],[-r*.8,r*.8]][k];
+    rect(x+gp[0],y+gp[1],2,2,GOLD);ctx.globalAlpha=1;}
+  if(ball.hitFlashT>0&&((showFrame>>1)&1)){ctx.globalAlpha=.5;ctx.fillStyle=CORAL;
+    ctx.beginPath();ctx.arc(x,y,r*.7,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+}
+function dustAtVisual(x,y,c){rect(x+(hash(x,showFrame>>1)-.5)*4,y+hash(y,showFrame>>2)*3,2,2,c);}
+function drawSweeper(s){
+  const y=sy(s.y);if(y<20||y>H+20)return;
+  const chase=s.state==='chase'||s.state==='windup'||s.state==='lunge';
+  ctx.globalAlpha=.3;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(s.x,y+8,9,3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.save();ctx.translate(Math.round(s.x),Math.round(y));
+  if(s.state==='windup')ctx.translate((hash(s.id,showFrame>>1)-.5)*2,0);
+  // Side brush: two arms that spin with the body roll; they FLARE in windup.
+  const flare=s.state==='windup'?4:s.state==='lunge'?3:0;
+  for(let k=0;k<2;k++){const a=s.roll*2+k*Math.PI;
+    line([[Math.cos(a)*6,Math.sin(a)*6*.7],[Math.cos(a)*(10+flare),Math.sin(a)*(10+flare)*.7]],mix(STEEL,CREAM,.2),1);}
+  ctx.fillStyle='#262b36';ctx.beginPath();ctx.arc(0,0,8,0,TAU);ctx.fill();
+  ctx.fillStyle='#3a4150';ctx.beginPath();ctx.arc(0,0,6,0,TAU);ctx.fill();
+  rect(-2,-4,4,2,mix(STEEL,INK,.3));
+  // LED: steel on patrol, coral on the hunt, gold flare in windup.
+  const led=s.state==='windup'?(showFrame%6<3?GOLD:CORAL):chase?CORAL:STEEL;
+  rect(-1,-2,3,3,led);rect(0,-1,1,1,CREAM);
+  ctx.restore();
+  if(s.state==='lunge'){ctx.globalAlpha=.4;line([[s.x-4,y+10],[s.x-4,y+16]],STEEL);line([[s.x+4,y+10],[s.x+4,y+16]],STEEL);ctx.globalAlpha=1;}
+  // Dizzy stun sparks over a stunned sweeper: the authored emote that covers
+  // the pause. Render-only; __NO_EMOTE strips art and flag together.
+  if(s.state==='stunned'&&typeof globalThis.__NO_EMOTE==='undefined'){
+    for(let i=0;i<3;i++){const a=showFrame*.24+s.id+i*TAU/3;
+      rect(s.x+Math.round(Math.cos(a)*6)-1,y-13+Math.round(Math.sin(a)*2),2,2,i===1?GOLD:CREAM);}}
+}
+// ---- aftermath decals (static payoff marks; __NO_PAYOFF_FX strips them) ------------
+function drawMarks(){
+  if(typeof globalThis.__NO_PAYOFF_FX!=='undefined'||!marks.length)return;
+  for(const m of marks){
+    const age=clamp((runFrame-m.f)/60,0,1),y=sy(m.y);if(y<34||y>H+6)continue;
+    ctx.globalAlpha=(1-age)*.85;
+    if(m.kind==='crack'){for(let k=0;k<4;k++)rect(m.x+(k%2?4:-5),y-4+k*4,4,2,k%2?CORAL:'#ffffff');}
+    else if(m.kind==='scatter'){for(let k=0;k<3;k++)line([[m.x-6+k*6,y-4],[m.x-8+k*6,y+6]],k===1?'#ffffff':CORAL,2);}
+    else if(m.kind==='ring'){for(let k=0;k<6;k++){const a=k*TAU/6;rect(m.x+Math.cos(a)*10-1,y+Math.sin(a)*10-1,2,2,k%2?GOLD:'#ffffff');}}
+    else{for(let k=0;k<3;k++){const w2=9-k*2;rect(m.x-w2/2,y-2+k*4,w2,2,k===1?'#ffffff':MINT);}}
+  }
+  ctx.globalAlpha=1;
+}
+function drawPulses(){
+  if(typeof globalThis.__NO_PAYOFF_FX==='undefined'){
+    if(badPulse>.04){ctx.globalAlpha=.4*badPulse;
+      rect(0,31,W,3,CORAL);rect(0,H-3,W,3,CORAL);rect(0,31,3,H-31,CORAL);rect(W-3,31,3,H-31,CORAL);ctx.globalAlpha=1;}
+    if(goodPulse>.04){ctx.globalAlpha=.36*goodPulse;
+      rect(3,34,W-6,2,GOLD);rect(3,H-6,W-6,2,GOLD);rect(3,34,2,H-40,GOLD);rect(W-5,34,2,H-40,GOLD);ctx.globalAlpha=1;}
+  }
+}
+// ---- acts on screen: the portal and the King ----------------------------------------
+function drawActsOverlay(p){
+  if(act.phase!=='calm'&&act.type==='magnet'){
+    // The royal rift: a swirling portal pinned to the top of the sky, physically
+    // raining items. Swirl arms rotate on the sim clock; the whole frame edges
+    // darken and strobe cyan — the warning is weather, not a text box.
+    const open=act.phase==='warn'?clamp((runFrame-(act.landAt-240))/60,0,1):1;
+    if(act.phase==='warn'){
+      ctx.globalAlpha=.42*open;rect(0,31,W,12,INK);rect(0,H-12,W,12,INK);
+      rect(0,31,10,H-31,INK);rect(W-10,31,10,H-31,INK);ctx.globalAlpha=1;
+      const strobe=.55+.35*Math.max(0,Math.sin(showFrame*.22));
+      ctx.globalAlpha=strobe*open;rect(0,43,W,4,CYAN);rect(0,H-8,W,4,CYAN);ctx.globalAlpha=1;
+    }
+    ctx.globalAlpha=.65*open;ctx.fillStyle=ROYAL;ctx.beginPath();ctx.ellipse(80,44,34*open+6,11,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    ctx.globalAlpha=.45*open;ctx.fillStyle=CYAN;ctx.beginPath();ctx.ellipse(80,44,22*open+4,7,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+    for(let k=0;k<5;k++){const a=showFrame*.05+k*TAU/5;
+      line([[80,44],[80+Math.cos(a)*(30*open+5),44+Math.sin(a)*9]],k%2?CYAN:CREAM,1);}
+    ctx.globalAlpha=.9;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(80,44,3.5,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  }
+  if(king.y>-60)drawKing();
+}
+function drawKing(){
+  const ky=king.y,cx=80;
+  // Royal presence: the King's face descends from the top edge. Crown, heavy
+  // brow, eyes that TRACK the ball, mustache. Set piece, not an actor.
+  ctx.globalAlpha=.9;rect(cx-58,0,116,ky+16,mix(ROYAL,INK,.55));ctx.globalAlpha=1;
+  rect(cx-58,ky+14,116,3,GOLD);
+  ctx.fillStyle='#e8b88a';ctx.beginPath();ctx.ellipse(cx,ky-6,40,26,0,0,TAU);ctx.fill();
+  // crown
+  poly([[cx-34,ky-26],[cx-30,ky-44],[cx-22,ky-30],[cx-16,ky-46],[cx-8,ky-31],[cx,ky-47],[cx+8,ky-31],[cx+16,ky-46],[cx+22,ky-30],[cx+30,ky-44],[cx+34,ky-26]],GOLD);
+  rect(cx-34,ky-28,68,5,GOLD);rect(cx-2,ky-45,4,4,CORAL);rect(cx-26,ky-40,3,3,CYAN);rect(cx+23,ky-40,3,3,MINT);
+  // heavy brow + tracking eyes
+  rect(cx-26,ky-16,20,4,'#3a2c14');rect(cx+6,ky-16,20,4,'#3a2c14');
+  const track=clamp((ball.x-cx)*.06,-2,2);
+  rect(cx-24,ky-11,16,7,CREAM);rect(cx+8,ky-11,16,7,CREAM);
+  rect(cx-17+track,ky-10,4,5,'#1a2030');rect(cx+15+track,ky-10,4,5,'#1a2030');
+  // nose + mustache
+  rect(cx-3,ky-4,6,8,mix('#e8b88a',INK,.12));
+  poly([[cx-2,ky+6],[cx-20,ky+12],[cx-2,ky+11]],'#3a2c14');poly([[cx+2,ky+6],[cx+20,ky+12],[cx+2,ky+11]],'#3a2c14');
+  if(act.phase==='live'&&act.type==='king'){
+    // Royal beams: two gold searchlights sweeping the road from his brow.
+    const sw=Math.sin(showFrame*.02)*30;
+    for(const side of[-1,1]){
+      ctx.globalAlpha=.14;
+      poly([[cx+side*14,ky+16],[cx+side*14+side*6,ky+16],[80+side*30+sw,H],[80+side*10+sw,H]],GOLD);
+      ctx.globalAlpha=1;}
+    ctx.globalAlpha=.9;rect(24,42,112,11,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle=ROYAL;ctx.strokeRect(24.5,42.5,111,10);
+    ctx.fillStyle=GOLD;ctx.font='bold 6px monospace';ctx.fillText('ROYALTY x3',80-9*1.8,50);
+  }
+  // The King's voice: a royal plate with his authored line.
+  if(king.lineT>0&&king.line){
+    const a=Math.min(1,king.lineT/30);
+    ctx.globalAlpha=.88*a;rect(6,56,W-12,13,mix(ROYAL,INK,.35));ctx.globalAlpha=1;
+    ctx.strokeStyle=GOLD;ctx.strokeRect(6.5,56.5,W-13,12);
+    poly([[10,59],[12,57],[14,59],[16,57],[18,59]],GOLD);
+    ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';
+    ctx.fillText(king.line.slice(0,44),22,64);
+  }
+}
+// ---- foreground and haze --------------------------------------------------------------
+function drawForeground(p){
+  const off=Math.floor(ball.y);
+  if(p.kind==='kitchen'){
+    for(let i=0;i<2;i++){const x=i===0?30:130,y=48+mod(i*97+off,H-48);
+      line([[x,y-16],[x,y-4]],mix(STEEL,INK,.3));rect(x-3,y-4,6,3,mix(STEEL,CREAM,.2));
+      ctx.globalAlpha=.14;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(x,y+6,7,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+  }else if(p.kind==='garden'){
+    for(let i=0;i<2;i++){const x=i===0?14:146,y=56+mod(i*131+off,H-64);
+      line([[x,y],[x+(i?-8:8),y+12]],mix('#5c4a30',INK,.2),2);
+      rect(x+(i?-10:6),y+10,5,3,'#3c5a34');rect(x+(i?-12:8),y+6,4,3,'#4a6a3e');}
+  }else if(p.kind==='street'){
+    for(const side of[-1,1])for(let i=0;i<3;i++){
+      const x=side<0?18:142,y=52+mod(i*113+off,H-56);
+      rect(x-1,y-12,2,14,'#14161f');
+      ctx.globalAlpha=.16;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(x,y-13,7,0,TAU);ctx.fill();ctx.globalAlpha=1;
+      rect(x-2,y-15,4,3,p.light);}
+    const y=70+mod(off,BLOCK*2);
+    if(y>48&&y<H-40){rect(30,y,100,5,mix(p.side2,INK,.1));rect(33,y+1,94,2,p.accent);
+      ctx.fillStyle=CREAM;ctx.font='bold 5px monospace';ctx.fillText('MAIN ST · ROLL THROUGH',38,y-2);}
+  }else if(p.kind==='harbor'){
+    for(let i=0;i<2;i++){const x=i===0?150:8,y=60+mod(i*101+off,H-70);
+      line([[x,y-22],[x,y+14]],mix('#6a4a34',INK,.2),2);line([[x,y-22],[x+(i?-14:14),y+10]],mix('#6a4a34',CREAM,.3));}
+  }else{
+    const y=52+mod(off,BLOCK*3);
+    if(y>44&&y<H-60){rect(120,y,26,6,mix('#3a5a9a',INK,.2));rect(146,y+1,8,4,mix(STEEL,INK,.2));
+      rect(124,y+2,6,2,CYAN);}
+  }
+  // Zone haze: layered striations pull the far floor into the light while the
+  // foreground stays dark — the frame's depth cue and bright mass.
+  const haze=mix(p.haze,CREAM,.15),hazeBright=mix(p.haze,CREAM,.75),hazeDim=mix(p.haze,INK,.25);
+  for(let y=32;y<104;y++){const u=1-(y-32)/72;ctx.globalAlpha=.6*Math.pow(u,1.6);
+    rect(0,y,W,1,(y%6<2&&u>.25)?hazeBright:hazeDim);}
+  ctx.globalAlpha=1;
+}
+// ---- HUD -----------------------------------------------------------------------------
+const displayedTactic=()=>ball.intent&&ball.intent.tactic||'ROLL OUT';
+// The bottom status cluster: the player's own numbers live next to the ball,
+// not 250px away at the top of the strip. The probe exposes the box so the
+// visual eval can pin it near the katamari.
+const HUD_STATUS={x:0,y:H-17,width:W,height:17};
+function fmtSize(d){return d<100?Math.round(d)+'cm':(d/100).toFixed(2)+'m';}
+function fmtTime(f){const s=Math.max(0,Math.ceil(f/60));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function drawHud(p){
+  ctx.globalAlpha=.94;rect(0,0,W,31,INK);ctx.globalAlpha=1;
+  ctx.font='bold 8px monospace';ctx.fillStyle=CREAM;ctx.fillText('STAR ROLLER',4,10);
+  ctx.font='bold 6px monospace';ctx.fillStyle=persona.color;ctx.fillText(displayedTactic().slice(0,24),4,21);
+  rect(0,29,W,2,'#1a2030');rect(0,29,Math.round(W*clamp(ball.d/TARGET_D,0,1)),2,mix(GOLD,INK,.15));rect(W-2,29,2,2,GOLD);
+  ctx.fillStyle=p.accent;ctx.font='bold 5px monospace';ctx.fillText(p.name,W-4-p.name.length*3,10);
+  ctx.fillStyle='#8a90a8';ctx.fillText('2m STAR',W-4-21,21);
+  // Bottom status cluster beside the ball: size, class pips, time, score.
+  const y=HUD_STATUS.y;
+  ctx.globalAlpha=.72;rect(0,y,W,17,INK);ctx.globalAlpha=1;
+  rect(0,y,W,1,'#2a3040');
+  ctx.font='bold 5px monospace';
+  ctx.fillStyle='#8a90a8';ctx.fillText('SIZE',4,y+6);
+  ctx.fillStyle=classColor(classOf(ball.d));ctx.font='bold 7px monospace';ctx.fillText(fmtSize(ball.d),20,y+7);
+  ctx.font='bold 5px monospace';
+  const cls=classOf(ball.d);
+  for(let i=0;i<6;i++)rect(58+i*7,y+3,6,4,i<=cls?CLASS_COLORS[i]:'#30364a');
+  ctx.fillStyle='#8a90a8';ctx.fillText('TIME',4,y+14);
+  const tl=RUN_FRAMES-runFrame;
+  ctx.fillStyle=state==='run'?(tl<1800?CORAL:CREAM):GOLD;ctx.fillText(fmtTime(tl),20,y+14);
+  ctx.fillStyle='#8a90a8';ctx.fillText('ROLL',58,y+14);
+  ctx.fillStyle=MINT;ctx.fillText('x'+Math.max(1,streak),74,y+14);
+  ctx.fillStyle='#8a90a8';ctx.fillText('K.O.',104,y+14);
+  for(let i=0;i<3;i++)rect(118+i*6,y+10,5,4,i<Math.min(stats.sweepersEaten,3)?GOLD:'#30364a');
+  if(state!=='run'){
+    ctx.globalAlpha=.9;rect(8,128,144,86,INK);ctx.globalAlpha=1;
+    ctx.strokeStyle=state==='star'?GOLD:CORAL;ctx.strokeRect(8.5,128.5,143,85);
+    ctx.fillStyle=state==='star'?GOLD:CORAL;ctx.font='bold 10px monospace';
+    ctx.fillText(state==='star'?'A STAR IS BORN':'TIME · NO STAR',state==='star'?22:26,152);
+    ctx.fillStyle=CREAM;ctx.font='bold 7px monospace';ctx.fillText(outcome,80-outcome.length*2.1,172);
+    ctx.fillStyle=MINT;ctx.fillText(stats.pickups+' EATEN · '+stats.milestones+' CLASSES',30,190);
+    ctx.fillStyle=STEEL;ctx.fillText(stats.bumps+' BUMPS · '+stats.sweeperHits+' SWEPT',32,202);
+  }
+  drawSession();
+}
+// ---- frame ---------------------------------------------------------------------------
+function render(){
+  const only=typeof globalThis.__SR_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__SR_VISUAL_ONLY_SUBJECT:null;
+  if(only!==null){renderIsolated(String(only));return;}
+  const p=ZONES[currentZone()];
+  drawEnvironment(p);
+  preDraw();
+  for(const t of cars)drawCar(t);
+  for(const i of items)drawItem(i);
+  for(const s of sweepers)drawSweeper(s);
+  drawBall();
+  drawMarks();
+  drawRings(fxCam());drawParts(fxCam());
+  for(const t of texts){const y=sy(t.y),a=Math.min(1,t.t/18);if(y<35||y>H-4)continue;ctx.globalAlpha=a;ctx.fillStyle=t.c;ctx.font='bold 7px monospace';
+    ctx.fillText(t.s,clamp(t.x-t.s.length*2.1,3,W-t.s.length*4.2-3),y);}ctx.globalAlpha=1;
+  postDraw();
+  drawForeground(p);drawActsOverlay(p);drawPulses();
+  if(pres.cue&&pres.cue.tier>=3){ctx.globalAlpha=.05;rect(0,31,W,H-31,GOLD);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(2.5,33.5,W-5,H-37);
+    for(let i=0;i<5;i++){ctx.globalAlpha=.4-i*.07;rect(8+i*5,52+i*52,24+i*3,1,GOLD);rect(W-35-i*4,76+i*48,26+i*2,1,GOLD);}ctx.globalAlpha=1;}
+  drawHud(p);
+}
+function drawEnvironment(p){
+  drawZoneBase(p);
+  const b0=currentBlock()-2,b1=currentBlock()+3;
+  for(let b=b1;b>=b0;b--)drawZoneSide(b,ZONES[zoneForBlock(b)]);
+  for(let b=b0;b<=b1;b++){const f=blockFeature(b);if(f.shelf)drawShelf(f.shelf,ZONES[zoneForBlock(b)]);}
+}
+// Isolated-subject renders for the drawn-pixel actor-scale gates.
+function renderIsolated(only){
+  rect(0,0,W,H,INK);
+  if(only==='none')return;
+  const p=ZONES[currentZone()];
+  if(only==='env'){drawEnvironment(p);drawForeground(p);return;}
+  if(only==='player'){drawBall();return;}
+  if(only.startsWith('sweeper-')){const s=sweepers.find(q=>'sweeper-'+q.id===only);if(s)drawSweeper(s);return;}
+  if(only.startsWith('pet-')){const i=items.find(q=>'pet-'+q.id===only);if(i)drawItem(i);return;}
+  if(only.startsWith('car-')){const t=cars.find(q=>'car-'+q.id===only);if(t)drawCar(t);return;}
+}
+
+// ---- probes and deterministic visual fixtures -----------------------------------
+globalThis.__starRollerProbe=()=>({state,runFrame,runSerial,showFrame,worldSeed,skillSeed,persona:persona.name,
+  zone:ZONES[currentZone()].name,finite:allFinite(),outcome,d:round(ball.d,3),target:TARGET_D,
+  ball:{x:ball.x,y:ball.y,vx:ball.vx,speed:ball.speed,d:ball.d,wobbleT:ball.wobbleT,dashT:ball.dashT,
+    invulnT:ball.invulnT,tactic:ball.intent&&ball.intent.tactic,targetX:ball.intent&&ball.intent.targetX},
+  items:items.length,sweepers:sweepers.length,cars:cars.length,stuck:stuck.length,
+  stats:Object.assign({},stats),
+  maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),
+  maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
+  act:{phase:act.phase,type:act.type,notes:act.notes.slice()},king:{y:round(king.y,2)},
+  show:SHOW.probe(),playing:playing()});
+globalThis.__starRollerSignature=()=>JSON.stringify({state,runFrame,worldSeed,skillSeed,persona:persona.name,
+  lastBlock,lastZone,streak,chainCount,pickupsSinceBump,
+  p:[ball.x,ball.y,ball.vx,ball.speed,ball.d,ball.wobbleT,ball.invulnT,ball.dashT,ball.dashCd]
+    .map(v=>typeof v==='number'?round(v,5):v),
+  i:items.map(i=>[i.id,i.kind,round(i.x,3),round(i.y,3),i.size,i.state,i.hitCd]),
+  c:cars.map(t=>[t.id,t.kind,round(t.x,3),round(t.y,3),round(t.speed,3),t.hitCd,t.wob]),
+  s:sweepers.map(s=>[s.id,round(s.x,4),round(s.y,4),round(s.vx,4),round(s.speed,4),s.state,s.stateT,s.misses,s.hitCd]),
+  k:[stuck.length,round(king.y,3),king.line],
+  a:[act.phase,act.type,act.warnAt,act.landAt,act.endAt,act.index,act.lastSweeper],
+  u:[shelfDone.size],
+  t:[stats.pickups,stats.milestones,stats.bumps,stats.scatters,stats.sweeperHits,stats.sweepersEaten,
+    stats.hazardHits,stats.petsEaten,stats.carsEaten,stats.threads,stats.shelfHits,stats.rainCaught,
+    stats.kingBonus,stats.stars,stats.fizzles,stats.dashes,stats.lapses,stats.acts,stats.actClears,
+    stats.dodges,stats.flawless,stats.contacts,stats.events,stats.progress]});
+globalThis.__starRollerPhysical=()=>[round(ball.x,7),round(ball.y,7),round(ball.vx,7),round(ball.speed,7),
+  round(ball.d,7),ball.intent&&round(ball.intent.steer,7),ball.intent&&round(ball.intent.throttle,7),
+  ball.intent&&ball.intent.brake,ball.intent&&ball.intent.tuck,ball.intent&&ball.intent.dash].join('|');
+globalThis.__starRollerVisualBeats=['opening','first-feast','toy-milestone','garden-pets','bump','magnet-warn',
+  'magnet-land','king-warn','king-live','street','harbor','sweeper-chase','orbit','star-finale'];
+// The good/bad feedback ledger for evals/feedback.js: every entry is a sim
+// event the viewer must be able to SEE, with screen coordinates at fire time.
+globalThis.__feedbackProbe=()=>({finite:allFinite(),serial:feedbackSerial,events:feedback.slice(),
+  pulses:{good:round(goodPulse,4),bad:round(badPulse,4)},
+  ball:{angle:round(ball.angle,5),yaw:round(ball.yaw||0,5),va:round(ball.va||0,5),roll:round(ball.roll||0,4),
+    wobbleT:ball.wobbleT,dashT:ball.dashT,gloryT:ball.gloryT,hitFlashT:ball.hitFlashT,
+    vx:round(ball.vx,5),speed:round(ball.speed,5),d:round(ball.d,3)}});
+function visualActors(){
+  const out=[{id:'player',kind:'player',type:'katamari',
+    box:{x:ball.x-24,y:BALL_Y-24,width:48,height:48}}];
+  for(const s of sweepers){const yy=sy(s.y);if(yy<40||yy>H-8)continue;
+    out.push({id:'sweeper-'+s.id,kind:'sweeper',type:'sweeper',box:{x:s.x-15,y:yy-12,width:30,height:24}});}
+  for(const i of items){if(i.state!=='loose'||i.mover!=='pet')continue;const yy=sy(i.y);if(yy<40||yy>H-8)continue;
+    out.push({id:'pet-'+i.id,kind:'pet',type:i.kind,box:{x:i.x-18,y:yy-15,width:36,height:30}});}
+  for(const t of cars){const yy=sy(t.y);if(yy<40||yy>H-8)continue;
+    out.push({id:'car-'+t.id,kind:'car',type:t.kind,box:{x:t.x-24,y:yy-25,width:48,height:50}});}
+  return out;
+}
+globalThis.__starRollerVisualProbe=()=>({frame:showFrame,zone:ZONES[currentZone()].name,
+  tactic:displayedTactic(),danger:act.phase!=='calm',act:act.phase,actType:act.type,state,finite:allFinite(),
+  d:round(ball.d,3),
+  pose:{angle:round(ball.angle,5),va:round(ball.va||0,5),vx:round(ball.vx,5),roll:round(ball.roll||0,4)},
+  feedback:{wobbleT:ball.wobbleT,gloryT:ball.gloryT,goodPulse:round(goodPulse,4),badPulse:round(badPulse,4),
+    dashT:ball.dashT,speed:round(ball.speed,4)},
+  layout:{playfield:{x:0,y:38,width:160,height:322},
+    approach:{enter:38,contact:BALL_Y,visible:BALL_Y-38,travel:322},
+    hudStatus:HUD_STATUS},
+  actors:visualActors(),
+  playerBox:{x:ball.x-22,y:BALL_Y-22,width:44,height:44},
+  sweeperBoxes:sweepers.map(s=>({x:s.x-13,y:sy(s.y)-11,width:26,height:22,state:s.state})),
+  kingY:round(king.y,2),
+  shelfBox:(()=>{const s=shelfAhead();return s?{x:X_LO,y:sy(s.y)-8,width:X_HI-X_LO,height:16,gapX:s.gapX,gapW:s.gapW}:null;})()});
+let fixtureHold=false;
+function visualPrime(zone){
+  worldSeed=42437;state='run';endT=0;outcome='';
+  ball=makeBall(80,(zone*ZONE_BLOCKS+5)*BLOCK+60);
+  lastBlock=currentBlock();lastZone=zone;
+  items=[];cars=[];sweepers=[];stuck=[];texts=[];marks=[];shelfDone=new Set();
+  feedback.length=0;goodPulse=0;badPulse=0;
+  genBlock=currentBlock()-1;carGenBlock=currentBlock()-1;sweeperSerial=0;itemSerial=0;
+  plan=null;planAt=-1e9;visualIntent=null;
+  lastBumpFrame=-1e9;pickupsSinceBump=0;streak=0;lastPickupFrame=-1e9;chainAt=-1e9;chainCount=0;
+  rainCaughtAt=-1e9;rainCaughtRun=0;milestoneMask=0;
+  ball.intent={steer:0,throttle:1,brake:false,tuck:false,dash:false,targetX:80,tactic:'ROLL OUT'};
+  Object.assign(act,{phase:'calm',type:'magnet',warnAt:runFrame+99999,landAt:runFrame+100240,endAt:runFrame+100940,index:0,notes:[],lastSweeper:0});
+  king.y=-90;king.line='';king.lineT=0;king.sayT=0;
+  ensureItems();ensureCars();
+}
+const setD=d=>{ball.d=d;ball.bulk=Math.max(0,d*d-START_D*START_D);};
+const fItem=(kind,x,dy)=>{const i=makeItem(kind,x,ball.y+dy);items.push(i);return i;};
+const fCar=(kind,x,dy)=>{const c=makeCar(kind,x,ball.y+dy,currentBlock());cars.push(c);return c;};
+const fSweeper=(x,dy,st,stT)=>{const s=makeSweeper();s.x=x;s.y=ball.y+dy;s.state=st;s.stateT=stT||0;sweepers.push(s);return s;};
+globalThis.__starRollerSetVisualBeat=name=>{
+  if(name==='opening'){visualPrime(0);
+    visualIntent={steer:0,throttle:1,brake:false,tuck:false,dash:false,targetX:80,tactic:'ROLL OUT'};}
+  else if(name==='first-feast'){visualPrime(0);setD(8);
+    for(let k=0;k<5;k++)fItem(['crumb','pea','seed','crumb','berry'][k],72+k*4,10+k*6);
+    fItem('dice',92,44);fItem('block',62,62);
+    visualIntent={steer:-.1,throttle:1,brake:false,tuck:false,dash:false,targetX:76,tactic:'FEAST THE LANE'};}
+  else if(name==='toy-milestone'){visualPrime(0);setD(10.4);stepMilestones();
+    fItem('marble',72,26);fItem('ball8',92,44);fItem('dice',60,66);
+    visualIntent={steer:-.15,throttle:1,brake:false,tuck:false,dash:false,targetX:74,tactic:'HERD THE BUFFET'};}
+  else if(name==='garden-pets'){visualPrime(1);setD(16);
+    fItem('snail',86,40);fItem('beetle',62,66);fItem('frog',108,92);fItem('snail',98,112);
+    visualIntent={steer:.1,throttle:1,brake:false,tuck:false,dash:false,targetX:84,tactic:'CHASE THE SNAIL'};}
+  else if(name==='bump'){visualPrime(2);setD(24);
+    stuck.push({a:.4,rr:.8,kind:'dice',size:6,cls:1},{a:2.2,rr:.75,kind:'pea',size:3,cls:0},{a:4.4,rr:.7,kind:'block',size:8,cls:1});
+    const f=fItem('stool',84,26);bump(f,f.x,f.y,true);
+    visualIntent={steer:-.2,throttle:.8,brake:false,tuck:false,dash:false,targetX:70,tactic:'BRACE FOR THE LEDGE'};}
+  else if(name==='magnet-warn'){visualPrime(2);setD(30);
+    act.phase='warn';act.type='magnet';act.landAt=runFrame+180;act.endAt=act.landAt+600;
+    spawnRain(false);spawnRain(false);spawnRain(false);
+    const r=items[items.length-1];if(r&&r.state==='rain')r.y=ball.y+120;
+    visualIntent={steer:0,throttle:1,brake:false,tuck:false,dash:false,targetX:80,tactic:'READ THE RAIN'};}
+  else if(name==='magnet-land'){visualPrime(2);setD(34);
+    act.phase='live';act.type='magnet';act.endAt=runFrame+500;
+    spawnRain(true);
+    let k=0;for(const i of items)if(i.state==='rain'&&k++<6){i.y=i.landY;i.state='loose';}
+    visualIntent={steer:.1,throttle:1,brake:false,tuck:false,dash:false,targetX:84,tactic:'RIDE THE RAIN'};}
+  else if(name==='king-warn'){visualPrime(3);setD(44);
+    act.phase='warn';act.type='king';act.landAt=runFrame+40;act.endAt=act.landAt+900;king.y=-46;
+    fItem('crab',70,60);fItem('gull',96,90);
+    visualIntent={steer:0,throttle:1,brake:false,tuck:false,dash:false,targetX:80,tactic:'ROYAL INSPECTION'};}
+  else if(name==='king-live'){visualPrime(3);setD(48);
+    act.phase='live';act.type='king';act.endAt=runFrame+700;king.y=40;
+    fItem('barrel',76,40);fItem('crateHb',96,70);
+    visualIntent={steer:.1,throttle:1,brake:false,tuck:false,dash:false,targetX:82,tactic:'BASK IN ROYALTY'};}
+  else if(name==='street'){visualPrime(2);setD(52);
+    fCar('taxi',104,90);fCar('car',56,140);fItem('crateSt',80,50);fItem('hydrantS',40,80);
+    visualIntent={steer:.12,throttle:1,brake:false,tuck:false,dash:false,targetX:86,tactic:'EAT THE CAR'};}
+  else if(name==='harbor'){visualPrime(3);setD(72);
+    fItem('barrel',64,44);fItem('crateHb',92,80);fItem('boat',118,150);fCar('scooter',48,110);
+    visualIntent={steer:-.1,throttle:1,brake:false,tuck:false,dash:false,targetX:72,tactic:'HERD THE BUFFET'};}
+  else if(name==='sweeper-chase'){visualPrime(2);setD(40);
+    fSweeper(64,34,'windup',10);
+    visualIntent={steer:.4,throttle:1,brake:false,tuck:false,dash:true,targetX:96,tactic:'DODGE THE SWEEPER'};}
+  else if(name==='orbit'){visualPrime(4);setD(130);
+    fItem('satellite',70,60);fItem('asteroid',112,120);fItem('panel',88,36);fCar('pod',52,90);
+    visualIntent={steer:-.1,throttle:1,brake:false,tuck:false,dash:false,targetX:72,tactic:'STAR PUSH'};}
+  else if(name==='star-finale'){visualPrime(4);setD(201);stats.bulk=201;
+    stats.pickups=246;stats.milestones=5;stats.bumps=14;stats.sweeperHits=2;stats.sweepersEaten=1;
+    finishRun(true);
+    visualIntent={steer:0,throttle:.6,brake:false,tuck:false,dash:false,targetX:80,tactic:'SAVOR THE STAR'};}
+  else return false;
+  return true;
+};
+globalThis.__starRollerPlannerFixture=()=>{const before=globalThis.__starRollerSignature(),a=buildRoutePlan(),
+  mid=globalThis.__starRollerSignature(),b=buildRoutePlan(),after=globalThis.__starRollerSignature();
+  return{pure:before===mid&&mid===after,repeat:JSON.stringify(a)===JSON.stringify(b),plan:a,finite:allFinite()};};
+globalThis.__starRollerActFixture=type=>{resetRun(true);ball.x=80;ball.y=5*BLOCK+40;lastBlock=currentBlock();
+  genBlock=currentBlock()-1;carGenBlock=currentBlock()-1;items=[];cars=[];ensureItems();ensureCars();
+  fItem('snail',70,60);fItem('beetle',96,90);fSweeper(64,120,'roam',0);
+  Object.assign(act,{phase:'calm',type:type||'magnet',warnAt:runFrame+1,landAt:runFrame+241,
+    endAt:runFrame+1141,index:type==='king'?1:0,notes:[],lastSweeper:0});
+  plan=null;planAt=-1e9;return globalThis.__starRollerProbe();};
+globalThis.__starRollerManual=()=>({playing:playing(),x:ball.x,y:ball.y,intent:ball.intent&&Object.assign({},ball.intent)});
+globalThis.__starRollerIntentSchemas=()=>{const h=humanIntent(),b=rawBotIntent();return{human:h,bot:b,humanKeys:Object.keys(h).sort(),botKeys:Object.keys(b).sort()};};
+globalThis.__starRollerAdmireFixture=()=>{const old=pres;pres={cue:{id:'fixture'},t:1,holdWorld:false,physicsEvery:1,admire:true};
+  delete globalThis.__NO_ADMIRE;const a=rawBotIntent();globalThis.__NO_ADMIRE=1;const b=rawBotIntent();delete globalThis.__NO_ADMIRE;pres=old;
+  return{admired:a,gated:b};};
+globalThis.__starRollerNextRandom=()=>E.random();
+// Motion contract (evals/motion.js): the watched actors are the katamari and
+// every live sweeper. emote covers exactly the authored pause: the stunned
+// sweeper's dizzy-spark recovery. __NO_EMOTE strips art and flag together.
+globalThis.__motionProbe=()=>{const on=typeof globalThis.__NO_EMOTE==='undefined';
+  return{finite:allFinite(),actors:[
+    {id:'ball',x:ball.x,y:ball.y,emote:false},
+    ...sweepers.map(s=>({id:'sweeper-'+s.id,x:s.x,y:s.y,emote:on&&s.state==='stunned'}))
+  ]};};
+globalThis.__soakProbe=()=>({sig:[Math.round(ball.x*10),Math.round(ball.y*10),Math.round(ball.speed*10),
+    Math.round(ball.d*10),sweepers.reduce((n,s)=>n+Math.round(s.x+s.y),0),cars.reduce((n,t)=>n+Math.round(t.x+t.y),0)].join('|'),
+  events:eventSerial,progress:progressSerial,finite:allFinite()});
+
+initSession('star-roller',[["ARROWS","STEER · PUSH"],["SPACE / X","DASH"],["Z / SHIFT","TUCK"],["ESC","AUTOPILOT"]]);
+resetRun(true);start(()=>step(),()=>render());
+</script>
+</html>

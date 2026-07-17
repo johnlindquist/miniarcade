@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "game": "sky-reign",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "8c2f6f3ed0fd41d5e050ce87e340990b8a5b81469babc15d788848793558ff84",
+  "reviewedAt": "2026-07-16",
+  "reviewer": "Kimi native-size reference review (SKY REIGN commission: full 14-beat montage at 160x360 against MACHINE HUNT and BLOCK MINE, plus native crops of the opening flight, lock sweep, homing volley, sunken ruins, sandstorm warning, wyrm fight, phase break, ash fields, and gate finale cells, and the rendered 30s clip)",
+  "renderReceipt": {
+    "seed": "0x5e100001",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 5424429,
+    "sha256": "6dec5b5b60003198c69cd83fe6d46c544fc3034f295d7519ac00ca2b2338e88f",
+    "command": "node render/render.js sky-reign 30 .artifacts/visual/sky-reign/sky-reign-30s.mp4 --seed 0x5e100001 --probe --fps 30"
+  },
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The dragon is a constructed ~26px craft at the reference scale: swept gold wing membranes with finger struts that beat, a horned head, a rider with a cyan visor, and honest banking that tracks actual lateral travel through the shared integrator (zero wrong-way/crab violations in the behavior suite), plus a chest gem that brightens as the lock sweep charges. The four wing kinds read at a glance — VYR red darts, MANTA green sine-gliders, WASP yellow needles with blur wings, SPIRE blue gunships — each with a windup bolt-chamber glow ON the shooter before it fires. The carrier wyrm is a segmented boss: horn crown, armored thorax, sail wings, and staged glowing weak points (engines / wing cannons / core) with dead stages smoking behind it. Turrets track the dragon with real barrel angles and muzzle-glow tells, and kills spin foes out under dizzy stun sparks."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The five biomes are built, not palette-swapped, and the corridor is a QUIET stage for them: DUNE SEA rolls three-tone dune ridges with mesas, thorn skeletons and rare oases, CLOUD REEF drifts a layered cloud sea with reef islets, stone needles and beacon lights, SUNKEN RUINS drowns column complexes, statue heads, kelp and plaza seams under broken wave tiers, ASH FIELDS cracks ember fissures and lava pools between rim-lit basalt plates and obsidian spires, THE GATE threads concentric ring arcs, glyph plates and light pillars. The SANDSTORM FRONT arrives as a physical wall of turbulent billow bands with a lightning fork inside, and the storm itself is rolling crested billows plus wind streaks. Long strata seams, two-tone sector fields and milled micro-banding give the plane real material without a speckle of noise (the .010 ceilings fail the measured busy build at 2.2-2.5x)."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Across the fourteen-beat sheet the terrain grammar, side silhouettes, material identity, hazards and composition change per biome — dune ridges and mesas, cloud decks and islets, drowned masonry, ember basalt, gate rings — with the two act types re-skinning the corridor honestly (a dust-wall front with crosswind in the desert, a staged carrier duel at the gate). The executable structure-distance gate holds across all five biome pairs (.46..54)."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned dragon and wyrm bursts pass their motion floors; lock ticks land as bracket reticles with charge pips ON targets; the release throws four homing missiles with gold trails that wipe formations with a gold crossburst decal; bolts weave past with mint dodge streaks; the windup glow telegraphs every shot before it leaves; the dust wall physically arrives during the exact 240f warning; the wyrm's two-wave sweep fans the dragon's lane; stage breaks stagger the carrier under ENGINES BROKEN text; and the gate finale drops confetti over a THE GATE card while the dragon keeps soaring. The measured payoff-diff crops (same-sim __NO_PAYOFF_FX twins) confirm the launch glow, kill bursts, and stage-break explosion land on the actors."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Intent reads from the actors alone: honest banking tracks travel, the windup chamber glow is the incoming-fire tell, lock reticles live ON locked enemies (diegetic, never projected paths), the sweep's rear-up glow warns before the fan, and every good/bad beat is visibly tagged — cyan lock flashes and gold crossbursts on locks/volley kills, mint streaks on dodges, gold explosions on stage breaks, coral scorch and edge pulse on hits taken, shield-down and wyrm wounds. The executable feedback-legibility suite sampled 59 beats across 16 categories, all palette-separated at the event location, thinnest 24px. The dragon's own numbers live beside it: shield, hull, lock pips and the boss stage bar sit in a compact bottom cluster within 80px of the dragon (pinned by an executable status-near-dragon gate), with only the identity strip, tactic and flight progress at the top. All of it reads at native size with ZERO drawn guidelines — opposite forced route plans render byte-identical at five planning beats."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Dusk-desert ambers, reef teal, drowned jade, ember orange and gate indigo stay one world: gold means won, coral means hurt, cyan means charged. The HUD, warning plates, payoff language, personas (LANCE/VEIL/GALE) and biome banners read as one SKY REIGN — and the quiet, banded stage makes the dragon, the pack and the volleys read first, exactly like the references."
+    }
+  },
+  "guidelineOverlays": {
+    "confirmedAbsent": true,
+    "note": "Checked all fourteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The lock reticles and charge pips ON locked targets, the windup chamber glows ON shooters, the warning plates and the physical dust wall are diegetic world telegraphs. Executable pixel gates (opposite forced route plans at five beats) render identically, and the banned overlay primitives are absent from source."
+  },
+  "reviewIdentitySha256": "3a77c57335d4164144d6a15cb26236b8afcefd7c72b6b5659a9631a68ab38044",
+  "seed": "0x5e100001",
+  "checkpoints": [
+    "opening@12",
+    "lock-sweep@12",
+    "volley@8",
+    "volley-kill@32",
+    "dodge@13",
+    "reef@12",
+    "ruins@12",
+    "storm-warn@12",
+    "storm-live@12",
+    "wyrm-warn@12",
+    "wyrm-fight@12",
+    "phase-break@90",
+    "ash@12",
+    "gate@12"
+  ],
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true
+}

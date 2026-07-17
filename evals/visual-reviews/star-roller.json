@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "game": "star-roller",
+  "verdict": "pass",
+  "references": [
+    "horizon",
+    "blockmine"
+  ],
+  "montageSha256": "f2c002322f3065920cc24ea0001b5bfcdd4214c45ca256ebac9466f6cd1892a7",
+  "reviewedAt": "2026-07-16",
+  "reviewer": "Kimi native-size reference review (14-beat montage inspected at native 160x360 against MACHINE HUNT and BLOCK MINE rows, plus full-fidelity native crops of the opening, first feast, toy class, magnet land, king warn, king live, street, harbor, sweeper windup, orbit, and star finale cells, the isolated actor renders, and the rendered 30s clip)",
+  "renderReceipt": {
+    "seed": "0x57a00001",
+    "seconds": 30,
+    "fps": 30,
+    "codec": "h264",
+    "dimensions": "320x720",
+    "bytes": 5534828,
+    "sha256": "bbd4fc9f838a81567baa073c42c29ff477f2e7bee5f44651b406908698d5151b",
+    "command": "node render/render.js star-roller 30 .artifacts/visual/star-roller/star-roller-30s.mp4 --seed 0x57a00001 --probe --fps 30"
+  },
+  "categories": {
+    "characterCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The katamari is a constructed actor, not a dot: class-colored core (cream bits -> gold toys -> mint pets -> orange furniture -> cyan vehicles -> royal structures) with a dark outline that pops off every floor, permanent dimples for texture before the first pickup, and every stuck pickup riding the rim as a knob that sells the spin — verified in the toy-class, magnet-land, and orbit crops. The tilt is honest lean from the shared integrator (atan2(vx,speed) with yaw inertia; zero wrong-way/crab violations in the behavior suite). The ROYAL SWEEPER is a readable enemy: dark disc, spinning side brush, state-colored LED (steel patrol, coral hunt, gold windup flare, visible in the sweeper-windup cell), lunge streaks, and dizzy stun sparks when it clanks a shelf. Pets have two-frame gaits and species silhouettes (snail spiral, beetle dome, frog, mouse, crab, gull), vehicles are width-dominant commuters with headlights, and the King is a crowned brow with tracking pupils and a mustache who physically slides down from the top edge, captured mid-descent in the king-warn cell and fully present with ROYALTY x3 beams in king-live."
+    },
+    "environmentCraft": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "The five zones are built, not palette-swapped: KITCHEN FLOOR is warm checker tile with grout, scuff marks, flour patches, and counter fronts with door seams and plate stacks; GARDEN rolls two-tone mow stripes, soil beds with flower rows, fence posts and hedges; MAIN STREET lays weathered asphalt with tone bands, lane paint, crosswalks, manhole rims, tar seams, curbs, sidewalk joints, parked silhouettes, hydrants, lamp pools and a MAIN ST banner; HARBOR runs dock planks with seams and nail dots, open water with scrolling swells, a moored sailboat, bollards and crate stacks; ORBIT TIDE fields hashed stars, nebula bands, planet arcs, and satellite debris. Shelves span the corridor as real furniture with worn gold-and-ink hazard trim at the gap, each zone closes with its own haze band, and the quiet-corridor speckle ceilings hold (calm floors .0006-.0042 vs a deliberate gravel build that fails at ~1.9x)."
+    },
+    "levelVariety": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Across the fourteen-beat sheet the floor grammar, side silhouettes, material identity, item tables, hazards and composition change per zone — checker diner, striped lawn, asphalt commute, plank-and-water docks, open starfield — and the executable structure-distance gate holds across all five zone pairs (median .557, min .489). Zone identity is honest about content too: kitchen feeds bits and toys with mice underfoot, garden herds critters, street mixes furniture with live traffic, harbor stacks crates and boats, orbit is where satellites, rockets and asteroids finally dwarf you."
+    },
+    "animationImpact": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Aligned bursts pass their motion floors (katamari .378 median / sweeper .220 median changed fraction). The ball spins and tilts with travel, knobs orbiting visibly; pickups stick with dust and a burst and the ball visibly swells; milestones ring and pulse; the bump wobbles with squash and scatters pieces backward off the rim; the sweeper flares its brush in the windup before the lunge; the magnet shower falls from a swirling portal and lands in lane clusters the ball feasts through; the King's descent slides physically over the full 240-frame warning; and the finale drops confetti over the A STAR IS BORN card while the royal-purple katamari keeps rolling its lap. The measured payoff-diff crops against same-sim __NO_PAYOFF_FX twins confirm the milestone ring, the bump crack, and the finale confetti land on the ball."
+    },
+    "readability": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Intent reads from the world alone: the camera zooms with growth so pickable-vs-oversized is a relative-size read at a glance, shelf gaps carry their own hazard trim, the sweeper's spin-up is the dodge window, and the portal, the falling heralds, and the King's descending face are physical telegraphs — never overlays (opposite forced route plans render byte-identical at five planning beats; banned overlay primitives are absent from source). Every good/bad beat is palette-tagged: gold/mint/cyan pickups, chains, streaks, milestones, threads, rain harvests and the star; coral bumps, scatter-offs, sweeps, shelf hits and hazard hits, all confirmed by the executable feedback-legibility suite (64 sampled beats, all palette-separated at the event location, thinnest 17px). The player's own numbers — size readout, class pips, time, streak — live in a compact cluster beside the ball at the bottom (pinned by the status-near-ball gate), with only identity, tactic, and the 2m progress bar at the top."
+    },
+    "artDirectionCohesion": {
+      "meetsMachineHunt": true,
+      "meetsBlockMine": true,
+      "note": "Warm diner tile, garden green, night-street asphalt, dock-brown planks, and indigo orbit stay one authored world: the same royal fiction (the King's portal, his face, his authored commentary, his sweepers), the same payoff language (gold means grown, coral means pieces lost, mint means threaded), the same class-colored progression on the ball itself, and one HUD system. The strip reads as one cosmos from kitchen floor to orbit tide."
+    }
+  },
+  "guidelineOverlays": {
+    "confirmedAbsent": true,
+    "note": "Checked all fourteen sampled beats at native size: no route lines/dots, arrows, target highlights, pickup halos, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The shelf gap hazard trim, the royal portal, the falling rain items, the King's descending face, and the sweeper's windup flare are physical world telegraphs and stay. Executable pixel gates (opposite forced route plans at five beats) render byte-identical, and the banned overlay primitives are absent from the game source."
+  },
+  "reviewIdentitySha256": "88d48539d726348aeda3ad6b414702b3bbc7b240150a925a36d1237dce399d78",
+  "seed": "0x57a00001",
+  "checkpoints": [
+    "opening@12",
+    "first-feast@12",
+    "toy-milestone@8",
+    "garden-pets@12",
+    "bump@8",
+    "magnet-warn@12",
+    "magnet-land@12",
+    "king-warn@12",
+    "king-live@12",
+    "street@12",
+    "harbor@12",
+    "sweeper-chase@8",
+    "orbit@12",
+    "star-finale@12"
+  ],
+  "reviewPlatform": "darwin",
+  "allowCrossPlatformRasterization": true
+}
