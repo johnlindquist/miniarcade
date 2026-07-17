@@ -1349,3 +1349,21 @@ chevrons, wet reflections, and brighter dusk striations — the quiet corridor
 finals: road speckle .0026-.0048, sides .0107-.0214, edge median .0282 over
 the .0280 reference floor, luma .1592 over .1499, and worst contact overlap 2
 pairs for 8 frames across every probed seed.
+
+### ASHEN RAGE owner round 4: drastic simplification without losing the floors (2026-07-16)
+
+The owner called the road surface and roadside out directly: "random things
+that move in sync with the road" and "too many blinking things — drastically
+simplify." The pass removed manholes, patchwork, shoulder posts, picket
+fences, mailboxes, the window grids, the fire escapes, the pulsing lamps, and
+the second spectator; houses went to one per lot with a single lit window.
+The floors then collapsed from below (edge .022 < .0280 reference median),
+which is the real lesson of the round: detail has to come back as MATERIAL
+and INFRASTRUCTURE, not items. Milled two-tone asphalt cord, brick courses,
+corrugation, boardwalk planks, and per-district linear infrastructure —
+downtown tram rails with ties, suburb sidewalk joints, farm wagon ruts,
+ironworks rail sidings, harbor dock rail — lifted edge back to .0289 while
+the speckle ceilings held (road .004-.006, sides .007-.010). One-pixel
+vertical lines are speckle by construction: the tram rail started at 1px and
+the quiet gate caught it; 2px minimum for any linear feature. Blinking is now
+limited to payoff FX and the neon spill; lamps burn steady.
