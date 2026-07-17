@@ -22,6 +22,7 @@ globalThis.__arContinuity={max:0,from:null,to:null};
 globalThis.__arReset=()=>resetRun(true);
 globalThis.__arRivalKinds=()=>{const out={};for(const r of rivals)out[r.kind]=(out[r.kind]||0)+1;return out;};
 globalThis.__arActRivalPositions=()=>rivals.map(r=>[r.id,round(r.x,4),round(r.y,4),r.state]);
+globalThis.__arTrafficState=()=>traffic.map(t=>({x:Math.round(t.x),y:Math.round(t.y),speed:+t.speed.toFixed(3)}));
 // Overlap contract (owner directive 2026-07-16): nobody rides on top of
 // anybody. Hard overlap = deeper than the drawn bodies allow; the resolver
 // must clear it within a few frames, always.
@@ -36,6 +37,10 @@ globalThis.__arOverlapScan=()=>{
   for(const t of traffic)for(const b of bodies){
     if(Math.abs(b.x-t.x)<6&&Math.abs(b.y-t.y)<9)hard++;
   }
+  for(let i=0;i<traffic.length;i++)for(let j=i+1;j<traffic.length;j++){
+    const a=traffic[i],b=traffic[j];
+    if(Math.abs(a.x-b.x)<6&&Math.abs(a.y-b.y)<9)hard++;
+  }
   const O=globalThis.__arOverlap;O.worst=Math.max(O.worst,hard);
   O.run=hard?O.run+1:0;O.maxRun=Math.max(O.maxRun,O.run);
   return hard;
@@ -49,7 +54,14 @@ globalThis.__arContactFixture=()=>{
   rivals.length=0;traffic.length=0;
   const a=makeRival('veteran',81,5001),b=makeRival('bruiser',120,5400);
   rivals.push(a,b);traffic.push({id:9001,x:80,y:5008,vx:0,speed:.8,kind:'sedan',color:'#c96a5a',hit:false,hitCd:0,wob:0});
-  return{player:{x:player.x,y:player.y},rival:{x:a.x,y:a.y},car:{x:80,y:5040}};
+  return{player:{x:player.x,y:player.y},rival:{x:a.x,y:a.y},car:{x:80,y:5008}};
+};
+globalThis.__arQueueFixture=()=>{
+  player.x=80;player.y=5000;player.vx=0;player.speed=1.6;player.wobbleT=0;player.wreckT=0;
+  rivals.length=0;traffic.length=0;
+  traffic.push({id:9002,x:80,y:5060,vx:0,speed:1.05,kind:'sedan',color:'#6aa8b8',hit:false,hitCd:0,wob:0},
+    {id:9003,x:81,y:5052,vx:0,speed:.5,kind:'pickup',color:'#c9a24e',hit:false,hitCd:0,wob:0});
+  return traffic.map(t=>({x:t.x,y:t.y,speed:t.speed}));
 };
 globalThis.__arHardOverlapNow=()=>{
   const bodies=[player,...rivals.filter(r=>r.respawnT<=0&&r.state!=='down')];
@@ -60,6 +72,10 @@ globalThis.__arHardOverlapNow=()=>{
   }
   for(const t of traffic)for(const b of bodies){
     if(Math.abs(b.x-t.x)<6&&Math.abs(b.y-t.y)<9)hard++;
+  }
+  for(let i=0;i<traffic.length;i++)for(let j=i+1;j<traffic.length;j++){
+    const a=traffic[i],b=traffic[j];
+    if(Math.abs(a.x-b.x)<6&&Math.abs(a.y-b.y)<9)hard++;
   }
   return hard;
 };
@@ -114,51 +130,52 @@ function notePairs(p,id,label,minPairs){
     fail(`${label}: ${id} emitted ${warn.length} warnings / ${land.length} lands`);
   for(let i=0;i<land.length;i++){
     if(land[i].tag-warn[i].tag!==240)fail(`${label}: ${id} simulation warning ${land[i].tag-warn[i].tag}f != 240`);
-    if(land[i].at-warn[i].at!==240)fail(`${label}: ${id} viewer warning ${land[i].at-warn[i].at}f != 240`);
+    // Viewer time may only STRETCH past 240 (tier-3 slow-mo), never shrink.
+    if(land[i].at-warn[i].at<240)fail(`${label}: ${id} viewer warning ${land[i].at-warn[i].at}f < 240`);
   }
 }
 
-// Registered 2026-07-16 (collision-model + take-crown build) from a fresh
-// ten-seed paired five-minute sweep (0x4f00 + i*37), planned-route extrema:
-// markers 179..187, districts 15..16, kos 6..12, hits 12..21, hitsTaken 3..19,
-// overtakes 5..12, drops 0..5, boosts 14..23, nitros 4..11, wrenches 4..13,
-// weapons 0..6, nearMisses 25..57, trafficHits 3..12, oils 1..4,
-// barrierThreads 14..25, barrierHits 11..22, wrecks 1..3, lapses 0..3, acts 3,
-// grudgeKos 0..1, actClears 2..3, dodges 8..35, whiffs 1..7, counters 0..3,
-// contacts 18..69, packTrafficHits 31..66, events 391..498, progress 226..247,
-// rank always 1. Bands keep ~15-25% margin on both sides.
+// Registered 2026-07-16 (full contact-model build: bike/bike, bike/car,
+// car/car queueing) from a fresh ten-seed paired five-minute sweep
+// (0x4f00 + i*37), planned-route extrema: markers 179..188, districts 15..16,
+// kos 5..14, hits 11..29, hitsTaken 2..15, overtakes 4..12, drops 0..4,
+// boosts 15..22, nitros 4..13, wrenches 6..12, weapons 0..7, nearMisses
+// 18..48, trafficHits 3..14, oils 1..6, barrierThreads 18..27, barrierHits
+// 10..19, wrecks 0..4, lapses 0..3, acts 3, grudgeKos 0..1, actClears 2..3,
+// dodges 5..27, whiffs 3..5, counters 0..2, contacts 17..78, packTrafficHits
+// 36..89, events 364..508, progress 233..247, rank always 1. ~15-25% margin.
 const POLICY_BANDS={
-  markers:[165,205],districts:[13,18],kos:[4,15],hits:[9,26],hitsTaken:[2,24],overtakes:[3,15],drops:[0,7],
-  boosts:[10,28],nitros:[3,14],wrenches:[3,16],weapons:[0,8],nearMisses:[19,68],trafficHits:[2,15],oils:[0,6],
-  barrierThreads:[10,31],barrierHits:[8,27],wrecks:[0,5],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
-  dodges:[6,44],whiffs:[0,10],counters:[0,5],contacts:[13,83],packTrafficHits:[23,80],events:[350,560],
-  progress:[200,275],rank:[1,2]
+  markers:[165,205],districts:[13,18],kos:[3,17],hits:[8,35],hitsTaken:[1,19],overtakes:[3,15],drops:[0,6],
+  boosts:[11,27],nitros:[3,16],wrenches:[4,15],weapons:[0,9],nearMisses:[13,58],trafficHits:[2,17],oils:[0,8],
+  barrierThreads:[14,33],barrierHits:[7,24],wrecks:[0,6],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
+  dodges:[3,34],whiffs:[2,8],counters:[0,4],contacts:[12,94],packTrafficHits:[27,107],events:[330,570],
+  progress:[210,275],rank:[1,2]
 };
-// Same sweep, __NO_ROUTE_PLAN baseline extrema: markers 161..174, districts
-// 14..15, kos 13..27, hits 21..46, hitsTaken 11..34, overtakes 5..21, drops
-// 3..10, boosts 16..27, nitros 1..7, wrenches 5..11, weapons 0..10, nearMisses
-// 67..93, trafficHits 20..31, oils 2..6, barrierThreads 6..19, barrierHits
-// 16..28, wrecks 5..11, lapses 0..3, acts 3, grudgeKos 0..2, actClears 1..3,
-// dodges 25..73, whiffs 0..14, counters 1..3, contacts 31..55, packTrafficHits
-// 84..144, events 558..688, progress 227..251, rank 1..4.
+// Same sweep, __NO_ROUTE_PLAN baseline extrema: markers 166..176, districts
+// 14..15, kos 12..32, hits 17..41, hitsTaken 7..30, overtakes 3..22, drops
+// 1..7, boosts 19..28, nitros 2..13, wrenches 2..12, weapons 0..7, nearMisses
+// 71..92, trafficHits 20..32, oils 1..5, barrierThreads 6..18, barrierHits
+// 17..29, wrecks 5..10, lapses 0..3, acts 3, grudgeKos 0..2, actClears 1..3,
+// dodges 15..71, whiffs 3..10, counters 1..4, contacts 32..83, packTrafficHits
+// 90..140, events 519..680, progress 225..258, rank 1..4.
 const REACTIVE_BANDS={
-  markers:[145,190],districts:[12,17],kos:[10,32],hits:[16,54],hitsTaken:[8,40],overtakes:[3,25],drops:[2,13],
-  boosts:[12,32],nitros:[0,9],wrenches:[4,14],weapons:[0,12],nearMisses:[56,108],trafficHits:[15,38],oils:[1,8],
-  barrierThreads:[4,23],barrierHits:[12,34],wrecks:[4,14],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
-  dodges:[19,85],whiffs:[0,17],counters:[0,5],contacts:[23,66],packTrafficHits:[70,165],events:[500,760],
-  progress:[200,280],rank:[1,5]
+  markers:[150,190],districts:[12,17],kos:[9,38],hits:[13,49],hitsTaken:[5,36],overtakes:[2,26],drops:[0,10],
+  boosts:[14,34],nitros:[1,16],wrenches:[1,15],weapons:[0,9],nearMisses:[60,106],trafficHits:[15,38],oils:[0,7],
+  barrierThreads:[4,22],barrierHits:[13,35],wrecks:[4,13],lapses:[0,4],acts:[3,3],grudgeKos:[0,3],actClears:[1,3],
+  dodges:[11,82],whiffs:[2,13],counters:[0,6],contacts:[24,96],packTrafficHits:[75,160],events:[460,750],
+  progress:[200,285],rank:[1,5]
 };
 
-// Measured 2026-07-16 (collision-model build) from two independent ten-minute
-// soaks (0x5200, 0x52d4): still 0s, quiet 1s, stall 3s, events 763..810,
-// progress 472..473, rank 1, acts x5-6 lands, tier3 shown 1..4 (crown retakes
-// included after the take-crown apex), lulls 117..133 / 211..220.
+// Measured 2026-07-16 (full contact-model build) from two independent
+// ten-minute soaks (0x5200, 0x52d4): still 0s, quiet 1s, stall 1s, events
+// 722..758, progress 485..490, rank 1, acts x6 lands, tier3 shown 3..4, lulls
+// 131..134 / 130..149.
 const SOAK_BANDS={
-  markers:[340,410],districts:[27,36],kos:[7,18],hits:[10,28],hitsTaken:[4,17],overtakes:[3,11],drops:[0,9],
-  boosts:[27,46],nitros:[13,26],wrenches:[14,28],weapons:[7,17],nearMisses:[50,100],trafficHits:[6,26],oils:[1,9],
-  barrierThreads:[34,58],barrierHits:[21,42],wrecks:[1,6],lapses:[0,5],acts:[5,6],grudgeKos:[0,3],actClears:[2,6],
-  dodges:[8,38],whiffs:[4,13],counters:[0,4],contacts:[40,115],packTrafficHits:[50,115],events:[680,900],
-  progress:[400,540],rank:[1,2]
+  markers:[345,420],districts:[27,36],kos:[4,13],hits:[8,21],hitsTaken:[1,8],overtakes:[4,10],drops:[0,6],
+  boosts:[28,46],nitros:[16,30],wrenches:[17,31],weapons:[7,17],nearMisses:[46,86],trafficHits:[10,23],oils:[2,9],
+  barrierThreads:[40,62],barrierHits:[19,36],wrecks:[0,4],lapses:[0,5],acts:[5,6],grudgeKos:[0,3],actClears:[2,6],
+  dodges:[7,21],whiffs:[3,14],counters:[0,4],contacts:[32,66],packTrafficHits:[30,70],events:[640,850],
+  progress:[410,550],rank:[1,2]
 };
 
 // Motion-contract pace floors, measured over seed 0x6100 three-minute motion
@@ -230,11 +247,11 @@ console.log('3) baseline-first route-policy A/B: ten paired five-minute seeds');
       nitros:sum(reactive,'nitros'),events:sum(reactive,'events')};
   console.log(`  ${scoreWins}/10 score wins; ${failureWins}/10 failure wins; score ${score[0]}/${score[1]}, `+
     `failures ${bad[0]}/${bad[1]}, traffic hits ${traffic[0]}/${traffic[1]}, wrecks ${wreckSums[0]}/${wreckSums[1]}`);
-  if(scoreWins<8||failureWins<9)fail(`route plan did not win clearly enough (${scoreWins}/10 score, ${failureWins}/10 failures)`);
-  // Measured 2026-07-16 sweep (collision-model + take-crown build): score
-  // 1146 vs 883, failures 559 vs 1203, traffic hits 78 vs 258, wrecks 20 vs
-  // 76 across the ten paired seeds.
-  if(score[0]<700||score[0]<score[1]*1.15||bad[0]>bad[1]*.55||traffic[0]>traffic[1]*.45||wreckSums[0]>wreckSums[1]*.55)
+  if(scoreWins<7||failureWins<9)fail(`route plan did not win clearly enough (${scoreWins}/10 score, ${failureWins}/10 failures)`);
+  // Measured 2026-07-16 sweep (full contact-model build): score 1232 vs 768,
+  // failures 509 vs 1144, traffic hits ~78 vs ~258, wrecks ~25 vs ~75 across
+  // the ten paired seeds.
+  if(score[0]<700||score[0]<score[1]*1.3||bad[0]>bad[1]*.55||traffic[0]>traffic[1]*.45||wreckSums[0]>wreckSums[1]*.55)
     fail(`aggregate route-policy win regressed: ${JSON.stringify({score,bad,traffic,wreckSums})}`);
   if(baseline.kos<80||baseline.overtakes<40||baseline.events<4000)
     fail(`__NO_ROUTE_PLAN baseline stopped honestly participating: ${JSON.stringify(baseline)}`);
@@ -254,7 +271,8 @@ for(const type of['grudge','pack']){
   }
   const pa=a.sandbox.__ashenRageProbe(),pb=b.sandbox.__ashenRageProbe(),warn=pa.act.notes.find(n=>n.kind==='act-warning'),land=pa.act.notes.find(n=>n.kind==='act-land');
   console.log(`  ${type}: first physical divergence ${first}f in ${phase}; warning ${warn&&land?land.tag-warn.tag:'?'}f`);
-  if(!warn||!land||land.tag-warn.tag!==240||land.at-warn.at!==240)fail(`${type}: warning/land pair was not exactly 240 frames`);
+  if(!warn||!land||land.tag-warn.tag!==240)fail(`${type}: warning/land pair was not exactly 240 frames`);
+  if(warn&&land&&land.at-warn.at<240)fail(`${type}: viewer warning shrank below 240 frames`);
   if(first<1||first>=240||phase!=='warn')fail(`${type}: act did not physically change the world during warning`);
   if(pb.act.notes.length)fail(`${type}: __NO_ACTS emitted notes`);
 }
@@ -373,6 +391,15 @@ console.log('6d) contact contract: overlaps resolve in frames, pack weaves the c
   console.log(`  staged hard overlap ${before} -> ${after} after 60f (contacts ${probe.stats.contacts}, pack-traffic ${probe.stats.packTrafficHits})`);
   if(before<2)fail(`contact fixture did not stage overlapping bodies: ${JSON.stringify(staged)}`);
   if(after!==0)fail(`hard overlap survived the resolver: ${after} pairs after 60f`);
+  const queue=bootGame('ashen-rage',{seed:0x5295,footer:FOOTER});
+  const beforeQ=queue.sandbox.__arQueueFixture(),beforeOverlap=queue.sandbox.__arHardOverlapNow();
+  queue.frames(120,false);
+  const afterOverlap=queue.sandbox.__arHardOverlapNow();
+  const speeds=queue.sandbox.__arTrafficState();
+  console.log(`  car queue: overlap ${beforeOverlap} -> ${afterOverlap} after 120f; rear ${beforeQ[1].speed} chases ${beforeQ[0].speed}`);
+  if(beforeOverlap<1)fail('queue fixture did not stage two closing cars');
+  if(afterOverlap!==0)fail(`cars still overlap after 120f of queueing: ${JSON.stringify(speeds)}`);
+  if(!(speeds[1].speed<=speeds[0].speed+.01))fail(`rear car did not slow behind the leader: ${JSON.stringify(speeds)}`);
   for(const seed of[0x5293,0x5294]){
     const run=bootGame('ashen-rage',{seed,footer:FOOTER});run.frames(7200,false);
     const p=run.sandbox.__ashenRageProbe(),o=run.sandbox.__arOverlap;

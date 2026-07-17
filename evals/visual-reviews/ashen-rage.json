@@ -6,7 +6,7 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "6d309c97884c3fbb9dacb2b2b1c294303dbd6634f7800b8c7ba153e01538d101",
+  "montageSha256": "7eb9c988f5fd259fe66162b6ed0fc61341f3b47242fdf08de41e24a901cd127a",
   "reviewedAt": "2026-07-16",
   "reviewer": "Kimi native-size reference review (owner-feedback round 2: full contact model — bike/bike separation, pack traffic anticipation and wobbles, player-car shove — calm-road pass with speckle ceilings, dusk striations, wet-neon spill, asphalt tone bands; keyboard chord coverage in eval; 14-beat montage re-inspected at 160x360 against both references plus native crops of the brawl, swing, warning, and podium cells and the rendered 30s clip)",
   "renderReceipt": {
@@ -55,7 +55,7 @@
     "confirmedAbsent": true,
     "note": "Checked all fourteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The grudge stake-out rival, the pack escort slots, the warning strobes and the broadcast plate are physical world telegraphs; skid-free taillight and headlight pools are world light from visible bikes. Executable pixel gates (opposite forced route plans at five beats) render identically, and the banned overlay primitives are absent from source."
   },
-  "reviewIdentitySha256": "5ea582b74f1ee6fa239fe2f39d5495b81930f3fd3b8824a818bf9e06debf75f9",
+  "reviewIdentitySha256": "e14257ccdc759699f53dcfd8450f503d07dabe5d6f3ff3a7d70c9c1e513f0c7a",
   "seed": "0xa54e0001",
   "checkpoints": [
     "opening@12",

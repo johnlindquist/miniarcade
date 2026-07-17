@@ -1330,3 +1330,22 @@ poll lags; static aftermath decals (coral skid-zigzag, gold swoosh) land the
 signature color on the event spot deterministically. Tone-band and striation
 contrast that reads as atmosphere also moves aligned-burst backgrounds — cap
 their scroll delta or the actor animation floors drown in the stage.
+
+### ASHEN RAGE owner round 3: car/car queueing, edge discipline, final calm (2026-07-16)
+
+The owner screenshot caught two honest misses. (1) Traffic cars still passed
+through EACH OTHER — the contact model covered bike/bike and bike/car but not
+car/car. Added the commute queue: a faster car catches the leader, eases off,
+and holds station; close pairs separate laterally; leaned-on cars brake and
+drift so the rider always gets by. The overlap contract now scans
+traffic-traffic pairs too, and a queue fixture proves the rear car slows
+behind the leader with zero overlap. A sign error in the first separation
+attempt (pushing cars together) got caught by exactly that contract. (2) The
+edges were still noisy at 2x: dimmed the curb rails, halved the downtown
+window grid, dropped the headlight splash that read as a muddy blob, and
+recovered the lost edge honestly with crosswalk bars, stronger dashes and
+chevrons, wet reflections, and brighter dusk striations — the quiet corridor
+(speckle ceilings + reference-median floors) holds on both sides. Measured
+finals: road speckle .0026-.0048, sides .0107-.0214, edge median .0282 over
+the .0280 reference floor, luma .1592 over .1499, and worst contact overlap 2
+pairs for 8 frames across every probed seed.

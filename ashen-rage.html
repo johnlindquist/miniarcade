@@ -615,7 +615,24 @@ function stepFeatures(){
   while(scars.length&&runFrame-scars[0].f>900)scars.shift();
 }
 function stepTraffic(){
+  // Traffic queues: a faster car catches the one ahead in its lane, eases
+  // off, and holds station — cars never overlap. Lane discipline stays loose
+  // (a little drift) so the commute reads alive, not railed.
   for(const t of traffic){
+    for(const o of traffic){
+      if(o===t||o.y<=t.y)continue;
+      const dx=o.x-t.x,dy=o.y-t.y;
+      if(Math.abs(dx)<9&&dy>0&&dy<26){
+        if(t.speed>o.speed)t.speed+=(o.speed-t.speed)*.08;
+        const dir=Math.sign(t.x-o.x)||(t.x<80?-1:1);
+        t.x=clamp(t.x+dir*.05,12,148);
+      }
+      if(Math.abs(dx)<7&&dy>0&&dy<10){
+        const dir=Math.sign(t.x-o.x)||(t.x<80?-1:1),push=(7-Math.abs(dx))*.5;
+        t.x=clamp(t.x+dir*push,12,148);o.x=clamp(o.x-dir*push,12,148);
+        t.speed=Math.min(t.speed,o.speed+.05);
+      }
+    }
     t.y+=t.speed;
     if(t.wob>0){t.wob--;t.x+=Math.sin(showFrame*.4+t.id)*.5;}
     if(t.hitCd>0)t.hitCd--;
@@ -679,6 +696,7 @@ function resolveContacts(){
           t.wob=Math.max(t.wob,50);t.hit=true;
           stats.packTrafficHits++;markEvent(5);fxAt(r.x,r.y,7,t.color,1.4);
         }
+        t.speed=Math.max(.3,t.speed*.997); // leaned-on cars yield to the pack too
       }
     }
     // the player physically separates from cars every frame too; the damage
@@ -689,6 +707,8 @@ function resolveContacts(){
         const dir=Math.sign(dx)||(player.y<t.y?-1:1),push=(7.5-Math.abs(dx))*.5+0.05;
         player.x=clamp(player.x+dir*push*.7,15,145);t.x=clamp(t.x-dir*push*.3,12,148);
         player.vx+=dir*.12;player.contactT=10;
+        // A car being leaned on brakes and drifts — the rider always gets by.
+        t.speed=Math.max(.3,t.speed*.995);
       }
     }
   }
@@ -708,7 +728,9 @@ function stepPosition(){
       marks.push({kind:'pass',x:player.x,y:player.y,f:runFrame});if(marks.length>40)marks.shift();
       say('P'+(rank-1)+' · TAKE IT',GOLD,player.y+46,56);}
     if(active&&!wasAhead&&r.ahead&&player.wreckT<=0&&player.invulnT<=0){stats.drops++;markEvent(6);
-      cue('bad','dropped',player.x,player.y,.35);fxAt(player.x,player.y,8,CORAL,1.4);say('LOST P'+(rank+1),CORAL,player.y+40,44);}
+      cue('bad','dropped',player.x,player.y,.35);fxAt(player.x,player.y,8,CORAL,1.4);
+      marks.push({kind:'drop',x:player.x,y:player.y,f:runFrame});if(marks.length>40)marks.shift();
+      say('LOST P'+(rank+1),CORAL,player.y+40,44);}
   }
   player.rank=rank;
   // Taking the lead is the race's apex: P1 claimed from the pack, on screen.
@@ -870,7 +892,7 @@ function drawSkyline(p){
 function drawRoadBase(p){
   rect(0,28,W,H-28,mix(p.walk,INK,.18));rect(ROAD_L,28,ROAD_R-ROAD_L,H-28,mix(p.road,INK,.22));
   rect(ROAD_L-3,28,3,H-28,p.curb);rect(ROAD_R,28,3,H-28,p.curb);
-  rect(ROAD_L-1,28,1,H-28,mix(p.curb,CREAM,.5));rect(ROAD_R+2,28,1,H-28,mix(p.curb,CREAM,.5));
+  rect(ROAD_L-1,28,1,H-28,mix(p.curb,CREAM,.42));rect(ROAD_R+2,28,1,H-28,mix(p.curb,CREAM,.32));
   // Weathered asphalt tone bands alternate cool and warm so no single fill
   // owns the frame (and the quantized color share stays honest).
   let band=0;
@@ -886,11 +908,11 @@ function drawRoadBase(p){
     const x=ROAD_L+lane*(ROAD_R-ROAD_L)/3,wet=p.kind==='downtown'?.08:0;
     ctx.globalAlpha=.09+lane*.02+wet;
     rect(x,28,(ROAD_R-ROAD_L)/3,H-28,lane===1?p.light:p.accent);ctx.globalAlpha=1;}
-  for(const x of[63,97])for(let y=8+mod(Math.floor(player.y)+(x===63?0:13),x===63?26:34);y<H;y+=x===63?26:34)rect(x,y,2,x===63?10:14,mix(p.curb,CREAM,.3));
+  for(const x of[63,97])for(let y=8+mod(Math.floor(player.y)+(x===63?0:13),x===63?26:34);y<H;y+=x===63?26:34)rect(x-1,y,3,x===63?10:14,mix(p.curb,CREAM,.5));
   for(let y=4+mod(Math.floor(player.y),34);y<H;y+=34){ctx.globalAlpha=.07;rect(ROAD_L+4,y,ROAD_R-ROAD_L-8,2,p.accent);}ctx.globalAlpha=1;
   // Painted chevrons in the middle lane: one large calm mark with real edge.
   for(let y=20+mod(Math.floor(player.y),92);y<H;y+=92){
-    poly([[74,y],[80,y-6],[86,y]],mix(p.curb,CREAM,.42));poly([[74,y+8],[80,y+2],[86,y+8]],mix(p.curb,CREAM,.34));}
+    poly([[74,y],[80,y-6],[86,y]],mix(p.curb,CREAM,.55));poly([[74,y+8],[80,y+2],[86,y+8]],mix(p.curb,CREAM,.45));}
   // A little authored patchwork keeps the asphalt honest; no speckle fields.
   for(let i=0;i<6;i++){
     const y=30+mod(i*97+Math.floor(player.y),H-30),x=ROAD_L+5+hash(i,worldSeed)*(ROAD_R-ROAD_L-14),
@@ -908,13 +930,18 @@ function drawDistrictRoadDetails(p){
   if(p.kind==='downtown'){
     for(let i=0;i<3;i++){const y=50+mod(i*83+Math.floor(player.y),H-44);ctx.globalAlpha=.14;
       rect(40+i%3*28,y,16,2,i%2?p.accent:CYAN);rect(44+i%3*28,y+2,8,5,mix(i%2?p.accent:CYAN,p.road,.65));ctx.globalAlpha=1;}
+    // Crosswalks at the intersections: big worn bars with tire-worn gaps.
+    for(let y=mod(Math.floor(player.y),BLOCK)-BLOCK;y<H;y+=BLOCK){
+      if(y<34)continue;
+      for(let x=ROAD_L+5;x<ROAD_R-6;x+=15){if(hash(x,Math.floor(player.y/BLOCK))>.35)rect(x,y-3,9,6,mix(CREAM,p.curb,.35));}
+    }
     // Rain-slick asphalt: a few sign and lamp reflections waver down the
     // avenue — the downtown night reads WET without a static field of streaks.
     for(let i=0;i<8;i++){
       const x=ROAD_L+6+((hash(i*13,worldSeed)*(ROAD_R-ROAD_L-14))|0),
         y=40+mod(i*61+Math.floor(player.y),H-52),
         c=i%3===0?p.accent:i%3===1?p.light:'#ffe9b0',flick=.6+.4*Math.sin(showFrame*.09+i*2.7);
-      ctx.globalAlpha=.32*flick;rect(x,y,3,8+(i%3)*4,c);ctx.globalAlpha=1;
+      ctx.globalAlpha=.45*flick;rect(x,y,3,10+(i%3)*4,c);ctx.globalAlpha=1;
     }
   }else if(p.kind==='suburb'){
     for(let y=14+mod(Math.floor(player.y),22);y<H;y+=22){rect(ROAD_L+2,y,4,2,'#3c4a38');rect(ROAD_R-6,y+9,4,2,'#3c4a38');}
@@ -943,8 +970,8 @@ function drawRoadside(b,p){
       // fire-escape zigzags, neon door glow at the base.
       rect(x,y,w,hh,mix(p.roof,INK,.08));
       rect(side<0?x+w-2:x,y,2,hh,mix(p.roof2,CREAM,.15));
-      for(let yy=y+6;yy<y+hh-8;yy+=17){for(let xx=x+3;xx<x+w-4;xx+=7){
-        if(hash(xx+b*7,yy)>.42){rect(xx,yy,4,5,'#141824');rect(xx,yy,2,5,p.light);rect(xx+2,yy+3,2,2,mix(p.light,INK,.3));}}}
+      for(let yy=y+6;yy<y+hh-8;yy+=20){for(let xx=x+3;xx<x+w-4;xx+=8){
+        if(hash(xx+b*7,yy)>.42){rect(xx,yy,4,5,'#0a0d18');rect(xx,yy,2,5,p.light);rect(xx+2,yy+3,2,2,mix(p.light,INK,.3));}}}
       for(let yy=y+20;yy<y+hh-10;yy+=52){rect(x+2,yy,w-4,2,mix(p.roof2,INK,.2));
         line([[x+3,yy+2],[x+w-4,yy+8]],mix(p.roof2,CREAM,.2));line([[x+w-4,yy+8],[x+3,yy+14]],mix(p.roof2,CREAM,.2));}
       if(hash(b,side+worldSeed)>.25){const sy2=y+14+mod(b*side*13,52);
@@ -1156,6 +1183,8 @@ function drawMarks(){
     ctx.globalAlpha=(1-age)*.85;
     if(m.kind==='oil'){
       for(let k=0;k<4;k++)rect(m.x+(k%2?3:-4),y+2+k*4,3,2,k%2?CORAL:'#ffffff');
+    }else if(m.kind==='drop'){
+      for(let k=0;k<3;k++){const w2=9-k*2;rect(m.x-w2/2,y+6-k*4,w2,2,k===1?'#ffffff':CORAL);}
     }else{
       for(let k=0;k<3;k++){const w2=9-k*2;rect(m.x-w2/2,y-2+k*4,w2,2,k===1?'#ffffff':GOLD);}
     }
@@ -1188,7 +1217,6 @@ function drawBikeLights(){
   const pool=(x,y)=>{
     if(y<36||y>H+8)return;
     ctx.globalAlpha=.22;ctx.fillStyle='#ff8a6a';ctx.beginPath();ctx.ellipse(x,y+9,5,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
-    ctx.globalAlpha=.14;ctx.fillStyle='#fff3c4';ctx.beginPath();ctx.ellipse(x,y-15,5,10,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
   };
   if(player.wreckT<=0)pool(player.x,RIDER_Y);
   for(const r of rivals){if(r.respawnT>0||r.state==='down')continue;const y=sy(r.y);pool(r.x,y);}
@@ -1274,7 +1302,7 @@ function drawEnvironment(p){
   // band while the foreground stays ink-dark — distance fog, depth cue, and
   // the frame's bright mass in one. Long horizontal lines only: they carry
   // edge and value without a single speckle of road noise.
-  const haze=mix(p.accent,'#ffb98a',.7),hazeBright=mix(haze,CREAM,.7),hazeDim=mix(haze,'#ffb98a',.5);
+  const haze=mix(p.accent,'#ffb98a',.7),hazeBright=mix(haze,CREAM,.8),hazeDim=mix(haze,'#ffb98a',.5);
   for(let y=38;y<110;y++){const u=1-(y-38)/72;ctx.globalAlpha=.6*Math.pow(u,1.6);
     rect(0,y,W,1,(y%6<2&&u>.25)?hazeBright:hazeDim);}
   ctx.globalAlpha=1;
