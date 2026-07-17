@@ -147,6 +147,19 @@ function speckleDensity(input,crop){
 }
 const QUIET_SKY_MAX=.010,QUIET_GROUND_MAX=.010,QUIET_SIDES_MAX=.010;
 
+// Palette-presence counter for the blended land border: the transition beat
+// must show BOTH lands' feature palettes on screen at once.
+function countPalettePixels(input,crop,colors,tolerance){
+  const src=toNativeFrame(input),pal=colors.map(c=>{const v=parseInt(c.slice(1),16);return[v>>16&255,v>>8&255,v&255];});
+  let n=0;
+  for(let y=crop.y;y<crop.y+crop.height;y++)for(let x=crop.x;x<crop.x+crop.width;x++){
+    const i=(y*src.width+x)*4,r=src.rgba[i],g=src.rgba[i+1],b=src.rgba[i+2];
+    for(const[pr,pg,pb]of pal){const dr=r-pr,dg=g-pg,db=b-pb;
+      if(dr*dr+dg*dg+db*db<=tolerance*tolerance){n++;break;}}
+  }
+  return n;
+}
+
 // Drawn-pixel actor-scale gates (small-actors-big-worlds law): the game
 // isolates any probe actor through __SK_VISUAL_ONLY_SUBJECT and the caps below
 // encode the directive with a little margin — locked from measurements on the
@@ -166,7 +179,13 @@ function probeSubjects(probe,fixture){
 }
 function limitsFor(actor){
   if(actor.kind==='boss')return{maxWidth:96,maxHeight:64,label:`boss ${actor.type}`};
-  if(actor.kind==='dragon')return{maxWidth:34,maxHeight:28,label:`dragon ${actor.type}`};
+  // Dragon caps re-derived 2026-07-17 for the owner-directed dragon rebuild
+  // (articulated flap poses, horned head at -17, whip tail to +16, full-rack
+  // aura ring): measured drawn extents 24..27 wide x 31..33 tall at the
+  // sampled fixture offsets (upstroke pose); the downstroke pose spans 33px by
+  // geometry and banking rotates that to ~34-35. Old caps 34x28 -> new 38x38;
+  // the footprint share gate still holds far under 20%.
+  if(actor.kind==='dragon')return{maxWidth:38,maxHeight:38,label:`dragon ${actor.type}`};
   if(actor.kind==='turret')return{maxWidth:20,maxHeight:18,label:`turret ${actor.type}`};
   return{maxWidth:24,maxHeight:20,label:`wing ${actor.type}`};
 }
@@ -239,6 +258,14 @@ function buildCandidateEvidence(){
     volleyKill:{fixture:'volley-kill',offsets:[1,28,32,60,90]},
     volleyKillNoFx:{fixture:'volley-kill',offsets:[32],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}},
     dodge:{fixture:'dodge',offsets:[1,3,5,7,9,13,24]},
+    upgrade:{fixture:'upgrade',offsets:[1,6,12,24]},
+    transition:{fixture:'transition',offsets:[1,6,12,24]},
+    // Isolated dragon plates for the tier-evolution proof: same position, same
+    // flap phase, locks/aura stripped so the diff isolates the ART change.
+    dragonTier0:{fixture:'opening',offsets:[12],selector:'dragon',
+      afterSet:runtime=>runtime.evaluate('dragon.locks.length=0;dragon.lockGlow=0;dragon.ascendT=0;')},
+    dragonTier2:{fixture:'upgrade',offsets:[12],selector:'dragon',
+      afterSet:runtime=>runtime.evaluate('dragon.locks.length=0;dragon.lockGlow=0;dragon.ascendT=0;')},
     reef:{fixture:'reef',offsets:[1,6,12,24]},
     ruins:{fixture:'ruins',offsets:[1,6,12,24]},
     warn:{fixture:'storm-warn',offsets:[1,6,12,24]},
@@ -265,13 +292,15 @@ function buildCandidateEvidence(){
   }
   const runs={};
   for(const[id,spec]of Object.entries(specs))
-    runs[id]=captureFixture(spec.fixture,spec.offsets,{id,beforeSet:spec.beforeSet,afterSet:spec.afterSet});
+    runs[id]=captureFixture(spec.fixture,spec.offsets,{id,beforeSet:spec.beforeSet,afterSet:spec.afterSet,selector:spec.selector});
   const beats=[
     {id:'opening',label:'opening flight',run:'opening',offset:12},
     {id:'lockSweep',label:'lock sweep',run:'lockSweep',offset:12},
     {id:'volley',label:'homing volley',run:'volley',offset:8},
     {id:'volleyKill',label:'volley kill',run:'volleyKill',offset:32},
     {id:'dodge',label:'bolt weave',run:'dodge',offset:13},
+    {id:'upgrade',label:'ascended dragon',run:'upgrade',offset:12},
+    {id:'transition',label:'land border',run:'transition',offset:12},
     {id:'reef',label:'cloud reef',run:'reef',offset:12},
     {id:'ruins',label:'sunken ruins',run:'ruins',offset:12},
     {id:'warn',label:'sandstorm warning',run:'warn',offset:12},
@@ -296,12 +325,12 @@ function reviewTemplate(montageSha256){
     reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size reference review',
     renderReceipt:{seed:'0x'+SEED.toString(16),seconds:30,fps:30,codec:'h264',dimensions:'320x720',bytes:0,sha256:'',command},
     categories:{
-      characterCraft:pending('Inspect the dragon and rider, the four wing kinds (VYR/MANTA/WASP/SPIRE), the carrier wyrm with staged weak points, honest banking, windup glows, lock reticles with charge pips, turrets, and the wreck spiral at 160x360.'),
-      environmentCraft:pending('Inspect each biome with the HUD mentally removed: dune ridges and oases, cloud decks and reef islets, drowned masonry and wave tiers, basalt plates and ember cracks, gate rings and light pillars, the dust wall, far haze.'),
-      levelVariety:pending('Confirm the five biomes change spatial landmarks, terrain grammar, material silhouette, hazards, and composition rather than only palette.'),
-      animationImpact:pending('Confirm aligned dragon and wyrm crops animate, lock ticks land, the volley homes and wipes, bolts weave past, the windup telegraphs, the dust wall arrives, the stage break staggers, and the gate celebration lands.'),
-      readability:pending('Confirm intent reads from the actors alone — honest banking, windup glows on shooters, the two-wave sweep telegraph, lock reticles ON targets — and that every good/bad beat is visibly tagged: gold/cyan/mint on locks/volleys/dodges/breaks, coral on hits/shield-down/wounds. Confirm shield/hull/lock pips/boss bar stay legible beside the dragon at native size with ZERO drawn guidelines, and the terrain flows down-screen with travel.'),
-      artDirectionCohesion:pending('Confirm the five-biome palette, pixel construction, HUD, payoff language, and storm/gate grammar feel like one authored sky reign.')
+      characterCraft:pending('Inspect the rebuilt dragon at 160x360: articulated three-pose flap on a scalloped finger-strutted membrane, sinuous neck to a horned head, whip tail with spade fin that trails against actual travel, seated rider, tier evolution (crown horns, flank armor, extra strut at rank III), full-rack gold aura with orbiting charge sparks. Also the four wing kinds (VYR/MANTA/WASP/SPIRE), the carrier wyrm with staged weak points, honest banking, windup glows, lock reticles with charge pips, turrets, and the wreck spiral.'),
+      environmentCraft:pending('Inspect each biome with the HUD mentally removed: dune ridges and oases, cloud decks and reef islets, drowned masonry and wave tiers, basalt plates and ember cracks, gate rings and light pillars, the dust wall, far haze — and the blended land border, where the next land\'s rows fill the horizon while the palette lerps.'),
+      levelVariety:pending('Confirm the five biomes change spatial landmarks, terrain grammar, material silhouette, hazards, and composition rather than only palette, and that the land-border beat genuinely interleaves both lands.'),
+      animationImpact:pending('Confirm aligned dragon and wyrm crops animate, lock ticks land, the FULL rack turns gold and holds a charged beat before the volley homes and wipes, the ascension flare and rack-growth land, bolts weave past, the windup telegraphs, the dust wall arrives, the stage break staggers, and the gate celebration lands.'),
+      readability:pending('Confirm intent reads from the actors alone — honest banking, windup glows on shooters, the two-wave sweep telegraph, lock reticles ON targets that turn gold on a full rack — and that every good/bad beat is visibly tagged: gold/cyan/mint on locks/volleys/dodges/breaks/ascensions, coral on hits/shield-down/wounds. Confirm shield/hull/growing lock rack pips/RANK/boss bar stay legible beside the dragon at native size with ZERO drawn guidelines, and the terrain flows down-screen with travel across the blended border.'),
+      artDirectionCohesion:pending('Confirm the five-biome palette, blended borders, pixel construction, HUD, payoff language, ascension grammar, and storm/gate grammar feel like one authored sky reign.')
     },
     guidelineOverlays:{confirmedAbsent:false,note:'Confirm every sampled beat pre-draws NOTHING about actor intent or trajectory: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers. Lock reticles ON locked targets, windup glows ON shooters, and the warning plates are diegetic and stay.'}
   };
@@ -318,7 +347,7 @@ async function main(){
   });
   const deterministic=determinism.every(value=>value.ok),{beats,frames:candidate,runs}=evidence;
 
-  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,10800,12600,15000,16800,18000,19800];
+  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,10800,12600,15000,16800,18000,19800,21600,23400];
   const horizon=captureTimeline('horizon',0xa1020401,referenceTargets);
   const blockmine=captureTimeline('blockmine',0xb10c0050,referenceTargets);
   const horizonByBeat={},blockmineByBeat={};
@@ -380,8 +409,25 @@ async function main(){
 
   const scrollChecks=[
     scrollCoherence('opening',8,14),
-    scrollCoherence('ruins',8,14)
+    scrollCoherence('ruins',8,14),
+    scrollCoherence('transition',8,14)
   ];
+
+  // Tier-evolution proof: isolated dragon plates at the same position and
+  // flap phase, aura stripped, tier 0 vs tier 2 — the diff is pure ART change
+  // (crown horns, flank armor, extra wing strut, brighter tail spade).
+  const tierBox=runs.dragonTier0.get(12).probe.playerBox;
+  const tierDiff=frameDifference(fixedCrop(runs.dragonTier0.get(12),tierBox,48,56),
+    fixedCrop(runs.dragonTier2.get(12),tierBox,48,56),{native:false,threshold:8});
+  // Land-border evidence: the transition beat sits mid-blend with both lands'
+  // feature palettes on screen at once.
+  const transitionProbe=runs.transition.get(12).probe;
+  const DUNE_FEATURE_PALETTE=['#c9a25e','#7a6244','#453322'];
+  const REEF_FEATURE_PALETTE=['#dfeaf2','#9ab4c8'];
+  const borderCounts={
+    dune:countPalettePixels(runs.transition.get(12),WORLD_CROP,DUNE_FEATURE_PALETTE,26),
+    reef:countPalettePixels(runs.transition.get(12),WORLD_CROP,REEF_FEATURE_PALETTE,26)
+  };
 
   // Zero-guideline receipts (full native frames, HUD included).
   const planPairs=[['opening',12],['dodge',12],['warn',12],['wyrmFight',12],['gate',12]].map(([id,offset])=>({
@@ -390,17 +436,22 @@ async function main(){
   const bannedOverlaySources=['drawRoute','routeDot','setLineDash','predictIntercept','drawWaypoint','drawPath(']
     .filter(token=>gameSource.includes(token));
 
-  // Locked-candidate calibration, seed 0x5e100001, measured 2026-07-17 on the
-  // five-biome micro-banded build with the turbulent dust wall: colors
-  // 142..255, entropy 3.48..4.42, luma deviation .136..183, largest-color max
-  // .51, one-pixel edge energy .0247..0423, rich cells .889..1.0 with median
-  // .967, player burst median .415 / first-last .414, wyrm burst median .647 /
-  // first-last .877, biome structure pairs .461..539, warning contrast
-  // .380/.0676, land contrast .534/.0953, payoff FX diffs .0323/.0144 volley,
-  // .0344/.0026 kill, .0335/.0038 break, .0351/.0042 gate. The
-  // reference-median gate (edge .0295, rich .611, entropy 3.387, luma .150) is
-  // the hard floor; these bands keep ~10-20% margin under the measured
-  // candidate values.
+  // Locked-candidate calibration, seed 0x5e100001, re-measured 2026-07-17 on
+  // the sixteen-beat ascension build (rebuilt articulated dragon, ascended and
+  // land-border beats, blended-border renderer): colors 153..304, entropy
+  // 3.50..4.53, luma deviation .139..186, largest-color max .51, one-pixel
+  // edge energy .0254..0427, rich cells .911..1.0 with median .978, player
+  // burst median .421 / first-last .446 / max .536, wyrm burst median .647 /
+  // first-last .877, biome structure pairs .455..533, warning contrast
+  // .381/.0681, land contrast .534/.0953, payoff FX diffs .0244/.0109 volley,
+  // .0342/.0026 kill, .0335/.0038 break, .0349/.0041 gate, kill burst max
+  // .589, gate burst max .552, tier-evolution diff .0167 changed (aura
+  // stripped), border palettes 3261 dune px / 1126 reef px at t=.778. The
+  // reference-median gate (edge .0317, rich .622, entropy 3.336, luma .155) is
+  // the hard floor; these bands keep ~10-35% margin under the measured
+  // candidate values. Old->new: playerBurst floors kept (new flap animates
+  // harder, .415 -> .421 median); tierDiff/border bands are new for the
+  // ascension and blended-border mechanics.
   const bands={
     colors:90,entropy:2.9,lumaStdDev:.11,largestColorShare:.56,
     edgeEnergy:.020,richEach:.85,richMedian:.94,
@@ -412,7 +463,8 @@ async function main(){
     landChanged:.3,landMean:.04,landGrid:.6,landBounds:.6,
     gateMax:.35,
     volleyFxChanged:.015,volleyFxMean:.006,killFxChanged:.015,killFxMean:.0012,
-    breakFxChanged:.015,breakFxMean:.0015,gateFxChanged:.015,gateFxMean:.002
+    breakFxChanged:.015,breakFxMean:.0015,gateFxChanged:.015,gateFxMean:.002,
+    tierDiffChanged:.012,borderDunePx:2100,borderReefPx:700
   };
 
   const automatedGates=[];
@@ -440,6 +492,17 @@ async function main(){
   const killProbe=runs.volleyKill.get(32).probe;
   gate('volley beat homes onto live foes',killProbe.visibleFoeCount>=1,{foes:killProbe.visibleFoeCount});
   gate('volley-kill burst peaks with payoff motion',killBurst.changedFraction.max>=bands.killMax,killBurst);
+  const upgradeProbe=runs.upgrade.get(12).probe;
+  gate('ascended beat shows a tier-2 dragon holding a full charged rack',
+    upgradeProbe.tier===2&&upgradeProbe.cap===4&&upgradeProbe.feedback.locks===4&&upgradeProbe.feedback.lockGlow>=16,
+    {tier:upgradeProbe.tier,cap:upgradeProbe.cap,locks:upgradeProbe.feedback.locks,lockGlow:upgradeProbe.feedback.lockGlow});
+  gate('ascension visibly evolves the dragon art (tier 0 vs tier 2, aura stripped)',
+    tierDiff.changedFraction>=bands.tierDiffChanged&&tierDiff.meanDelta>0,tierDiff);
+  gate('land border blends: mid-transition frame carries BOTH lands’ feature palettes',
+    transitionProbe.transition&&transitionProbe.transition.t>=.3&&transitionProbe.transition.t<=.85&&
+    transitionProbe.transition.from==='DUNE SEA'&&transitionProbe.transition.to==='CLOUD REEF'&&
+    borderCounts.dune>=bands.borderDunePx&&borderCounts.reef>=bands.borderReefPx,
+    {transition:transitionProbe.transition,borderCounts});
   gate('five biomes change structure, not only palette',new Set(biomeBeats.map(id=>candidate[id].probe.biome)).size===5&&
     median(biomePairs.map(pair=>pair.structure.structureDistance))>=bands.biomeMedian&&
     biomePairs.every(pair=>pair.structure.structureDistance>=bands.biomeEach),biomePairs);
@@ -515,7 +578,7 @@ async function main(){
   // Drawn-pixel actor scale, measured across beats that span biomes, the pack,
   // the storm, the wyrm fight, and the finale.
   const scaleSamples={};
-  for(const[fixture,offset]of[['opening',12],['dodge',13],['ruins',12],['wyrm-fight',12],['ash',12]])
+  for(const[fixture,offset]of[['opening',12],['dodge',13],['ruins',12],['wyrm-fight',12],['ash',12],['upgrade',12]])
     scaleSamples[fixture]=measureSubjects(fixture,offset);
   const allMeasurements=Object.values(scaleSamples).flatMap(sample=>sample.measurements);
   gate('drawn actors obey the small-actors-big-worlds caps',
@@ -555,11 +618,11 @@ async function main(){
     schema:1,game:'sky-reign',gameSha256,seed:'0x'+SEED.toString(16),worldCrop:WORLD_CROP,
     contactSheet:{path:CONTACT_PATH,sha256:sheet.sha256,width:sheet.width,height:sheet.height},
     checkpoints:Object.fromEntries(beats.map(beat=>[beat.id,{fixture:beat.run,offset:beat.offset,probe:candidate[beat.id].probe}])),
-    thresholds:{referenceMedians:ref,bands,actorScale:{dragon:{maxWidth:34,maxHeight:28},wing:{maxWidth:24,maxHeight:20},
+    thresholds:{referenceMedians:ref,bands,actorScale:{dragon:{maxWidth:38,maxHeight:38},wing:{maxWidth:24,maxHeight:20},
       turret:{maxWidth:20,maxHeight:18},boss:{maxWidth:96,maxHeight:64},footprint:.20,approach:.55,threshold:ACTOR_THRESHOLD}},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
       playerBurst,wyrmBurst,killBurst,gateBurst,biomePairs,warningContrast,warningLand,
-      volleyFx,killFx,breakFx,gateFx,scrollChecks,quietBeats,
+      volleyFx,killFx,breakFx,gateFx,scrollChecks,quietBeats,tierDiff,borderCounts,
       actorScale:Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
         sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,bounds:m.bounds,drawnPixels:m.drawnPixels,
           clipped:m.clipped,probeOverflow:m.probeOverflow,failures:m.assertion.failures}))])),

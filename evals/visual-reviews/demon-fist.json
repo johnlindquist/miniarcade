@@ -6,56 +6,56 @@
     "horizon",
     "blockmine"
   ],
-  "montageSha256": "4ffff4d52004a3273bddf9d6c90dcf96e0cb64a14bb23aee2c45d351406c2c05",
-  "reviewedAt": "2026-07-16",
-  "reviewer": "Kimi native-size reference review (DEMON FIST build: five authored blocks, shared integrator, prowl orbit + universal drift, elite warn invulnerability, super armor, heavy hyper-armor, adrenaline rally wheel; montage re-inspected at 160x360 against both references plus native crops of the opening/market pair, the jab/launcher/slam/sweep strip, the counter/gate-warn/gate-land/mob/super strip, and the rendered 30s clip frame at 8s)",
+  "montageSha256": "8d0370245ae39bc80a6fe6599b655ab5dfce37df6034cfed3d1c7c9ea6254eb6",
+  "reviewedAt": "2026-07-17",
+  "reviewer": "Claude native-size reference review (DEMON FIST owner-polish build: TMNT pacing — 1.45 walk, clear-runway sprint, DEMON DROP leap with landing quake — plus the static-stage background pass and manual-purity controller fixes; sixteen-beat montage re-inspected at 160x360 against both references, plus 3x native crops of the demon-drop rise/descend/quake sequence, the opening/god-wheel/demon-gate frames, and three frames of the rendered 30s clip at 4s/12s/22s showing the leap firing in natural play under a pixel-stable alley skyline)",
   "renderReceipt": {
     "seed": "0xdf150001",
     "seconds": 30,
     "fps": 30,
     "codec": "h264",
     "dimensions": "320x720",
-    "bytes": 3695292,
-    "sha256": "f5cfdbfd17d925382b826e03e880f485ef4da32ee96bef28faf3505408bc89a7",
+    "bytes": 4276805,
+    "sha256": "bf065521db8f150749e3468822fa645c2ae3ac4b512d7650175e47f1913e748b",
     "command": "node render/render.js demon-fist 30 .artifacts/visual/demon-fist/demon-fist-30s.mp4 --seed 0xdf150001 --probe --fps 30"
   },
   "categories": {
     "characterCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The fighter is a constructed ~11x25 white-gi brawler at reference scale: red headband with fluttering tails, black belt, and one oversized cursed right fist (dark red with ember cracks) that carries every attack pose — jab-chain extension, launcher uppercut glow, low sweep spin, lean-back dodge, airborne slam dive, and the GOD WHEEL roulette with three afterimage fists. The four street demons read at a glance: jacket-and-cap thug, lean mint sprinter, bare-chested mohawk bruiser with grey armor plates that visibly crack off, and horned purple demon with ember eyes and white claws. The GATEKEEPER elite is bigger, crowned in gold, with a raised-claw windup. Windup tells live on the bodies (pulled-back fist, overhead raise, ember gape), facing tracks actual travel through the shared integrator (zero wrong-way/crab violations in the behavior suite), and KO'd enemies tumble out under dizzy stars."
+      "note": "The fighter is a constructed ~11x25 white-gi brawler at reference scale: red headband, black belt, and one oversized cursed right fist (dark red with ember cracks) that carries every attack pose — jab-chain extension, launcher uppercut glow, low sweep spin, lean-back dodge, airborne slam dive, the new DEMON DROP with an anticipation crouch, tucked-leg airborne silhouette and fist-leading descent, the deep-lean sprint with dust puffs on clear stretches, and the GOD WHEEL roulette with three afterimage fists. The four street demons read at a glance: jacket-and-cap thug, lean mint sprinter, bare-chested mohawk bruiser with grey armor plates that visibly crack off, and horned purple demon with ember eyes and white claws. The GATEKEEPER elite is bigger, crowned in gold, with a raised-claw windup. Windup tells live on the bodies, facing tracks actual travel through the shared integrator (zero wrong-way/crab violations), and KO'd enemies tumble out under dizzy stars."
     },
     "environmentCraft": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The five blocks are built, not palette-swapped, with four parallax layers plus a near foreground plane. BACK ALLEY is night bricks with fire-escape zigzags, drainpipes, a flickering FIST neon blade with a glow pool, dumpsters, and a lit distant rooftop row. MARKET ROOF runs a sunset with sun disc and cloud streaks, striped awnings, sagging lantern strings with glow pools, water tanks, vents and stall clutter. DOCK SIDE has crane silhouettes, a crescent moon, corrugated container stacks, bollards, and water shimmering past the dock edge. OLD DOJO is warm dusk with pagoda roofs, maple canopies, shoji screens in warm grids, hanging paper lanterns, and a beam lattice. DEMON GATE is obsidian spikes, hanging chains and chain curtains, ember gape windows, a horned gate with glowing eyes, lava seams that breathe, and rising ash. The street stays a quiet stage: long seams and tone bands, no speckle fields (the executable ceilings pass)."
+      "note": "The five blocks are built, not palette-swapped, with four parallax layers plus a near foreground plane — and after the owner's stability directive the stage is now genuinely STILL: the FIST neon is always lit, gate ember windows and glow orbs hold constant luma, the gate sky embers are a seeded constellation instead of a rising drift, lava seams glow at seeded constants, lanterns hang in seeded still-life sags, curb accents and alley puddles no longer pulse; the only moving material is the slow dock-water drift below the fight line. Verified by eye across the demon-drop sequence crops (three frames, identical skylines) and by the executable env-only background-stability gate (all five blocks at or near zero changed pixels; the old strobing build fails it). BACK ALLEY bricks/fire escapes/neon, MARKET ROOF awnings/lantern strings/water tanks, DOCK SIDE cranes/containers/water, OLD DOJO shoji/paper lanterns/pagodas, DEMON GATE obsidian spikes/chains/ember windows/lava all hold their identity."
     },
     "levelVariety": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Across the fifteen-beat sheet the wall grammar, side silhouettes, material identity and composition change per block — wet neon alley, warm market dusk, teal dock night, lantern-lit dojo, ember hell-gate — and the executable structure-distance gate holds across all block pairs (measured 0.35-0.41, well over the 0.16 floor). Hazards re-skin the same fight grammar honestly: the elite walks in under the DEMON GATE banner in any block, and the mob flanks from both edges."
+      "note": "Across the sixteen-beat sheet the wall grammar, side silhouettes, material identity and composition change per block — wet neon alley, warm market dusk, teal dock night, lantern-lit dojo, ember hell-gate — and the executable structure-distance gate holds across all block pairs (measured 0.35-0.42, well over the 0.16 floor). Hazards re-skin the same fight grammar honestly: the elite walks in under the DEMON GATE banner in any block, and the mob flanks from both edges."
     },
     "animationImpact": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Aligned fighter and gatekeeper bursts pass their motion floors. The jab chain walks forward through enemies (aggressor-owns-the-space separation), the launcher pops the bruiser airborne with an ARMOR CRACKED beat and gold star decal, the slam spikes the demon into the dirt with a crater decal and white ring, the sweep drops the whole cluster with a spinning low pose, the counter backsteps exactly on the enemy's raised-fist tell, GOD WHEEL spins with three afterimages, a gold ring and shockwaves, and the finale lands a full celebration with confetti and the DEMON GATE card. Payoff-diff crops vs same-sim __NO_PAYOFF_FX twins confirm sparks, decals and pulses land on the actors."
+      "note": "Aligned fighter and gatekeeper bursts pass their motion floors. The jab chain walks forward through enemies (aggressor-owns-the-space separation), the launcher pops the bruiser airborne with an ARMOR CRACKED beat, the slam spikes the demon into the dirt, the DEMON DROP arcs clean over one body and fells the sprinter with a landing quake — gold ring, dust, SPRINTER DOWN callout and gold crack-chevron decal, verified in the 3x rise/descend/quake crops and gated by the new drop-burst and landing-quake payoff diffs — sweeps drop the cluster, the counter backsteps exactly on the raised-fist tell, GOD WHEEL spins with afterimages, and the finale lands the full celebration. Payoff-diff crops vs same-sim __NO_PAYOFF_FX twins confirm sparks, decals and pulses land on the actors."
     },
     "readability": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "Intent reads from the bodies alone: honest facing that tracks travel, the raised-fist windup tells (bigger on bruisers, demons, and the crowned keeper), the elite's physical march-in, and the mob's two-edge flanking — zero drawn guidelines anywhere (opposite forced plans render byte-identical at five beats). Good and bad beats are palette-separated: gold stars, mint cracks, cyan counters and gold pulses for launchers/juggles/counters/combo milestones/elite KOs/mob clears/supers; coral flashes, shatter decals and coral pulses for hits taken, combo drops and knockdowns — all proven by the executable feedback suite (50 sampled beats, all palette-separated at the event location, thinnest 18px). HP, meter, combo count, and the five block pips sit in a compact bottom cluster beside the fighter (pinned by an executable status-near-fighter gate), and the street flows left with travel (executable scroll-coherence gate)."
+      "note": "Intent reads from the bodies alone: honest facing that tracks travel, raised-fist windup tells (bigger on bruisers, demons, and the crowned keeper), the elite's physical march-in, and the mob's two-edge flanking — zero drawn guidelines anywhere (opposite forced plans render byte-identical at five beats). Good and bad beats are palette-separated: gold stars, mint cracks, cyan counters, and the new gold quake chevrons for the DEMON DROP; coral flashes and shatter decals for hits taken, combo drops and knockdowns — proven by the executable feedback suite (58 sampled beats including good:jump, all palette-separated at the event location, thinnest 22px). HP, meter, combo count, and the five block pips sit in a compact bottom cluster beside the fighter (pinned by the status-near-fighter gate), the street flows left with travel (scroll-coherence gate), and the stable skyline never distracts from the fight (background-stability gate)."
     },
     "artDirectionCohesion": {
       "meetsMachineHunt": true,
       "meetsBlockMine": true,
-      "note": "The dusk-city arc of the strip stays one world: ink nights, amber horizons, neon magenta, warm dojo paper, teal dock water, and ember red — gold always means won, coral always means hurt. The pixel construction, the DEMON FIST identity strip, the tactic readout, the broadcast banner, the payoff decal language, and the five block palettes read as one authored street, exactly like the references."
+      "note": "The dusk-city arc of the strip stays one world: ink nights, amber horizons, neon magenta, warm dojo paper, teal dock water, and ember red — gold always means won, coral always means hurt, and the calmed static ambience makes the palette read even cleaner at native size. The pixel construction, the DEMON FIST identity strip, the tactic readout, the broadcast banner, the payoff decal language, and the five block palettes read as one authored street, exactly like the references."
     }
   },
   "guidelineOverlays": {
     "confirmedAbsent": true,
-    "note": "Checked all fifteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere. The keeper's march, the mob's flanking, and the DEMON GATE banner are physical world telegraphs; windup tells live on the actors. Executable pixel gates (opposite forced plans at five beats) render identically, and the banned overlay primitives are absent from source."
+    "note": "Checked all sixteen sampled beats at native size: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers anywhere — the DEMON DROP renders only the body's arc, never a trajectory preview. The keeper's march, the mob's flanking, and the DEMON GATE banner are physical world telegraphs; windup tells live on the actors. Executable pixel gates (opposite forced plans at five beats) render identically, and the banned overlay primitives are absent from source."
   },
-  "reviewIdentitySha256": "cfc0606e60de3dcf3c53b59839e3383d2bf06faa4682f6effda8a5cc65f9fd3e",
+  "reviewIdentitySha256": "b4f1f9e6630f639969fbfc2d18720a1bee882518ba4ade6db7af67ebc2e884ca",
   "seed": "0xdf150001",
   "checkpoints": [
     "opening@12",
@@ -63,6 +63,7 @@
     "jab@8",
     "launcher@8",
     "slam@12",
+    "drop@12",
     "sweep@8",
     "counter@8",
     "warn@12",

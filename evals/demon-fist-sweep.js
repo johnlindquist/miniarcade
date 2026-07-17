@@ -11,6 +11,7 @@ const{runSoak,analyzeSoak,soakLine}=require('./soak');
 const KEYS=['segments','blocks','kos','hits','hitsTaken','launchers','slams','sweeps','sweepHits',
   'dodges','counters','cracks','supers','comboMilestones','comboDrops','knockdowns','waves','waveClears',
   'acts','eliteKos','mobClears','noHitMobs','actClears','lapses','whiffs','contacts','jabs','finishers',
+  'jumps','jumpHits','sprints','sprintArrivals',
   'events','progress','maxEventLull','maxProgressLull'];
 const policyScore=p=>{const s=p.stats;
   return 3*s.segments+40*s.blocks+12*s.kos+3*s.comboMilestones+4*s.slams+2*s.sweeps+2*s.counters+10*s.eliteKos+6*s.mobClears-8*s.knockdowns-3*s.hitsTaken-4*s.comboDrops;};

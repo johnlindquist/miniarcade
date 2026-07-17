@@ -114,61 +114,74 @@ function notePairs(p,id,label,minPairs){
   }
 }
 
-// Measured 2026-07-17 from a fresh ten-seed paired five-minute sweep
-// (0x4f00 + i*37, .artifacts/sky-reign-sweep.js), planned-route extrema:
-// markers 120..122, biomes 9, kills 143..176, volleyKills 131..161, volleys
-// 102..128, volleyWipes 10..23, locks 412..545, lanceHits 2..6, lances 4..25,
-// boltsFaced 173..207, nearMisses 66..99, hitsTaken 22..36, shieldBreaks 0..5,
-// wounds 0..5, collisions 22..32, wrecks 0, lapses 1..4, acts 3, actClears 2,
-// storms 2, stormClears 2, wyrms 1, phaseBreaks 3, wyrmKills 1, dodges 56..82,
-// contacts 73..119, events 1013..1254, progress 289..330. ~15-25% margin.
+// Re-measured 2026-07-17 (ascension + charge-hold build) from a fresh ten-seed
+// paired five-minute sweep (0x4f00 + i*37, .artifacts/sky-reign-sweep.js),
+// planned-route extrema: markers 121..122, biomes 9, kills 130..178,
+// volleyKills 113..159, volleys 95..117, volleyWipes 10..19, locks 380..477,
+// lanceHits 1..10, lances 6..29, boltsFaced 196..214, nearMisses 66..93,
+// hitsTaken 23..39, shieldBreaks 1..8, wounds 0..12, collisions 18..35,
+// wrecks 0, lapses 1..4, acts 3, actClears 2, storms 2, stormClears 2, wyrms 1,
+// phaseBreaks 3, wyrmKills 1, dodges 71..83, contacts 69..109, upgrades 2,
+// fullRacks 64..86, maxRack 4, events 1020..1147, progress 277..334.
+// Old->new: kill/volley bands shifted DOWN (tier-0 opens at a 2-lock rack and
+// the bot now holds a full rack charged for CHARGE_HOLD frames before release);
+// wounds/shieldBreaks widened because early racks release fewer simultaneous
+// kills. ~15-25% margin as before.
 const POLICY_BANDS={
-  markers:[114,128],biomes:[8,10],kills:[114,211],volleyKills:[105,193],volleys:[82,154],
-  volleyWipes:[8,28],locks:[330,654],lanceHits:[0,8],lances:[3,30],boltsFaced:[138,248],
-  nearMisses:[53,119],hitsTaken:[18,43],shieldBreaks:[0,6],wounds:[0,7],collisions:[18,38],
+  markers:[114,128],biomes:[8,10],kills:[104,213],volleyKills:[90,191],volleys:[76,140],
+  volleyWipes:[7,25],locks:[304,572],lanceHits:[0,14],lances:[3,36],boltsFaced:[157,257],
+  nearMisses:[53,112],hitsTaken:[18,47],shieldBreaks:[0,10],wounds:[0,15],collisions:[14,42],
   wrecks:[0,1],lapses:[0,5],acts:[3,3],actClears:[1,3],storms:[2,2],stormClears:[1,3],
-  wyrms:[1,1],phaseBreaks:[2,4],wyrmKills:[0,1],dodges:[45,98],contacts:[58,143],
-  events:[810,1505],progress:[231,396]
+  wyrms:[1,1],phaseBreaks:[2,4],wyrmKills:[0,1],dodges:[57,100],contacts:[55,131],
+  upgrades:[2,2],fullRacks:[51,103],maxRack:[4,4],
+  events:[816,1376],progress:[222,401]
 };
-// Same sweep, __NO_ROUTE_PLAN baseline extrema: markers 120..122, biomes 9,
-// kills 107..148, volleyKills 91..118, volleys 88..104, volleyWipes 6..14,
-// locks 342..435, lanceHits 3..6, lances 4..18, boltsFaced 194..223, nearMisses
-// 95..126, hitsTaken 42..63, shieldBreaks 8..14, wounds 5..26, collisions
-// 35..56, wrecks 0..2, lapses 1..4, acts 3, actClears 2, storms 2, stormClears
-// 2, wyrms 1, phaseBreaks 3, wyrmKills 1, dodges 63..76, contacts 63..120,
-// events 977..1161, progress 247..296.
+// Same 2026-07-17 sweep, __NO_ROUTE_PLAN baseline extrema: markers 120..122,
+// biomes 9, kills 116..162, volleyKills 93..134, volleys 90..108, volleyWipes
+// 6..14, locks 353..437, lanceHits 2..8, lances 3..20, boltsFaced 199..243,
+// nearMisses 111..150, hitsTaken 52..63, shieldBreaks 4..13, wounds 14..27,
+// collisions 42..55, wrecks 0..2, lapses 1..4, acts 3, actClears 2, storms 2,
+// stormClears 2, wyrms 1, phaseBreaks 3, wyrmKills 1, dodges 61..85, contacts
+// 80..129, upgrades 2, fullRacks 56..77, maxRack 4, events 1031..1223,
+// progress 259..311.
 const REACTIVE_BANDS={
-  markers:[114,128],biomes:[8,10],kills:[86,178],volleyKills:[73,142],volleys:[70,125],
-  volleyWipes:[4,17],locks:[274,522],lanceHits:[0,8],lances:[3,22],boltsFaced:[155,268],
-  nearMisses:[76,151],hitsTaken:[34,76],shieldBreaks:[6,17],wounds:[4,31],collisions:[28,67],
+  markers:[114,128],biomes:[8,10],kills:[93,194],volleyKills:[74,161],volleys:[72,130],
+  volleyWipes:[4,18],locks:[282,524],lanceHits:[0,12],lances:[2,26],boltsFaced:[159,292],
+  nearMisses:[89,180],hitsTaken:[42,76],shieldBreaks:[3,17],wounds:[10,33],collisions:[34,66],
   wrecks:[0,3],lapses:[0,5],acts:[3,3],actClears:[1,3],storms:[2,2],stormClears:[1,3],
-  wyrms:[1,1],phaseBreaks:[2,4],wyrmKills:[0,1],dodges:[50,91],contacts:[50,144],
-  events:[782,1393],progress:[198,355]
+  wyrms:[1,1],phaseBreaks:[2,4],wyrmKills:[0,1],dodges:[49,102],contacts:[64,155],
+  upgrades:[2,2],fullRacks:[45,93],maxRack:[4,4],
+  events:[825,1468],progress:[207,373]
 };
-// Measured 2026-07-17 from six independent ten-minute soaks (0x5200, 0x52d4,
-// 0x5468, 0x55fc, 0x5788, 0x5914): still 0s, quiet 2s, stall 2s, events
-// 2064..2308, progress 535..612, continuityMax 2.34, tier3 shown 16..22,
-// markers 242..243, biomes 18, kills 239..309, volleyKills 214..280, volleys
-// 210..232, volleyWipes 20..35, locks 841..951, lanceHits 9..13, lances 20..33,
-// boltsFaced 389..422, nearMisses 136..175, hitsTaken 50..73, shieldBreaks
-// 1..14, wounds 0..15, collisions 45..64, wrecks 0, lapses 2..5, acts 7,
+// Re-measured 2026-07-17 from six independent ten-minute soaks (0x5200, 0x52d4,
+// 0x5468, 0x55fc, 0x5788, 0x5914): still 0s, quiet 1-2s, stall 2s, events
+// 2205..2246, progress 569..602, continuityMax 2.34, tier3 shown 14..22,
+// markers 242..244, biomes 18, kills 270..295, volleyKills 226..260, volleys
+// 197..218, volleyWipes 18..30, locks 835..881, lanceHits 7..15, lances 21..38,
+// boltsFaced 397..431, nearMisses 150..180, hitsTaken 63..80, shieldBreaks
+// 5..10, wounds 2..17, collisions 56..72, wrecks 0..1, lapses 2..5, acts 7,
 // actClears 4, storms 4, stormClears 4, wyrms 3, phaseBreaks 9, wyrmKills 3,
-// dodges 135..157, contacts 136..171. ~15-25% margin.
+// dodges 143..173, contacts 161..189, upgrades 2, fullRacks 128..148, maxRack
+// 4. ~15-25% margin.
 const SOAK_BANDS={
-  markers:[230,255],biomes:[16,20],kills:[191,371],volleyKills:[171,336],volleys:[168,278],
-  volleyWipes:[16,42],locks:[673,1141],lanceHits:[7,16],lances:[16,40],boltsFaced:[311,506],
-  nearMisses:[109,210],hitsTaken:[40,88],shieldBreaks:[0,17],wounds:[0,18],collisions:[36,77],
+  markers:[230,256],biomes:[16,20],kills:[216,354],volleyKills:[181,312],volleys:[158,262],
+  volleyWipes:[13,39],locks:[668,1057],lanceHits:[5,20],lances:[15,48],boltsFaced:[318,517],
+  nearMisses:[120,216],hitsTaken:[50,96],shieldBreaks:[3,14],wounds:[0,22],collisions:[45,86],
   wrecks:[0,1],lapses:[1,6],acts:[7,7],actClears:[3,5],storms:[4,4],stormClears:[3,5],
-  wyrms:[3,3],phaseBreaks:[8,10],wyrmKills:[2,3],dodges:[108,188],contacts:[109,205],
-  events:[1651,2770],progress:[428,734]
+  wyrms:[3,3],phaseBreaks:[8,10],wyrmKills:[2,3],dodges:[114,208],contacts:[129,227],
+  upgrades:[2,2],fullRacks:[102,178],maxRack:[4,4],
+  events:[1764,2695],progress:[455,722]
 };
-// Aggregate A/B margins from the same 2026-07-17 sweep: score 22584 vs 14718
-// (ratio 1.534), failures 558 vs 1079 (ratio 0.517), hits 293 vs 550, wrecks 0
-// vs 14, wipes 166 vs 102. Floors keep clear margin under the measurement.
-const AGGREGATE_SCORE_FLOOR=12000,AGGREGATE_SCORE_RATIO=1.2,AGGREGATE_FAIL_RATIO=.62;
+// Aggregate A/B margins from the same 2026-07-17 sweep: score 20054 vs 15273
+// (ratio 1.313), failures 609 vs 1105 (ratio 0.551), hits 324 vs 572, wrecks 0
+// vs 15, wipes 135 vs 101; scoreWins 9/10, failureWins 10/10.
+// Old->new: measured score ratio moved 1.534 -> 1.313 because both arms now
+// share the same tier-0 opening and charge-hold; the floors keep clear margin
+// under the fresh measurement (1.15 < 1.313, 14000 < 20054, .62 > .551).
+const AGGREGATE_SCORE_FLOOR=14000,AGGREGATE_SCORE_RATIO=1.15,AGGREGATE_FAIL_RATIO=.62;
 const BASELINE_KILLS_FLOOR=1000,BASELINE_VOLLEYS_FLOOR=700,BASELINE_EVENTS_FLOOR=8000;
-// Soak floors: measured events 2064..2308, progress 535..612; continuity 2.34px.
-const SOAK_MIN_EVENTS=1600,SOAK_MIN_PROGRESS=420,CONTINUITY_CAP=3.4;
+// Soak floors: measured events 2205..2246, progress 569..602; continuity 2.34px.
+const SOAK_MIN_EVENTS=1700,SOAK_MIN_PROGRESS=450,CONTINUITY_CAP=3.4;
 // Motion-contract pace floors, measured 2026-07-17 over seeds 0x6100/0x613d
 // three-minute motion runs: dragon 2.054..2.064 px/f, pack mean 1.079..1.083
 // px/f. Floors keep ~12-17% margin under the measured minima.
@@ -245,6 +258,88 @@ console.log('3) baseline-first route-policy A/B: ten paired five-minute seeds');
     fail(`aggregate route-policy win regressed: ${JSON.stringify({score,bad,hitSums,wreckSums})}`);
   if(baseline.kills<BASELINE_KILLS_FLOOR||baseline.volleys<BASELINE_VOLLEYS_FLOOR||baseline.events<BASELINE_EVENTS_FLOOR)
     fail(`__NO_ROUTE_PLAN baseline stopped honestly participating: ${JSON.stringify(baseline)}`);
+}
+
+console.log('3b) __NO_VOLLEY ablation: homing artillery is causal, the baseline stays armed and mobile');
+{
+  // Measured 2026-07-17 over eight paired five-minute seeds (0x7a00 + i*53,
+  // .artifacts/sky-reign-sweep.js): live kills 130..166, volleys 102..112,
+  // volleyKills 111..151, locks 400..462, volleyWipes 9..18, sweeps
+  // 10875..12862, phaseBreaks 3; __NO_VOLLEY kills 86..99, lances 321..383,
+  // lanceHits 86..108, nearMisses 143..216, markers 123, events 980..1179,
+  // progress 222..235, lulls <=147/147, and volleys/volleyKills/locks/sweeps/
+  // volleyWipes/fullRacks/maxRack/phaseBreaks all exactly 0. Bands keep
+  // ~20-25% margin; the zeros are hard.
+  const LIVE_VOLLEY_BANDS={volleys:[82,134],volleyKills:[89,181],locks:[320,554],volleyWipes:[7,24]};
+  const ABLATED_FLOORS={kills:64,lances:240,lanceHits:64,nearMisses:107,markers:114,events:780,progress:177};
+  for(let i=0;i<8;i++){
+    const seed=0x7a00+i*53,a=bootGame('sky-reign',{seed,footer:FOOTER}),b=bootGame('sky-reign',{seed,footer:FOOTER});
+    b.sandbox.__NO_VOLLEY=1;
+    // Decision window: the live dragon must acquire its first lock and diverge
+    // physically from the volley-less twin early in the run.
+    let firstLock=-1,firstDiverge=-1;
+    for(let f=0;f<3600;f+=60){
+      a.frames(60,false);b.frames(60,false);
+      if(firstLock<0&&a.sandbox.__skyReignProbe().stats.locks>0)firstLock=f+60;
+      if(firstDiverge<0&&a.sandbox.__skyReignPhysical()!==b.sandbox.__skyReignPhysical())firstDiverge=f+60;
+    }
+    a.frames(18000-3600,false);b.frames(18000-3600,false);
+    const pa=a.sandbox.__skyReignProbe(),pb=b.sandbox.__skyReignProbe();
+    console.log(`  ${seed.toString(16)} ${pa.persona.padEnd(10)} live volleys ${pa.stats.volleys} wipes ${pa.stats.volleyWipes} `+
+      `sweeps ${pa.stats.sweeps} kills ${pa.stats.kills} | ablated kills ${pb.stats.kills} lances ${pb.stats.lances} `+
+      `lanceHits ${pb.stats.lanceHits} | first lock ${firstLock}f, diverged ${firstDiverge}f`);
+    inBands(pa,LIVE_VOLLEY_BANDS,`seed ${seed.toString(16)} live volley`);
+    if(firstLock<0||firstDiverge<0||firstDiverge>firstLock+600)
+      fail(`seed ${seed.toString(16)}: volley mechanic did not change decisions in the setup window (lock ${firstLock}f, diverge ${firstDiverge}f)`);
+    for(const key of['volleys','volleyKills','locks','sweeps','volleyWipes','fullRacks','maxRack'])
+      if(pb.stats[key]!==0)fail(`seed ${seed.toString(16)}: __NO_VOLLEY still recorded ${key}=${pb.stats[key]}`);
+    if(pa.stats.phaseBreaks<2||pb.stats.phaseBreaks>1)
+      fail(`seed ${seed.toString(16)}: volley causality on the wyrm regressed (${pa.stats.phaseBreaks} vs ${pb.stats.phaseBreaks} breaks)`);
+    for(const[key,floor]of Object.entries(ABLATED_FLOORS))
+      if(pb.stats[key]<floor)fail(`seed ${seed.toString(16)}: __NO_VOLLEY baseline lost capability: ${key} ${pb.stats[key]} < ${floor}`);
+    if(pb.stats.maxEventLull>360||pb.stats.maxProgressLull>420)
+      fail(`seed ${seed.toString(16)}: __NO_VOLLEY baseline went dead-air (${pb.stats.maxEventLull}/${pb.stats.maxProgressLull}f)`);
+    if(!pa.finite||!pb.finite)fail(`seed ${seed.toString(16)}: non-finite state in volley A/B`);
+    if(pa.stats.kills<=pb.stats.kills)fail(`seed ${seed.toString(16)}: volleys did not out-kill the lance baseline (${pa.stats.kills} vs ${pb.stats.kills})`);
+  }
+}
+
+console.log('3c) __NO_UPGRADE ablation: ascension is real, visible in telemetry, and causal for wipes');
+{
+  // Measured 2026-07-17 over eight paired five-minute seeds (0x7b00 + i*61,
+  // .artifacts/sky-reign-sweep.js): live upgrades 2, maxRack 4, volleyWipes
+  // 9..20, fullRacks 65..83; __NO_UPGRADE upgrades 0, maxRack 2, volleyWipes 0,
+  // volleys 202..217, fullRacks 193..211 (the frozen build volleys MORE often
+  // with its small rack — capacity, not activity, is what ascension buys).
+  // The eval replays the first four seeds.
+  for(let i=0;i<4;i++){
+    const seed=0x7b00+i*61,a=bootGame('sky-reign',{seed,footer:FOOTER}),b=bootGame('sky-reign',{seed,footer:FOOTER});
+    b.sandbox.__NO_UPGRADE=1;a.frames(18000,false);b.frames(18000,false);
+    const pa=a.sandbox.__skyReignProbe(),pb=b.sandbox.__skyReignProbe();
+    console.log(`  ${seed.toString(16)} live tier ${pa.dragon.tier} upgrades ${pa.stats.upgrades} maxRack ${pa.stats.maxRack} `+
+      `wipes ${pa.stats.volleyWipes} fullRacks ${pa.stats.fullRacks} | frozen maxRack ${pb.stats.maxRack} `+
+      `wipes ${pb.stats.volleyWipes} volleys ${pb.stats.volleys}`);
+    if(pa.stats.upgrades!==2||pa.dragon.tier!==2||pa.stats.maxRack!==4)
+      fail(`seed ${seed.toString(16)}: dragon did not ascend across a natural run (${JSON.stringify({upgrades:pa.stats.upgrades,tier:pa.dragon.tier,maxRack:pa.stats.maxRack})})`);
+    if(pa.stats.volleyWipes<7)fail(`seed ${seed.toString(16)}: ascended run lost its wipes (${pa.stats.volleyWipes})`);
+    if(pb.stats.upgrades!==0||pb.stats.maxRack!==2||pb.stats.volleyWipes!==0)
+      fail(`seed ${seed.toString(16)}: __NO_UPGRADE leaked tier growth (${JSON.stringify({upgrades:pb.stats.upgrades,maxRack:pb.stats.maxRack,wipes:pb.stats.volleyWipes})})`);
+    if(pb.stats.volleys<162||pb.stats.fullRacks<150)
+      fail(`seed ${seed.toString(16)}: __NO_UPGRADE baseline stopped volleying (${pb.stats.volleys} volleys, ${pb.stats.fullRacks} full racks)`);
+  }
+  // Tier timing: ascensions land exactly on the kill milestones and the rack
+  // capacity follows 2 -> 3 -> 4.
+  const game=bootGame('sky-reign',{seed:0x7d01,footer:FOOTER});
+  const seen=[];let lastTier=0;
+  for(let f=0;f<18000&&seen.length<2;f+=30){
+    game.frames(30,false);
+    const p=game.sandbox.__skyReignProbe();
+    if(p.dragon.tier!==lastTier){seen.push({tier:p.dragon.tier,kills:p.stats.kills,cap:p.dragon.cap});lastTier=p.dragon.tier;}
+  }
+  console.log(`  tier timeline: ${JSON.stringify(seen)}`);
+  if(seen.length!==2||seen[0].tier!==1||seen[0].kills<12||seen[0].cap!==3||
+    seen[1].tier!==2||seen[1].kills<30||seen[1].cap!==4)
+    fail(`ascension milestones drifted from kills 12/30 with caps 3/4: ${JSON.stringify(seen)}`);
 }
 
 console.log('4) SANDSTORM FRONT and CARRIER WYRM change the world during an exact 240f warning');
@@ -439,7 +534,7 @@ console.log('9) feedback legibility: every good/bad sim event is visibly represe
   }
   console.log(`  ${feedbackLine(runs)}; signatures ${runs.every(r=>r.signaturesMatch)?'identical':'DIFFERENT'}`);
   assertFeedback('feedback',runs,{
-    required:['good:lock','good:volley-kill','good:dodge','good:boss-break','good:wyrm-hit',
+    required:['good:lock','good:volley-kill','good:dodge','good:boss-break','good:wyrm-hit','good:ascend',
       'bad:hit-taken','bad:shield-down','bad:wyrm-wound'],
     minChanged:{default:12,'good:lock':6,'good:dodge':6,'good:lance-hit':6,'good:wyrm-hit':6,'bad:wyrm-wound':6},
     minSignature:{default:8,'good:lock':4,'good:dodge':4,'good:lance-hit':4,'good:wyrm-hit':4,'bad:wyrm-wound':4},

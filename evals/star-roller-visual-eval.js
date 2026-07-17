@@ -385,16 +385,20 @@ async function main(){
   const bannedOverlaySources=['drawRoute','routeDot','setLineDash','predictIntercept','drawWaypoint','drawPath(']
     .filter(token=>gameSource.includes(token));
 
-  // Locked-candidate calibration, seed 0x57a0001 (2026-07-17, measured on the
-  // shipped build): colors 137..326, entropy 3.17..4.35, luma deviation
-  // .124...187, largest-color max .514, one-pixel edge .0174...0393, rich cells
-  // .82..1.0 with median .978, zone structure median .557 (min .489), warning
-  // contrast .163 changed/.0235 mean, land .210/.0411, bursts player .378 med /
-  // sweeper .220 med, finale burst max .150, payoff diffs ms .0154 / bump
-  // .0228 / finale .0352 changed. Quiet-corridor calibration: calm floors
-  // .0006-.0042 / sides .0005-.0249; a deliberate 1px-gravel busy build floors
-  // .0273-.0300 fails QUIET_FLOOR_MAX at ~1.9x. Floors keep ~10-30% margin
-  // under measurement; ceilings keep ~1.8-4x margin over calm.
+  // Locked-candidate calibration, seed 0x57a0001 (re-measured 2026-07-17 on
+  // the readability-pass art: directional sphere roll, item contact shadows,
+  // haze veil -> 34px horizon glow, orbit nebula dust; bands unchanged —
+  // every beat still clears them with margin): colors 186..360, entropy
+  // 3.14..3.97, luma deviation .129...180, largest-color max .541 (pets;
+  // orbit dropped .580->.326 once nebula dust replaced the flat slab the old
+  // haze veil had been papering over), one-pixel edge .0212...0384, rich
+  // cells .867..1.0 with median .989, zone structure median .565 (min .507),
+  // warning contrast .163 changed/.0243 mean, land .205/.0347, bursts player
+  // .395 med / sweeper .269 med, finale burst max .232, payoff diffs ms
+  // .0154 / bump .0228 / finale .0352 changed. Quiet-corridor calibration:
+  // calm floors .0025-.0061 / sides .0005-.0251; a deliberate 1px-gravel busy
+  // build floors .0273-.0300 fails QUIET_FLOOR_MAX at ~1.9x. Floors keep
+  // ~10-30% margin under measurement; ceilings keep ~1.8-4x margin over calm.
   const bands={
     colors:90,entropy:2.7,lumaStdDev:.10,largestColorShare:.55,
     edgeEnergy:.014,richEach:.75,richMedian:.92,

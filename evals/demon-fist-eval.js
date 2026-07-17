@@ -42,6 +42,23 @@ globalThis.__dfOverlapScan=()=>{
 // overlap the resolver must clear. Neither runs during measured sweeps.
 globalThis.__dfTopMeter=()=>{fighter.meter=100;};
 globalThis.__dfInvuln=()=>{fighter.invulnT=999999;fighter.hp=60;};
+// Manual-purity fixtures: park the fighter on an empty stretch (or stage one
+// enemy) so keyboard-driven runs can assert that NOTHING moves the fighter but
+// the human's mapped intent. Never used during measured sweeps.
+globalThis.__dfClearStreet=x=>{enemies.length=0;fighter.x=x;fighter.vx=0;fighter.vy=0;fighter.y=0;
+  fighter.state='free';fighter.knockT=0;fighter.invulnT=0;fighter.lockFace=false;fighter.face=1;
+  fighter.sprintT=0;fighter.jumpCd=0;fighter.dodgeCd=0;fighter.meter=0;fighter.combo=0;
+  while(waveCursor<waveTriggers.length&&waveTriggers[waveCursor].x<fighter.x+700)waveCursor++;
+  pendingWaves=new Set();lastClearFrame=runFrame;prevAlive=0;camX=Math.max(0,fighter.x-52);};
+globalThis.__dfSpawnAt=(kind,dx,state)=>{const e=spawnEnemy(kind,fighter.x+dx,dx<0?1:-1);
+  if(state){e.state=state[0];e.stateT=state[1]||0;if(state[0]==='windup'||state[0]==='strike')e.lockFace=true;}
+  return e.id;};
+globalThis.__dfEnemy=id=>{const e=enemies.find(q=>q.id===id);
+  return e?{x:round(e.x,4),state:e.state,baited:!!e.baited}:null;};
+globalThis.__dfFighterNow=()=>({x:round(fighter.x,4),y:round(fighter.y,4),vx:round(fighter.vx,4),
+  face:fighter.face,state:fighter.state,atkDir:fighter.atkDir,atkKind:fighter.atkKind,
+  meter:round(fighter.meter,2),hp:fighter.hp,sprintT:fighter.sprintT,jumpCd:fighter.jumpCd});
+globalThis.__dfSetVitals=(hp,meter)=>{fighter.hp=hp;fighter.meter=meter;};
 globalThis.__dfContactFixture=()=>{
   fighter.x=8000;fighter.y=0;fighter.vx=0;fighter.vy=0;fighter.state='free';fighter.knockT=0;fighter.invulnT=0;fighter.lockFace=false;
   enemies.length=0;
@@ -115,64 +132,73 @@ function notePairs(p,id,label,minPairs){
   }
 }
 
-// Registered 2026-07-17 (full brawler build: sinusoid orbit + universal
-// drift, split-cd anti-boxing, elite warn invulnerability, super armor, heavy
-// hyper-armor, adrenaline + rally-surge comeback wheel) from a fresh ten-seed
-// paired five-minute sweep (0x4f00 + i*37), planned-route extrema: segments
-// 30..38, blocks 4..5, kos 118..135, hits 303..349, hitsTaken 10..18,
-// launchers 16..32, slams 6..13, sweeps 4..12, sweepHits 6..23, dodges 34..52,
-// counters 36..64, cracks 8..16, supers 24..39, comboMilestones 3..11,
-// comboDrops 1..5, knockdowns 2..4, waves 47..54, waveClears 46..53, acts 3,
-// eliteKos 2, mobClears 1, lapses 0..4, whiffs 37..57, contacts 327..968, jabs
-// 105..128, finishers 22..42, events 908..1031, progress 347..408, event lull
-// 172..219, progress lull 188..383. Bands hold ~15-25% margin on both sides.
+// Re-registered 2026-07-17 (TMNT pacing overhaul: base walk 1.0 -> 1.45 px/f,
+// clear-runway sprint at 2.35 behind a 200px street-clear gate, DEMON DROP
+// leap with intercept lead + landing quake, planner far-runway candidates on
+// empty stretches; old bands recorded a walk-1.0 sim and are void) from a
+// fresh ten-seed paired five-minute sweep (0x4f00 + i*37), planned extrema:
+// segments 53..68, blocks 5, kos 120..140, hits 299..338, hitsTaken 15..26,
+// launchers 20..28, slams 9..14, sweeps 5..14, sweepHits 9..23, dodges 44..53,
+// counters 34..53, cracks 10..21, supers 27..31, comboMilestones 4..10,
+// comboDrops 0..4, knockdowns 2..6, waves 44..50, waveClears 44..49, acts 3,
+// eliteKos 2, mobClears 1, lapses 0..4, whiffs 52..69, contacts 535..1304,
+// jabs 54..88, finishers 12..26, jumps 64..73, jumpHits 41..48, sprints
+// 37..47, sprintArrivals 31..39, events 1157..1299, progress 363..417, event
+// lull 150..178, progress lull 265..362. Bands hold ~15-25% margin both sides.
 const POLICY_BANDS={
-  segments:[24,46],blocks:[4,5],kos:[92,165],hits:[240,425],hitsTaken:[7,23],launchers:[12,39],
-  slams:[4,17],sweeps:[3,15],sweepHits:[5,28],dodges:[27,62],counters:[28,77],cracks:[6,20],
-  supers:[19,47],comboMilestones:[2,13],comboDrops:[0,6],knockdowns:[1,5],waves:[37,65],
-  waveClears:[36,64],acts:[3,3],eliteKos:[2,3],mobClears:[1,2],noHitMobs:[0,2],actClears:[1,2],
-  lapses:[0,5],whiffs:[29,68],contacts:[255,1150],jabs:[84,155],finishers:[17,51],
-  events:[725,1240],progress:[275,490]
+  segments:[42,82],blocks:[4,5],kos:[100,165],hits:[250,400],hitsTaken:[10,33],launchers:[15,36],
+  slams:[6,19],sweeps:[3,18],sweepHits:[6,30],dodges:[34,66],counters:[26,66],cracks:[7,27],
+  supers:[21,38],comboMilestones:[2,14],comboDrops:[0,6],knockdowns:[1,8],waves:[36,60],
+  waveClears:[35,59],acts:[3,3],eliteKos:[2,3],mobClears:[1,2],noHitMobs:[0,2],actClears:[1,2],
+  lapses:[0,5],whiffs:[40,85],contacts:[380,1650],jabs:[40,110],finishers:[8,34],
+  jumps:[50,90],jumpHits:[30,60],sprints:[28,60],sprintArrivals:[23,50],
+  events:[980,1560],progress:[300,500]
 };
-// Same sweep, __NO_ROUTE_PLAN baseline extrema: segments 17..22, blocks 3..3,
-// kos 111..132, hits 271..328, hitsTaken 3..12, launchers 14..34, slams 6..17,
-// sweeps 3..9, sweepHits 3..14, dodges 16..38, counters 14..49, cracks 7..17,
-// supers 20..40, comboMilestones 0..4, comboDrops 0..3, knockdowns 0..2, waves
-// 47..54, waveClears 46..53, acts 3, eliteKos 2, lapses 0..4, whiffs 31..44,
-// contacts 187..503, jabs 85..137, finishers 28..47, events 828..915, progress
-// 320..381, event lull 172..195, progress lull 183..383.
+// Same sweep, __NO_ROUTE_PLAN baseline extrema (the baseline keeps the full
+// acrobatics grammar — only the stance planner is ablated): segments 36..46,
+// blocks 5, kos 122..137, hits 290..320, hitsTaken 17..23, launchers 16..33,
+// slams 8..16, sweeps 9..19, sweepHits 15..31, dodges 38..56, counters 40..69,
+// cracks 11..22, supers 27..31, comboMilestones 3..7, comboDrops 0..2,
+// knockdowns 2..4, waves 48..53, waveClears 47..52, lapses 0..4, whiffs
+// 47..67, contacts 446..845, jabs 47..85, finishers 11..21, jumps 56..73,
+// jumpHits 42..56, sprints 61..74, sprintArrivals 35..45, events 1178..1258,
+// progress 360..390, event lull 146..157, progress lull 229..471.
 const REACTIVE_BANDS={
-  segments:[13,27],blocks:[3,4],kos:[88,160],hits:[215,395],hitsTaken:[2,15],launchers:[11,41],
-  slams:[4,20],sweeps:[2,14],sweepHits:[2,22],dodges:[12,46],counters:[11,59],cracks:[5,20],
-  supers:[12,48],comboMilestones:[0,5],comboDrops:[0,4],knockdowns:[0,3],waves:[37,65],
-  waveClears:[36,64],acts:[3,3],eliteKos:[2,3],mobClears:[1,2],noHitMobs:[0,2],actClears:[1,2],
-  lapses:[0,5],whiffs:[24,53],contacts:[145,605],jabs:[68,165],finishers:[22,57],
-  events:[660,1100],progress:[255,460]
+  segments:[28,56],blocks:[4,5],kos:[100,165],hits:[240,385],hitsTaken:[11,30],launchers:[12,41],
+  slams:[5,21],sweeps:[6,25],sweepHits:[10,40],dodges:[29,70],counters:[30,85],cracks:[8,28],
+  supers:[21,38],comboMilestones:[1,10],comboDrops:[0,4],knockdowns:[1,6],waves:[38,64],
+  waveClears:[37,63],acts:[3,3],eliteKos:[2,3],mobClears:[1,2],noHitMobs:[0,2],actClears:[1,2],
+  lapses:[0,5],whiffs:[36,82],contacts:[320,1100],jabs:[35,106],finishers:[7,28],
+  jumps:[42,90],jumpHits:[31,70],sprints:[47,92],sprintArrivals:[26,58],
+  events:[1000,1510],progress:[300,470]
 };
 
-// Measured 2026-07-17 (same build) from two independent ten-minute soaks
-// (0x5200, 0x52d4): still 0s, quiet 2..3s, stall 5..6s, events 1981..2008,
-// progress 729..762, blocks 5, acts 7 lands, tier3 shown 38..39, lulls
-// 188..199 / 362..381. Extrema: segments 61..69, kos 238..245, hits 659..691,
-// hitsTaken 36..40, launchers 69..70, slams 30..33, sweeps 15..25, sweepHits
-// 25..47, dodges 76..85, counters 92..99, cracks 45..46, supers 62..62,
-// comboMilestones 12..18, comboDrops 6..10, knockdowns 8..11, waves 87..91,
-// waveClears 86..90, eliteKos 4, mobClears 3, lapses 3..4, whiffs 88..95,
-// contacts 1378..1452, jabs 219..261, finishers 50..59.
+// Measured 2026-07-17 (TMNT pacing build) from two independent ten-minute
+// soaks (0x5200, 0x52d4): still 0s, quiet 2s, stall 4..5s (walk-1.0 build:
+// 5..6s — the sprint SHORTENS droughts), events 2584..2656, progress 824..871,
+// blocks 5, acts 7 lands, tier3 shown 38..41, lulls 156..175 / 293..357.
+// Extrema: segments 125..130, kos 268..285, hits 731..734, hitsTaken 34..43,
+// launchers 67..73, slams 20..28, sweeps 17, sweepHits 28..30, dodges
+// 100..119, counters 99..106, cracks 40..45, supers 58..71, comboMilestones
+// 24..25, comboDrops 6, knockdowns 7..10, waves 91..97, waveClears 90..96,
+// eliteKos 4, mobClears 3, lapses 3..4, whiffs 131..150, contacts 1102..2569,
+// jabs 137..178, finishers 43..46, jumps 124..134, jumpHits 88, sprints
+// 79..89, sprintArrivals 67..71.
 const SOAK_BANDS={
-  segments:[49,83],blocks:[5,5],kos:[190,295],hits:[525,830],hitsTaken:[28,48],launchers:[55,84],
-  slams:[24,40],sweeps:[12,30],sweepHits:[20,57],dodges:[60,102],counters:[73,119],cracks:[36,55],
-  supers:[49,75],comboMilestones:[9,22],comboDrops:[4,12],knockdowns:[6,13],waves:[69,110],
-  waveClears:[68,108],acts:[6,8],eliteKos:[3,5],mobClears:[2,4],noHitMobs:[0,3],actClears:[3,4],
-  lapses:[2,5],whiffs:[70,114],contacts:[1100,1750],jabs:[175,314],finishers:[40,71],
-  events:[1580,2410],progress:[580,915]
+  segments:[95,165],blocks:[5,5],kos:[210,350],hits:[560,920],hitsTaken:[24,58],launchers:[50,92],
+  slams:[14,38],sweeps:[10,28],sweepHits:[18,45],dodges:[75,150],counters:[72,140],cracks:[29,58],
+  supers:[44,90],comboMilestones:[15,35],comboDrops:[3,12],knockdowns:[4,15],waves:[70,120],
+  waveClears:[69,119],acts:[6,8],eliteKos:[3,5],mobClears:[2,4],noHitMobs:[0,3],actClears:[2,4],
+  lapses:[1,6],whiffs:[98,190],contacts:[800,3200],jabs:[100,230],finishers:[30,62],
+  jumps:[93,170],jumpHits:[62,115],sprints:[59,115],sprintArrivals:[48,92],
+  events:[2050,3300],progress:[640,1100]
 };
 
-// Motion-contract pace floors, measured 2026-07-17 across the four motion
-// seeds (0x5200 10min, 0x6100/0x613d/0x52d4 3min) on the prowl-orbit build:
-// fighter mean 0.641..0.699 px/f, pack mean 0.929..1.101 px/f. Floors keep
-// ~12% margin under the measured minima.
-const FIGHTER_PACE_FLOOR=.55,PACK_PACE_FLOOR=.8;
+// Motion-contract pace floors, measured 2026-07-17 on the TMNT pacing build
+// (0x6100 2min 1.155, 0x613d 3min 1.125, 0x52d4 3min ~1.13 fighter px/f; pack
+// 0.921..1.095): the faster walk nearly doubled the old 0.641..0.699 fighter
+// pace. Floors keep ~15% margin under the measured minima.
+const FIGHTER_PACE_FLOOR=.95,PACK_PACE_FLOOR=.8;
 const paceOf=run=>{const per=new Map();let prev=null;
   for(const s of run.samples){if(prev)for(const a of s.actors){const b=prev.actors.find(q=>q.id===a.id);if(!b)continue;
     const d=Math.hypot(a.x-b.x,a.y-b.y),t=per.get(a.id)||{d:0,f:0};t.d+=d;t.f+=run.step;per.set(a.id,t);}prev=s;}
@@ -213,21 +239,22 @@ console.log('2) fight lookahead is pure, repeatable, RNG-inert, and uses the sha
 
 console.log('3) baseline-first fight-policy A/B: ten paired five-minute seeds');
 {
-  const smart=[],reactive=[];let scoreWins=0,failureWins=0;
+  const smart=[],reactive=[];let segmentWins=0,scoreWins=0;
   for(let i=0;i<10;i++){
     const seed=0x4f00+i*37,a=bootGame('demon-fist',{seed,footer:FOOTER}),b=bootGame('demon-fist',{seed,footer:FOOTER});
     b.sandbox.__NO_ROUTE_PLAN=1;a.frames(18000,false);b.frames(18000,false);
     const pa=a.sandbox.__demonFistProbe(),pb=b.sandbox.__demonFistProbe();smart.push(pa);reactive.push(pb);
-    if(policyScore(pa)>policyScore(pb))scoreWins++;if(failures(pa)<failures(pb))failureWins++;
+    if(pa.stats.segments>pb.stats.segments)segmentWins++;if(policyScore(pa)>policyScore(pb))scoreWins++;
     inBands(pa,POLICY_BANDS,`seed ${seed.toString(16)} planned`);
     inBands(pb,REACTIVE_BANDS,`seed ${seed.toString(16)} reactive`);
     for(const[p,label]of[[pa,'planned'],[pb,'reactive']]){
       if(!p.finite)fail(`seed ${seed.toString(16)} ${label}: non-finite state`);
-      // Measured 2026-07-17 lull extrema on this build: planned 214/441,
-      // reactive 195/464. Ceilings keep ~20% margin; a dead planner fails, an
-      // honestly slower baseline does not.
-      if(p.stats.maxEventLull>340)fail(`seed ${seed.toString(16)} ${label}: event lull ${p.stats.maxEventLull}f`);
-      if(label==='planned'&&p.stats.maxProgressLull>540)fail(`seed ${seed.toString(16)} planned: progress lull ${p.stats.maxProgressLull}f`);
+      // Measured 2026-07-17 lull extrema on the TMNT pacing build: event
+      // 150..178 (planned) / 146..157 (reactive), progress 265..362 / 229..471.
+      // Ceilings tightened from 340/540/580 with the sim change — the sprint
+      // shortens droughts and the gates keep that.
+      if(p.stats.maxEventLull>300)fail(`seed ${seed.toString(16)} ${label}: event lull ${p.stats.maxEventLull}f`);
+      if(label==='planned'&&p.stats.maxProgressLull>500)fail(`seed ${seed.toString(16)} planned: progress lull ${p.stats.maxProgressLull}f`);
       if(label==='reactive'&&p.stats.maxProgressLull>580)fail(`seed ${seed.toString(16)} reactive: progress lull ${p.stats.maxProgressLull}f`);
     }
     console.log(`  ${seed.toString(16)} score ${policyScore(pa)}/${policyScore(pb)}, `+
@@ -241,21 +268,61 @@ console.log('3) baseline-first fight-policy A/B: ten paired five-minute seeds');
     segments=[sum(smart,'segments'),sum(reactive,'segments')],
     supers=[sum(smart,'supers'),sum(reactive,'supers')],
     baseline={kos:sum(reactive,'kos'),events:sum(reactive,'events'),supers:sum(reactive,'supers'),eliteKos:sum(reactive,'eliteKos')};
-  console.log(`  ${scoreWins}/10 score wins; ${failureWins}/10 failure wins; score ${score[0]}/${score[1]}, `+
+  console.log(`  ${segmentWins}/10 segment wins; ${scoreWins}/10 score wins; score ${score[0]}/${score[1]}, `+
     `segments ${segments[0]}/${segments[1]}, supers ${supers[0]}/${supers[1]}, failures ${bad[0]}/${bad[1]}`);
-  if(scoreWins<8)fail(`fight plan did not win clearly enough (${scoreWins}/10 score)`);
-  // Measured 2026-07-17 sweep (same build): goal-weighted score 17280 vs
-  // 16272, segments ~1.9x, supers similar, failures 292 vs 128 (~2.3x). The
-  // planner wins by advancing (blocks 4..5 vs 3) at a measured cost: it fights
-  // demons and the keeper in the deep blocks while the baseline turtles in
-  // block 3 against thugs. A cost ceiling of 3x catches recklessness without
-  // punishing depth.
-  if(score[0]<900||score[0]<score[1]*1.04)fail(`aggregate fight-policy win regressed: ${JSON.stringify({score})}`);
-  if(segments[0]<segments[1]*1.5)fail(`planner stopped out-advancing the baseline: ${segments}`);
-  if(supers[0]<supers[1]*1.05)fail(`planner stopped setting up supers: ${supers}`);
-  if(bad[0]>bad[1]*4.0)fail(`planned build became reckless: ${bad}`);
-  if(baseline.kos<950||baseline.events<7500||baseline.supers<130||baseline.eliteKos<18)
+  // Re-calibrated 2026-07-17 with the pacing overhaul. On the walk-1.0 build
+  // the planner won 10/10 on goal score because it monopolized traversal
+  // (blocks 4..5 vs 3). Both builds now share the acrobatics grammar and both
+  // reach block 5, so kos are wave-diet-capped and score is parity noise
+  // (20034 vs 19896, 6/10 wins). The planner's causal signature is transit
+  // DECISIVENESS: planned segments 53..68 vs reactive 36..46 — disjoint
+  // ranges, 10/10 per-seed wins, aggregate 1.45x — at score parity and a
+  // bounded failure cost (430 vs 332, 1.30x). The asserts encode exactly that
+  // shape: a planner that stops out-advancing, sacrifices the show for
+  // transit, or turns reckless fails.
+  if(segmentWins<9)fail(`planner stopped out-advancing per seed (${segmentWins}/10 segment wins)`);
+  if(score[0]<15000||score[0]<score[1]*.96)fail(`planner sacrificed the show for transit: ${JSON.stringify({score})}`);
+  if(segments[0]<segments[1]*1.25)fail(`planner stopped out-advancing the baseline: ${segments}`);
+  if(supers[0]<supers[1]*.95)fail(`planner stopped setting up supers: ${supers}`);
+  if(bad[0]>bad[1]*2.0)fail(`planned build became reckless: ${bad}`);
+  if(baseline.kos<1150||baseline.events<11000||baseline.supers<250||baseline.eliteKos<18)
     fail(`__NO_ROUTE_PLAN baseline stopped honestly participating: ${JSON.stringify(baseline)}`);
+}
+
+console.log('3b) __NO_ACROBATICS same-seed A/B: the leap and sprint change real outcomes');
+{
+  // The switch disables exactly the named mechanic — the DEMON DROP leap and
+  // the clear-runway sprint — and nothing else: the ablated build keeps the
+  // 1.45 walk, full combat grammar, planner, acts and waves. Measured
+  // 2026-07-17 over three paired five-minute seeds: live segments 47..59 vs
+  // ablated 35..47, live jumps 57..60 (hits 36..40), sprints 36..39 (arrivals
+  // 30..32); ablated all zero with kos 102..111 and blocks 5 — active and
+  // capable of progress, just slower down the street.
+  let liveSegs=0,ablSegs=0;
+  for(const seed of[0x4f00,0x4f25,0x4f4a]){
+    const a=bootGame('demon-fist',{seed,footer:FOOTER}),b=bootGame('demon-fist',{seed,footer:FOOTER});
+    b.sandbox.__NO_ACROBATICS=1;
+    let first=-1;
+    for(let frame=1;frame<=600&&first<0;frame++){
+      a.frames(1,false);b.frames(1,false);
+      if(a.sandbox.__demonFistPhysical()!==b.sandbox.__demonFistPhysical())first=frame;
+    }
+    a.frames(18000-600,false);b.frames(18000-600,false);
+    const pa=a.sandbox.__demonFistProbe(),pb=b.sandbox.__demonFistProbe();
+    liveSegs+=pa.stats.segments;ablSegs+=pb.stats.segments;
+    console.log(`  ${seed.toString(16)}: diverged at ${first}f; live jumps ${pa.stats.jumps} (hits ${pa.stats.jumpHits}), `+
+      `sprints ${pa.stats.sprints} (arrivals ${pa.stats.sprintArrivals}), segments ${pa.stats.segments}/${pb.stats.segments}, KOs ${pa.stats.kos}/${pb.stats.kos}`);
+    if(first<1||first>600)fail(`${seed.toString(16)}: acrobatics never physically diverged (${first})`);
+    if(!pa.finite||!pb.finite)fail(`${seed.toString(16)}: non-finite acrobatics A/B state`);
+    if(pa.stats.jumps<40||pa.stats.jumpHits<25||pa.stats.sprints<25||pa.stats.sprintArrivals<18)
+      fail(`${seed.toString(16)}: live build stopped using acrobatics deliberately: ${JSON.stringify({jumps:pa.stats.jumps,jumpHits:pa.stats.jumpHits,sprints:pa.stats.sprints,arrivals:pa.stats.sprintArrivals})}`);
+    if(pb.stats.jumps!==0||pb.stats.jumpHits!==0||pb.stats.sprints!==0||pb.stats.sprintArrivals!==0)
+      fail(`${seed.toString(16)}: __NO_ACROBATICS leaked acrobatics: ${JSON.stringify({jumps:pb.stats.jumps,sprints:pb.stats.sprints})}`);
+    if(pb.stats.kos<80||pb.stats.segments<25||pb.stats.blocks<4)
+      fail(`${seed.toString(16)}: ablated baseline stopped functioning: ${JSON.stringify({kos:pb.stats.kos,segments:pb.stats.segments,blocks:pb.stats.blocks})}`);
+  }
+  console.log(`  aggregate segments live ${liveSegs} vs ablated ${ablSegs}`);
+  if(liveSegs<=ablSegs)fail(`acrobatics stopped changing traversal outcomes: ${liveSegs} vs ${ablSegs}`);
 }
 
 console.log('4) DEMON GATE and THE MOB change the world during an exact 240f warning');
@@ -310,7 +377,7 @@ console.log('5b) every mapped key is responsive, and simultaneous presses compos
     const a=game.sandbox.__dfLastApplied();for(const c of codes)game.key('keyup',c);game.sandbox.__dfClearApplied();return a;};
   const checks=[
     ['ArrowLeft',{move:-1}],['ArrowRight',{move:1}],['ArrowDown',{dodge:true}],
-    ['ArrowUp',{attack:'slam'}],['Space',{attack:'sweep'}],
+    ['ArrowUp',{attack:'jump'}],['Space',{attack:'sweep'}],
     ['KeyX',{attack:'jab'}],['KeyJ',{attack:'jab'}],['KeyK',{attack:'jab'}],
     ['KeyZ',{attack:'launcher'}],['ShiftLeft',{attack:'launcher'}],['ShiftRight',{attack:'launcher'}]
   ];
@@ -341,13 +408,107 @@ console.log('5b) every mapped key is responsive, and simultaneous presses compos
   if(!game.sandbox.__demonFistProbe().finite)fail('keyboard storm produced non-finite state');
 }
 
+console.log('5c) manual purity: a human owns the fighter completely — zero bot leakage');
+{
+  // Root-cause fixtures for the 2026-07-17 owner report "the ai isn\'t fully
+  // given up controls". Each one FAILS on the pre-fix build:
+  //  - no-input stillness: old build drifted 5.57px with |vx| spikes to 1.57
+  //    over 120 idle frames (the bot anti-stall backstop shoved the fighter
+  //    every ~11 stationary frames, outside the controller mux).
+  //  - held-direction attack: old build answered RIGHT+jab by spinning LEFT
+  //    (atkDir -1) to auto-target the enemy behind.
+  //  - held-direction dodge: old build auto-evaded against the held arrow.
+  //  - comeback chord: old humanIntent gated the GOD WHEEL at hp<40 while the
+  //    sim charges 50 meter at hp<50 — X+Z at hp 45 / meter 60 produced a jab.
+  const boot=()=>{
+    const game=bootGame('demon-fist',{seed:0x5030,footer:FOOTER});
+    press(game,'Enter');press(game,'Enter');
+    if(!game.sandbox.__demonFistManual().playing)fail('manual purity fixtures need playing mode');
+    game.sandbox.__dfClearStreet(2600);
+    return game;
+  };
+  {
+    const game=boot();game.sandbox.__dfClearApplied();
+    const x0=game.sandbox.__dfFighterNow().x;let maxVx=0,minX=x0,maxX=x0,impure=null;
+    for(let i=0;i<110;i++){
+      game.frames(1,false);
+      const now=game.sandbox.__dfFighterNow(),applied=game.sandbox.__dfLastApplied();
+      maxVx=Math.max(maxVx,Math.abs(now.vx));minX=Math.min(minX,now.x);maxX=Math.max(maxX,now.x);
+      if(applied&&(applied.move!==0||applied.attack!==null||applied.dodge!==false||applied.tactic!=='MANUAL FIST'))
+        impure=impure||applied;
+    }
+    const drift=maxX-minX;
+    console.log(`  no-input stillness: drift ${drift.toFixed(2)}px, max|vx| ${maxVx.toFixed(2)} over 110f (old build: 5.57px / 1.57)`);
+    if(impure)fail(`idle human frames carried non-human intent: ${JSON.stringify(impure)}`);
+    if(drift>1||maxVx>.25)fail(`fighter moved without input in manual mode: drift ${drift.toFixed(2)}px, |vx| ${maxVx.toFixed(2)}`);
+  }
+  {
+    const game=boot();
+    game.sandbox.__dfSpawnAt('thug',-12);
+    game.key('keydown','ArrowRight');game.frames(2,false);
+    game.key('keydown','KeyX');game.frames(2,false);
+    const held=game.sandbox.__dfFighterNow();
+    game.key('keyup','KeyX');game.key('keyup','ArrowRight');
+    console.log(`  RIGHT+jab with the enemy on the LEFT: atkDir ${held.atkDir}, face ${held.face} (old build: -1)`);
+    if(held.state!=='attack'||held.atkDir!==1||held.face!==1)
+      fail(`attack ignored the held arrow: ${JSON.stringify(held)}`);
+    game.frames(40,false);game.sandbox.__dfClearStreet(2600);game.sandbox.__dfSpawnAt('thug',-12);
+    game.key('keydown','KeyX');game.frames(2,false);
+    const assist=game.sandbox.__dfFighterNow();game.key('keyup','KeyX');
+    if(assist.state!=='attack'||assist.atkDir!==-1)
+      fail(`neutral jab lost the auto-target assist: ${JSON.stringify(assist)}`);
+  }
+  {
+    const game=boot();
+    const id=game.sandbox.__dfSpawnAt('thug',10,['windup',12]);
+    const x0=game.sandbox.__dfFighterNow().x;
+    game.key('keydown','ArrowRight');game.key('keydown','ArrowDown');game.frames(6,false);
+    const now=game.sandbox.__dfFighterNow(),foe=game.sandbox.__dfEnemy(id);
+    game.key('keyup','ArrowRight');game.key('keyup','ArrowDown');
+    console.log(`  RIGHT+dodge past the windup: face ${now.face}, travel ${(now.x-x0).toFixed(2)}px, baited ${foe&&foe.baited} (old build: away from the arrow)`);
+    if(now.state!=='dodge'||now.face!==-1||now.x-x0<1)
+      fail(`dodge ignored the held arrow: ${JSON.stringify({now,from:x0})}`);
+    if(!foe||!foe.baited)fail('held-direction dodge stopped baiting the windup');
+  }
+  {
+    const game=boot();
+    game.sandbox.__dfSpawnAt('thug',20);
+    game.sandbox.__dfSetVitals(45,60);
+    game.key('keydown','KeyX');game.key('keydown','KeyZ');game.frames(3,false);
+    const now=game.sandbox.__dfFighterNow();
+    game.key('keyup','KeyX');game.key('keyup','KeyZ');
+    console.log(`  X+Z at hp 45 / meter 60: state ${now.state} (old build: attack — the chord died in the mapping)`);
+    if(now.state!=='super')fail(`comeback GOD WHEEL chord did not fire: ${JSON.stringify(now)}`);
+  }
+  {
+    const game=boot();
+    game.key('keydown','ArrowRight');
+    let peak=0;for(let i=0;i<80;i++){game.frames(1,false);peak=Math.max(peak,game.sandbox.__dfFighterNow().vx);}
+    game.key('keyup','ArrowRight');
+    console.log(`  held-right on a clear street: peak vx ${peak.toFixed(2)} px/f (walk 1.45, sprint 2.35; old build: 1.0)`);
+    if(peak<2||peak>2.5)fail(`manual sprint out of range: peak vx ${peak.toFixed(2)}`);
+    game.sandbox.__dfClearStreet(2600);
+    game.key('keydown','ArrowUp');game.frames(10,false);game.key('keyup','ArrowUp');
+    const air=game.sandbox.__dfFighterNow();
+    game.frames(60,false);
+    const landed=game.sandbox.__dfFighterNow();
+    console.log(`  UP from the street: state ${air.state} at y ${air.y.toFixed(1)} -> ${landed.state}`);
+    if(air.state!=='jump'||air.y<=2)fail(`manual jump never left the ground: ${JSON.stringify(air)}`);
+    if(landed.state!=='free'||landed.y!==0)fail(`manual jump never landed clean: ${JSON.stringify(landed)}`);
+    if(!game.sandbox.__demonFistProbe().finite)fail('manual acrobatics produced non-finite state');
+  }
+}
+
 console.log('6) ten-minute soaks: moving street, live fights, block advance, and exact SHOW budgets');
 for(const seed of[0x5200,0x52d4]){
   const{game,samples}=runSoak('demon-fist',{seed,minutes:10,footer:FOOTER}),report=analyzeSoak(samples),p=game.sandbox.__demonFistProbe(),
     show=p.show,offered=show.offeredByTier,shown=show.shownByTier,s3=shown[3]||0,continuity=game.sandbox.__dfContinuity;
   console.log(`  ${seed.toString(16)} ${soakLine(report)}; KOs ${p.stats.kos}, hits taken ${p.stats.hitsTaken}, `+
     `blocks ${p.stats.blocks}, tiers ${JSON.stringify(shown)}`);
-  assertSoak(seed.toString(16),report,{still:1,quiet:5,stall:7,minEvents:1580,minProgress:548},fail);
+  // Floors re-measured 2026-07-17 on the TMNT pacing build: events 2584..2656,
+  // progress 824..871 (walk-1.0 build: 1981..2008 / 729..762). Stall ceiling
+  // stays 7s; the sprint brought the measured stall DOWN to 4..5s.
+  assertSoak(seed.toString(16),report,{still:1,quiet:5,stall:7,minEvents:2050,minProgress:640},fail);
   inBands(p,SOAK_BANDS,`seed ${seed.toString(16)} soak`);
   if(!p.finite)fail(`seed ${seed.toString(16)}: non-finite state`);
   if(continuity.max>7)fail(`seed ${seed.toString(16)}: unaccounted ${continuity.max.toFixed(2)}px one-step discontinuity`);
@@ -460,7 +621,11 @@ console.log('9) feedback legibility: every good/bad sim event is visibly represe
   const config={frames:11000,poll:5,radius:26,perCategory:3,
     goodPalette:['#ffd166','#ffb02e','#67e8a2','#59d8f5','#fff3da'],badPalette:['#ff5d4f','#c92c3c','#ffffff'],
     signatureProbe:'__demonFistSignature'};
-  const runs=[runFeedbackVisibility('demon-fist',Object.assign({seed:0x5300},config)),
+  // Seed 0x5302 replaced 0x5300 on 2026-07-17: the pacing build drops combos
+  // by hit far less often, and 0x5302 is a measured seed where bad:combo-drop
+  // still fires (x2) inside the 11000-frame window alongside every other
+  // category, including the new good:jump quake (x28).
+  const runs=[runFeedbackVisibility('demon-fist',Object.assign({seed:0x5302},config)),
     runFeedbackVisibility('demon-fist',Object.assign({seed:0x52d4},config))];
   for(const run of runs){
     const byKey={};for(const s of run.samples)byKey[s.key]=(byKey[s.key]||[]).concat(
@@ -471,7 +636,7 @@ console.log('9) feedback legibility: every good/bad sim event is visibly represe
   console.log(`  ${feedbackLine(runs)}; signatures ${runs.every(r=>r.signaturesMatch)?'identical':'DIFFERENT'}`);
   assertFeedback('feedback',runs,{
     required:['good:ko','good:launcher','good:juggle','good:counter','good:combo','good:elite-ko','good:mob-clear','good:super',
-      'bad:hit-taken','bad:combo-drop','bad:knockdown'],
+      'good:jump','bad:hit-taken','bad:combo-drop','bad:knockdown'],
     minChanged:{default:12,'good:counter':8,'bad:combo-drop':8,'good:combo':8},
     minSignature:{default:8,'good:counter':4,'bad:combo-drop':4,'good:combo':4},
     maxInvisible:0

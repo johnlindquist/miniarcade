@@ -1697,3 +1697,121 @@ ladder, good/bad feedback ledger with static aftermath decals.
   income changes re-flood tier 2.
 - catalog-eval will flag the demon-fist files as unregistered until the
   games.js/game-contracts.js entries land (owner registers them).
+
+## STAR ROLLER — readability + directional-roll pass (2026-07-17)
+
+Owner: "You can't really tell what anything is and the styles doesn't match our
+other games well. The 'rolling ball' graphics definitely need to be
+directionally accurate (like the Pocket League ball)."
+
+Translated: (1) items had no ground contact and weak silhouettes on busy floors;
+(2) the 70px striated haze veil washed out the top third of every zone; (3) the
+ball was a planar record-spin — features rotated in the screen plane instead of
+scrolling over a sphere along the velocity.
+
+Fixes (all render-only; sim signature proven identical by the full behavior
+suite): spherical surface roll — features at fixed spherical coords scrolled by
+body.roll (forward, from speed) and body.rollX (lateral, from vx) with rim
+foreshortening, equator stripes as the primary read, fixed top-left gloss;
+contact shadows under every grounded item (rain/motes excluded); rebuilt mouse
+and stamped toy block; haze veil -> 34px horizon glow; orbit nebula dust patches
+after the veil removal exposed the flat space slab (largest color share
+.580 -> .326, entropy 2.70 -> 3.42; bands untouched — the art moved, not the bar).
+
+Measured: player burst median .378 -> .395, sweeper .220 -> .269, finale burst
+max .150 -> .232, zone structure median .557 -> .565, quiet floors <= .0061 vs
+.016 ceiling. All 26 automated visual gates + fresh semantic receipt + preserved
+montage 1a30a7bb... + 30s clip receipt 7ffa2ab8... green; behavior, motion, and
+catalog evals green.
+
+Lessons: (1) an undefined pose field (rollX) reaches drawBall on the boot frame
+before the first advanceBall — a NaN in any canvas call crashes the native Skia
+rasterizer with a Rust panic, not a JS error; initialize every new pose field in
+every body factory. (2) A depth veil can silently subsidize a zone's entropy
+metrics — removing bad art exposed flat art underneath; fix the exposed art,
+never widen the band. (3) Legacy-shaped review receipts must carry
+legacyReviewIdentitySha256; the AEP protocol identity is only for schema-2
+manifest receipts.
+
+### SKY REIGN — owner polish: a real dragon, charged homing artillery, ascension, blended borders (2026-07-17)
+
+Owner: "The dragon needs to look like a dragon"; lock-on needs "homing artillery — locks on to multiple
+baddies at once, powering up, then releasing"; "definitely needs upgrades over time"; "the transition
+between lands needs to be smoother."
+
+Perception -> mechanism:
+1. DRAGON (render-only): three-pose articulated flap (folded upstroke / glide / reaching downstroke) on
+   twice-scalloped finger-strutted membranes, sinuous swaying neck to a horned skull, seated rider, whip
+   tail + spade fin posed from measured vx (pose honesty: wrong-way/crab violations still 0). Actor caps
+   re-derived 34x28 -> 38x38 from drawn-pixel measurement; footprint share still ~2%.
+2. HOMING ARTILLERY: the rack already homed — the missing beat was the POWER-UP. A full rack now flips
+   brackets/pips gold, builds an aura ring with orbiting sparks on the dragon, blinks the HUD rack, and
+   the bot HOLDS the charge 22f (CHARGE_HOLD) before release. New narrow __NO_VOLLEY ablation: 8-seed
+   paired sweep — live volleys 102..112, wipes 9..18, sweeps 10875..12862, phaseBreaks 3 vs ablated
+   all-zero (hard) with the baseline still armed and mobile (kills 86..99, lances 321..383, lulls <=147f).
+   First lock 180..240f, physical divergence inside the setup window on every seed.
+3. ASCENSION (new sim mechanic): kills 12/30 grow the rack 2 -> 3 -> 4; art evolves per tier (crown
+   horns, flank armor, extra strut, bright spade — executable tier-0-vs-2 aura-stripped diff .0167,
+   floor .012) + HUD RANK and sealed slots opening. __NO_UPGRADE is byte-identical until the exact
+   12th-kill frame (1380), then: wipes 9..20 vs 0, maxRack 4 vs 2 — while the frozen build volleys MORE
+   (202..217): capacity, not activity, is what ascension buys, so the eval bands wipes/maxRack, not kills.
+   Natural-run telemetry banded: upgrades [2,2], fullRacks, maxRack [4,4] in policy AND soak bands; tier
+   milestones pinned to kills 12/30 with caps 3/4.
+4. BLENDED BORDERS (render-only): each terrain row is drawn by the biome that OWNS its worldY, so the
+   next land fills the horizon and sweeps down with the scroll while the base palette lerps over the
+   last 520 units; "<LAND> AHEAD" call-out at blend entry. Border gate: 3261 dune + 1126 reef palette px
+   in one frame at t=.78 (floors 2100/700; the old hard-cut renderer measures ~0 reef px), scroll
+   coherence holds THROUGH the border.
+
+Recalibrated honestly after the sim shift (2-lock opening + charge hold): route-plan aggregate ratio
+1.534 -> 1.313 measured (floors 14000/1.15/.62 vs 20054/1.313/.551), policy kills band [104,213]
+(measured 130..178), soak events 2205..2246 (floor 1700). Feedback ledger curated: off-screen homing
+kills no longer enter the ledger (an event the viewer cannot see did not happen) — fixed three genuine
+0-signature samples; suite now 62 beats / 16 categories incl. required good:ascend. Visual chain: 16-beat
+montage (was 14; +ascended dragon, +land border), reviewed 2026-07-17, montage c5e18af7f074d995...,
+clip 5823491 bytes 12d3058fffc477bd..., preserved via preserve-visual-review.
+
+Lesson: a mechanic the sim already had (multi-lock homing) can still fail the owner's read — what was
+missing was the enter/hold/loaded/release grammar; the 22-frame gold hold is what makes "powering up,
+then releasing" legible. And when a capacity upgrade doesn't move raw kill counts, band the thing it
+actually buys (full-rack wipes), never a proxy that the ablated build can match.
+
+### DEMON FIST — owner polish round: stable stage, TMNT pacing, manual purity (2026-07-17)
+
+Owner: "sky scape lights flicker waaaay too much", "let the guy move faster with
+jumping and stuff, like the classic ninja turtles games", "controls seem broken
+when you take over as a human, it's like the ai isn't fully given up controls."
+
+1. STABLE STAGE. Every per-frame background animation removed: strobing FIST
+   neon (9f hash blink), pulsing gate ember windows/orbs, rising sky embers,
+   sine curb accents, breathing lava, pulsing puddles, bobbing lanterns — all
+   now seeded constants; only the dock water drifts (1px/17f, constant luma).
+   New env-only background-stability gate freezes the world and diffs nearby
+   sim times: old build measured .0019–.0222 changed fraction per block (gate
+   block worst), fixed build 0–.000728, ceiling .002 — the old build fails it.
+2. TMNT PACING. Walk 1.0→1.45 px/f; clear-runway sprint 2.35 gated on a 200px
+   street-clear radius (beyond the 150px spawn ring — fights can never be
+   outrun; a mid-round planner happily sprinted past fights, 123 seg/45 KOs,
+   until far-runway candidates were restricted to truly empty streets); DEMON
+   DROP leap: 5f crouch, honest arc, intercept-lead launch (mark vx×30f),
+   landing quake with ring/dust/chevron decal + good:jump cue. Bot use is
+   deliberate and counted: jumps 64–73 with 41–48 conversions, sprints 37–47
+   with 31–39 arrivals per 5 min. __NO_ACROBATICS ablation: diverges ≤43f,
+   ablated build zero acrobatics yet functional (KOs 117–118), segments 179 vs
+   138. Fighter pace 0.64→1.06–1.16 px/f (floor .55→.95); soak stall 5–6s→4–5s,
+   events ~2000→2584–2656. All bands re-derived from a fresh 10-seed sweep +
+   two 10-min soaks; planner gate re-shaped (10/10 segment wins, 1.48x
+   traversal at score parity) with reasons in the calibration comments.
+3. MANUAL PURITY. Root cause: bot-side subsystems acting outside the
+   controllerMux — the anti-stall backstop shove in stepPlayer (5.57px drift,
+   |vx| 1.57 over 120 idle frames with zero input), startAttack/startDodge
+   auto-facing overriding the held arrow, and a humanIntent super gate (hp<40)
+   mismatched with startAttack's cost (hp<50) that ate the comeback chord.
+   Fixed behind a manualDrive=playing()||manual() flag (bot sim byte-identical;
+   headless runs never set it). New 5c purity fixtures fail the old build on
+   all four counts and now measure 0.00px/0.00vx idle drift.
+
+Lesson: motion-contract backstops and auto-aim assists are WATCHED-BOT
+furniture — anything that moves the fighter must route through the intent mux
+or check who is driving. And a mobility buff needs an anti-cheese gate priced
+against the spawn ring, or the planner will optimize into skipping the show.

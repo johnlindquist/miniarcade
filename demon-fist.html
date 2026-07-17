@@ -11,7 +11,7 @@
   canvas:focus-visible{outline:2px solid #ffb02e;outline-offset:-3px}
 </style>
 <canvas id="cv" width="320" height="720" tabindex="0"
-  aria-label="Demon Fist. A tiny God Hand brawler for the 4:9 strip: one fighter and his cursed right fist walk five city blocks, jabbing, launching, juggling and sweeping every thug and demon that steps up, until the Demon Gate itself sends its crowned keeper."></canvas>
+  aria-label="Demon Fist. A tiny God Hand brawler for the 4:9 strip: one fighter and his cursed right fist walk five city blocks — sprinting the clear stretches, leaping in with the DEMON DROP, jabbing, launching, juggling and sweeping every thug and demon that steps up — until the Demon Gate itself sends its crowned keeper."></canvas>
 <script src="engine.js"></script>
 <script src="autoplay.js"></script>
 <script>
@@ -25,7 +25,8 @@ const{controllerMux,skillProfile,createRng}=AI;
 // right fist walks five authored blocks — BACK ALLEY, MARKET ROOF, DOCK SIDE,
 // OLD DOJO, DEMON GATE — and everything that steps up gets read, answered, and
 // put down: jab chains, launchers, air slams, crowd sweeps, dodge-on-the-tell
-// counters, and the GOD WHEEL roulette super when the meter burns full.
+// counters, the DEMON DROP leap with its landing quake, a full sprint on the
+// clear stretches, and the GOD WHEEL roulette super when the meter burns full.
 // Nothing pre-draws intent (motion contract): no route lines, no target
 // highlights, no predicted arcs — tells live on the bodies (the pulled-back
 // fist, the bruiser's overhead raise, the demon's ember gape, the keeper's
@@ -33,6 +34,13 @@ const{controllerMux,skillProfile,createRng}=AI;
 // human, the bot, and the copied-state fight planner — moves through ONE
 // shared integrator every frame, and the body always faces its actual travel.
 const TAU=Math.PI*2,GROUND_Y=308,CAM_HOME=52,BLOCK_W=1260,RUN_FRAMES=37800,GRAV=.17;
+// TMNT pacing constants: the walk is brisk, a clear runway breaks into a RUN,
+// and the DEMON DROP leap closes gaps with a landing quake. Sprint requires an
+// empty street within SPRINT_RADIUS so a live brawl is never outrun mid-fight.
+// SPRINT_RADIUS sits beyond the 150px wave spawn ring: a crew walking in from
+// either edge — including a rear pincer — always suppresses the run, so the
+// street can never be outrun mid-encounter.
+const WALK_TOP=1.45,WALK_ACCEL=.14,SPRINT_TOP=2.35,SPRINT_RADIUS=200,JUMP_VY=2.6,JUMP_CD=46;
 const INK='#07080d',CREAM='#fff3da',GOLD='#ffb02e',AMBER='#ff8a3d',CORAL='#ff5d4f',
   MINT='#67e8a2',CYAN='#59d8f5',STEEL='#9aa7b8',BLOOD='#c92c3c';
 const BLOCKS=[
@@ -76,6 +84,12 @@ const MOVES={
 const DODGE_WINDOW={thug:8,sprinter:6,bruiser:11,demon:12,elite:13};
 
 let showFrame=0,runFrame=0,state='run',resultT=0,outcome='',worldSeed=1,skillSeed=1;
+// True exactly while a human owns the controller (playing session or manual
+// takeover). Bot-side helpers that act on the fighter OUTSIDE the intent mux
+// (the anti-stall backstop, attack auto-facing) must check this: a human who
+// pressed nothing must see the fighter do nothing. Headless/eval/render runs
+// never press keys, so this stays false there and the bot sim is untouched.
+let manualDrive=false;
 let fighter=null,enemies=[],texts=[],plan=null,planAt=-1e9,skill=null,visualIntent=null;
 let camX=0,waveTriggers=[],waveCursor=0,enemySerial=0,tokenCount=0,pendingWaves=new Set();
 let lastSegment=0,lastBlock=0,finaleT=0;
@@ -101,6 +115,7 @@ const stats={segments:0,blocks:1,kos:0,hits:0,hitsTaken:0,launchers:0,slams:0,sw
   dodges:0,counters:0,cracks:0,supers:0,comboMilestones:0,comboDrops:0,knockdowns:0,
   waves:0,waveClears:0,acts:0,eliteKos:0,mobClears:0,noHitMobs:0,actClears:0,lapses:0,
   whiffs:0,contacts:0,comboBest:0,jabs:0,finishers:0,thug:0,sprinter:0,bruiser:0,demon:0,elite:0,
+  jumps:0,jumpHits:0,sprints:0,sprintArrivals:0,
   events:0,progress:0,maxEventLull:0,maxProgressLull:0,maxStep:0,appliedIntents:0,admireIntents:0};
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
   1:{frames:12},2:{frames:44,minGap:100},
@@ -158,6 +173,7 @@ function waveComp(block,i,n){
 function makeFighter(x){return{x,y:0,vx:0,vy:0,face:1,hp:60,meter:0,combo:0,comboT:0,
   state:'free',stateT:0,atkKind:null,atkT:0,atkPhase:'',atkDir:1,atkHits:null,chain:0,
   slamTarget:-1,focusId:-1,repositionT:0,repositionDir:1,dodgeCd:0,iframesT:0,invulnT:0,hitFlashT:0,knockT:0,gloryT:0,lockFace:false,
+  jumpCd:0,jumpDir:1,jumpVx:0,sprintT:0, // acrobatics fields live in the factory: the boot frame renders before the first sim step
   walkPhase:0,lean:0,grounded:true,landed:false,intent:null,lastX:x,lastY:0,isFighter:true};}
 function makeEnemy(kind,x,side){const spec=ENEMY_KINDS[kind];return{id:enemySerial++,kind,x,y:0,vx:0,vy:0,
   face:side||-1,hp:spec.hp,hpMax:spec.hp,armor:kind==='bruiser',state:'enter',stateT:0,attackCd:60,
@@ -237,6 +253,31 @@ function startAttack(kind){
     f.state='slam';f.stateT=34;f.slamTarget=t.id;f.vy=3.2;f.lockFace=true;f.face=Math.sign(t.x-f.x)||1;
     return true;
   }
+  if(kind==='jump'){
+    // Air-to-air first: an airborne mark in reach turns the leap into the slam.
+    let air=null,ad=1e9;
+    for(const e of aliveEnemies()){
+      if(e.y<=4||e.state==='down'||e.state==='vanish'||e.state==='appear')continue;
+      const d=Math.abs(e.x-f.x);if(d<ad){ad=d;air=e;}
+    }
+    if(air&&ad<=19)return startAttack('slam');
+    if(typeof globalThis.__NO_ACROBATICS!=='undefined')return false;
+    if(f.state!=='free'||!f.grounded||f.jumpCd>0)return false;
+    // DEMON DROP: crouch -> leap arc -> landing quake. The launch speed is
+    // sized to land ON the mark, and a held arrow owns the direction.
+    const held=f.intent&&Math.abs(f.intent.move||0)>.1?Math.sign(f.intent.move):0;
+    f.jumpDir=held||f.face||1;
+    // Intercept lead: the mark keeps walking during the ~35f arc, so the
+    // launch speed aims at where it is GOING (its current velocity, nothing
+    // predicted beyond honest extrapolation), not where it stands.
+    const mark=nearestEnemy(f.x,e=>Math.sign(e.x-f.x||f.jumpDir)===f.jumpDir);
+    const lead=mark?clamp(Math.abs(mark.x+mark.vx*30-f.x),12,58):46;
+    f.jumpVx=mark?clamp(lead/31,.9,1.75):1.5;
+    f.state='jump';f.stateT=5;f.atkPhase='crouch';f.atkKind=null;
+    f.lockFace=true;f.face=f.jumpDir;f.jumpCd=JUMP_CD;
+    stats.jumps++;markEvent(2);
+    return true;
+  }
   // The bot/human say 'jab'; the chain maps it to the next chain step.
   let use=kind;
   if(kind==='jab'){
@@ -248,7 +289,12 @@ function startAttack(kind){
   f.state='attack';f.atkKind=use;f.atkT=0;f.atkPhase='startup';f.atkHits={};
   f.chain=use==='jab1'?1:use==='jab2'?2:use==='jab3'?3:0;
   if(use==='sweep')stats.sweeps++;
-  const t=nearestEnemy(f.x);f.lockFace=true;if(t&&Math.abs(t.x-f.x)<40)f.face=Math.sign(t.x-f.x)||f.face;
+  // Auto-target assist turns toward the nearest body — but never against a
+  // human's held arrow: the player owns the attack direction (manual purity).
+  const t=nearestEnemy(f.x);f.lockFace=true;
+  const held=manualDrive&&f.intent&&Math.abs(f.intent.move||0)>.3?Math.sign(f.intent.move):0;
+  if(held)f.face=held;
+  else if(t&&Math.abs(t.x-f.x)<40)f.face=Math.sign(t.x-f.x)||f.face;
   f.atkDir=f.face;
   return true;
 }
@@ -258,11 +304,15 @@ function startDodge(){
   f.state='dodge';f.stateT=12;f.iframesT=12;f.dodgeCd=34;f.lockFace=true;
   // Face the tell being answered; any enemy winding up in range is now BAITED:
   // when its committed strike completes into empty air, the punish window opens.
+  // A human holding an arrow owns the travel: the backstep (move=-face) goes
+  // toward the held direction instead of the bot's auto-evade line.
   let dir=f.face;
+  const held=manualDrive&&f.intent&&Math.abs(f.intent.move||0)>.3?Math.sign(f.intent.move):0;
   for(const e of aliveEnemies()){
     if(e.state!=='windup')continue;
-    if(Math.abs(e.x-f.x)<specOf(e).range+10){e.baited=true;dir=Math.sign(e.x-f.x)||dir;}
+    if(Math.abs(e.x-f.x)<specOf(e).range+10){e.baited=true;if(!held)dir=Math.sign(e.x-f.x)||dir;}
   }
+  if(held)dir=-held;
   f.face=dir;
   return true;
 }
@@ -413,6 +463,7 @@ function stepFighterCombat(){
   const f=fighter;
   if(f.comboT>0){f.comboT--;if(f.comboT<=0&&f.combo>0)dropCombo(false);}
   if(f.dodgeCd>0)f.dodgeCd--;
+  if(f.jumpCd>0)f.jumpCd--;
   if(f.invulnT>0)f.invulnT--;
   if(f.iframesT>0)f.iframesT--;
   if(f.hitFlashT>0)f.hitFlashT--;
@@ -439,6 +490,36 @@ function stepFighterCombat(){
       if(hits)markEvent(4);
     }
     if(f.stateT<=0){f.state='free';f.lockFace=false;}
+    return;
+  }
+  if(f.state==='jump'){
+    // DEMON DROP: anticipation crouch, honest ballistic arc through the shared
+    // integrator, then the landing quake hits every grounded body in reach.
+    if(f.atkPhase==='crouch'){
+      f.stateT--;
+      if(f.stateT<=0){f.atkPhase='air';f.vy=JUMP_VY;f.vx=f.jumpDir*f.jumpVx;
+        fxDust(sx(f.x),GROUND_Y-2,5,'#8a7a5e');}
+      return;
+    }
+    if(f.atkPhase==='air'){
+      if(f.grounded&&f.vy===0){
+        f.atkPhase='land';f.stateT=6;f.atkDir=f.jumpDir;
+        fxDust(sx(f.x),GROUND_Y-2,8,'#8a7a5e');shake(2);
+        let hits=0;
+        for(const e of aliveEnemies()){
+          if(e.state==='vanish'||e.state==='appear'||e.state==='down'||e.y>10)continue;
+          if(Math.abs(e.x-f.x)>14)continue;
+          if(hitEnemy(e,{dmg:2,meter:6,knock:1.1},'jump'))hits++;
+        }
+        if(hits){stats.jumpHits++;markEvent(4);
+          cue('good','jump',f.x,12,.5);
+          marks.push({kind:'jump',x:f.x,y:0,f:runFrame});if(marks.length>40)marks.shift();
+          ring(sx(f.x),GROUND_Y-8,GOLD,2.2,20);say('DEMON DROP',GOLD,44,44);}
+      }
+      return;
+    }
+    f.stateT--;
+    if(f.stateT<=0){f.state='free';f.atkPhase='';f.lockFace=false;}
     return;
   }
   if(f.state==='slam'){
@@ -501,7 +582,7 @@ function rolloutStance(targetX){
   const foesNear=foes.some(q=>Math.abs(q.x-fighter.x)<90);
   let minThreat=999,edge=0,cluster=0;
   for(let f=0;f<64;f++){
-    advanceBrawler(b,clamp((targetX-b.x)*.12,-1,1),{top:1});
+    advanceBrawler(b,clamp((targetX-b.x)*.12,-1,1),{top:WALK_TOP,accel:WALK_ACCEL});
     for(const q of foes){
       // Foes close to striking range and hold there — they do not phase
       // through the fighter, so approaching a distant enemy is priced honestly.
@@ -533,7 +614,14 @@ function rolloutStance(targetX){
 function buildFightPlan(){
   if(typeof globalThis.__NO_ROUTE_PLAN!=='undefined')return reactiveFight();
   const candidates=[];
-  for(const off of[-34,-20,-10,0,10,20,34])candidates.push(rolloutStance(fighter.x+off));
+  // Far runway candidates exist ONLY when no live body stands within the spawn
+  // ring: a genuinely empty stretch gets a full sprint line (capping at +34
+  // used to stutter the run every replan), but a street with anyone on it —
+  // even walking in from the edges — keeps the close-quarters ladder so the
+  // fighter can never sprint PAST a fight (the coward's line).
+  const empty=!aliveEnemies().some(e=>Math.abs(e.x-fighter.x)<SPRINT_RADIUS);
+  for(const off of(empty?[-34,-20,-10,0,10,20,34,64,96]:[-34,-20,-10,0,10,20,34]))
+    candidates.push(rolloutStance(fighter.x+off));
   const near=nearestEnemy(fighter.x);
   if(near)candidates.push(rolloutStance(near.x-Math.sign(near.x-fighter.x||1)*13));
   candidates.sort((a,b)=>b.score-a.score||a.targetX-b.targetX);
@@ -559,6 +647,9 @@ function botIntentCore(){
   if(visualIntent)return Object.assign({},visualIntent);
   if(pres.admire&&typeof globalThis.__NO_ADMIRE==='undefined'){stats.admireIntents++;
     return{move:.25,attack:null,dodge:false,tactic:'SAVOR THE FIST'};}
+  // Mid-leap the feet are committed; the hands steer the landing onto the mark.
+  if(f.state==='jump'){const t=nearestEnemy(f.x);
+    return{move:t?clamp((t.x-f.x)*.2,-1,1):(f.jumpDir||1)*.6,attack:null,dodge:false,tactic:'DEMON DROP'};}
   const alive=aliveEnemies().filter(e=>e.state!=='down');
   // Focus fire: the bot works ONE target until it falls (or escapes), then
   // picks the weakest body in reach. Spreading damage is how packs survive.
@@ -601,7 +692,12 @@ function botIntentCore(){
     if(nearL&&nearR&&(f.splitCd||0)<=0){
       f.splitCd=40;
       const freeL=aliveEnemies().filter(e=>e.x<f.x-10).length,freeR=aliveEnemies().filter(e=>e.x>f.x+10).length;
-      return{move:freeL<=freeR?-.9:.9,attack:null,dodge:false,tactic:'SPLIT THE PACK'};
+      const out=freeL<=freeR?-1:1;
+      // Boxed with legs under you: LEAP the pack — the arc clears the strikes
+      // and the landing quake greets whoever followed. Grounded fallback: split.
+      if(f.jumpCd<=0&&f.grounded&&typeof globalThis.__NO_ACROBATICS==='undefined')
+        return{move:out,attack:'jump',dodge:false,tactic:'LEAP THE PACK'};
+      return{move:out*.9,attack:null,dodge:false,tactic:'SPLIT THE PACK'};
     }
     if(f.splitCd>0)f.splitCd--;
     // 1c) Tagged recently? Give ground before the next exchange.
@@ -648,6 +744,16 @@ function botIntentCore(){
     }
     if(near){
       const dx=near.x-f.x,adx=Math.abs(dx);
+      // 4c) TMNT gap closer: a distant grounded mark on a clear runway — leap
+      // the gap and open with the landing quake instead of strolling in. The
+      // decision is priced on the INTERCEPT gap (mark keeps walking during the
+      // arc), so a fast closer gets jabbed, not overleapt. The keeper's warn
+      // march stays a measuring beat, never a leap target.
+      const pdx=near.x+near.vx*30-f.x,padx=Math.abs(pdx);
+      if(padx>=24&&padx<=50&&Math.sign(pdx)===Math.sign(dx||1)&&near.y<6&&near.state!=='windup'&&
+        f.jumpCd<=0&&f.grounded&&!(near.elite&&act.phase==='warn')&&
+        typeof globalThis.__NO_ACROBATICS==='undefined')
+        return{move:Math.sign(dx),attack:'jump',dodge:false,tactic:'DEMON DROP'};
       // 5) Sweep the cluster.
       const cluster=alive.filter(e=>Math.abs(e.x-f.x)<15&&e.y<8).length;
       if(cluster>=2&&adx<16)return{move:0,attack:'sweep',dodge:false,tactic:'SWEEP THE PACK'};
@@ -668,7 +774,7 @@ function botIntentCore(){
     return{move:clamp((anchor-f.x)*.02+drift,-.7,.7),attack:null,dodge:false,
       tactic:act.type==='gate'?'THE GATE OPENS':'THE MOB FLANKS'};
   }
-  if(!plan||runFrame-planAt>=36){plan=buildFightPlan();planAt=runFrame;}
+  if(!plan||runFrame-planAt>=36||Math.abs(plan.targetX-f.x)<3){plan=buildFightPlan();planAt=runFrame;}
   const dx=plan.targetX-f.x,move=Math.abs(dx)<1.5?0:clamp(dx*.12,-1,1);
   const elite=enemies.find(e=>e.elite&&e.state!=='flee'&&e.state!=='down');
   const tactic=elite?'FACE THE GATEKEEPER':
@@ -697,11 +803,13 @@ function botIntent(){
 function humanIntent(){
   const move=(keys.right?1:0)-(keys.left?1:0);
   let attack=null;
-  if(keys.b&&keys.c&&fighter.meter>=(fighter.hp<40?50:100))attack='super';
+  // The chord threshold mirrors startAttack's cost exactly (hp<50 halves the
+  // wheel): a chord the sim would honor must never die in the mapping layer.
+  if(keys.b&&keys.c&&fighter.meter>=(fighter.hp<50?50:100))attack='super';
   else if(keys.b)attack='jab';
   else if(keys.c)attack='launcher';
   else if(keys.a)attack='sweep';
-  else if(keys.up)attack='slam';
+  else if(keys.up)attack='jump'; // leap; startAttack turns it into the slam over an airborne mark
   return{move,attack,dodge:!!keys.down,tactic:'MANUAL FIST'};
 }
 const controller=controllerMux({human:humanIntent,ai:botIntent,manual:()=>playing()||manual()});
@@ -1060,25 +1168,45 @@ function stepPlayer(){
       markEvent(8);say('BACK ON YOUR FEET',GOLD,56,60);}
     return;
   }
+  manualDrive=playing()||manual();
   const intent=controller();f.intent=intent;stats.appliedIntents++;
   if(intent.dodge&&f.state==='free'&&f.dodgeCd<=0)startDodge();
   else if(intent.attack)startAttack(intent.attack);
-  let move=0,top=1;
-  if(f.state==='free')move=intent.move||0;
-  else if(f.state==='dodge'){move=-f.face;top=2.4;}
+  let move=0,top=WALK_TOP;
+  if(f.state==='free'){
+    move=intent.move||0;
+    // TMNT pacing: a clear runway breaks the walk into a RUN. The sprint needs
+    // the street empty within SPRINT_RADIUS, so a live brawl is never outrun;
+    // ending because a mark entered the radius counts as an ARRIVAL conversion.
+    const clear=!aliveEnemies().some(e=>e.state!=='flee'&&e.hp>0&&e.y<20&&Math.abs(e.x-f.x)<SPRINT_RADIUS);
+    if(typeof globalThis.__NO_ACROBATICS==='undefined'&&clear&&Math.abs(move)>.55)f.sprintT++;
+    else{if(f.sprintT>10&&!clear)stats.sprintArrivals++;f.sprintT=0;}
+    if(f.sprintT>10){
+      top=SPRINT_TOP;
+      if(f.sprintT===11){stats.sprints++;markEvent(1);fxDust(sx(f.x),GROUND_Y-2,4,'#8a7a5e');}
+      else if(f.sprintT%9===0)fxDust(sx(f.x)-f.face*5,GROUND_Y-2,2,'#8a7a5e');
+    }
+  }
+  else if(f.state==='dodge'){move=-f.face;top=2.4;f.sprintT=0;}
+  else if(f.state==='jump'){move=f.atkPhase==='air'?(intent.move||0):0;top=1.9;f.sprintT=0;}
   else if(f.state==='slam'){const t=enemies.find(e=>e.id===f.slamTarget);
-    move=t?clamp((t.x-f.x)*.08,-.6,.6):0;top=1.2;}
-  else if(f.state==='attack'&&f.atkPhase!=='recover'&&MOVES[f.atkKind]&&!MOVES[f.atkKind].both){
-    // Jabs step in: the chain walks its punches, the launcher steps under.
-    move=f.atkDir*.55;top=1.05;
+    move=t?clamp((t.x-f.x)*.08,-.6,.6):0;top=1.2;f.sprintT=0;}
+  else{
+    f.sprintT=0;
+    if(f.state==='attack'&&f.atkPhase!=='recover'&&MOVES[f.atkKind]&&!MOVES[f.atkKind].both){
+      // Jabs step in: the chain walks its punches, the launcher steps under.
+      move=f.atkDir*.6;top=1.15;
+    }
   }
   const near=nearestEnemy(f.x);
   // The same stationary backstop the enemies get: a free fighter boxed within
-  // 2px for 25 frames takes a visible shuffle step toward the open side.
+  // 2px for 25 frames takes a visible shuffle step toward the open side. It is
+  // a WATCHED-bot motion-contract guarantee only — under human control it
+  // stays re-armed, so a player who holds still IS still (manual purity).
   if(f.state!=='free'){f.anchorX=f.x;f.anchorT=runFrame;}
-  else if(f.anchorX===undefined||Math.abs(f.x-f.anchorX)>4){f.anchorX=f.x;f.anchorT=runFrame;}
+  else if(manualDrive||f.anchorX===undefined||Math.abs(f.x-f.anchorX)>4){f.anchorX=f.x;f.anchorT=runFrame;}
   else if(runFrame-f.anchorT>10){f.anchorT=runFrame;f.anchorX=f.x;f.repositionDir=-(f.repositionDir||1);f.vx+=f.repositionDir*2.0;}
-  advanceBrawler(f,move,{top,lockFace:f.lockFace,
+  advanceBrawler(f,move,{top,accel:WALK_ACCEL,lockFace:f.lockFace,
     idleFace:near&&Math.abs(near.x-f.x)<70?Math.sign(near.x-f.x):undefined});
   stepFighterCombat();
   const stepLen=Math.hypot(f.x-f.lastX,f.y-f.lastY);stats.maxStep=Math.max(stats.maxStep,stepLen);
@@ -1152,9 +1280,14 @@ function step(){
 
 // ---- authored street renderer ------------------------------------------------------
 // Five built blocks, four parallax layers plus a near foreground plane. All
-// variation is hash(seg, worldSeed) and showFrame flicker — render never
-// touches the sim RNG. The street is a QUIET stage: long seams and broad tone
-// bands, never one-pixel noise fighting the fight.
+// variation is hash(seg, worldSeed) — render never touches the sim RNG. The
+// street is a QUIET stage: long seams, broad tone bands, and STATIC ambience.
+// Owner directive 2026-07-17: backgrounds must feel stable and never distract
+// from the action — window lights, neon, embers, lanterns and lava are seeded
+// once per world and hold their luma; the only motion is parallax with travel
+// plus a slow material drift on the dock water. No per-frame twinkle, strobe,
+// or pulsing glow anywhere on the stage (the act warning telegraph is the one
+// authored exception, and it lives on the frame edge, not the skyline).
 function layerSegs(factor,seg){
   const off=camX*factor,start=Math.floor(off/seg)*seg-seg,out=[];
   for(let wx=start;wx<off+W+seg;wx+=seg)out.push({wx,x:Math.round(wx-off),seg:Math.floor(wx/seg)});
@@ -1208,8 +1341,10 @@ function drawSky(p){
     rect(77,111,6,2,mix(p.accent,INK,.3));
     for(let x=0;x<W;x+=26){const h=12+((hash(x*7,worldSeed)*26)|0);
       poly([[x,114],[x+9,114-h],[x+18,114]],mix(p.far,INK,.2));}
+    // Embers hang in the gate sky as a STATIC constellation — seeded once,
+    // constant luma. (Pre-2026-07-17 they rose and pulsed every frame.)
     for(let i=0;i<18;i++){const x=10+((hash(i*11,worldSeed)*140)|0),
-      y=44+mod(i*37+Math.floor(showFrame*.6),84);ctx.globalAlpha=.5+.3*Math.sin(showFrame*.1+i);
+      y=44+((hash(i*13+5,worldSeed)*84)|0);ctx.globalAlpha=.55;
       rect(x,y,2,2,i%3?p.accent:AMBER);ctx.globalAlpha=1;}
   }
 }
@@ -1270,12 +1405,13 @@ function drawMid(p){
           for(let xx=fx+2;xx<fx+28;xx+=5)rect(xx,ly-4,1,4,mix(p.trim,INK,.3));
           line([[fx+(l%2?26:4),ly],[fx+(l%2?4:26),ly+26]],mix(p.trim,INK,.2),2);}
       }
-      // Vertical neon blade with a glow pool on the bricks.
-      if(hash(s.seg*5,worldSeed)>.35){const nx=s.x+52,flick=hash(s.seg,Math.floor(showFrame/9))>.12;
+      // Vertical neon blade with a glow pool on the bricks — ALWAYS lit: the
+      // sign is stage dressing, not a strobe (it used to blink on a 9f hash).
+      if(hash(s.seg*5,worldSeed)>.35){const nx=s.x+52;
         rect(nx,206,6,44,'#10141f');
-        if(flick){rect(nx,206,6,3,p.accent);rect(nx,247,6,3,p.accent);
-          ctx.fillStyle=p.accent;ctx.font='bold 5px monospace';ctx.fillText('F I S T',nx-1,224);
-          ctx.globalAlpha=.22;ctx.fillStyle=p.accent;ctx.beginPath();ctx.ellipse(nx+3,254,12,16,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}
+        rect(nx,206,6,3,p.accent);rect(nx,247,6,3,p.accent);
+        ctx.fillStyle=p.accent;ctx.font='bold 5px monospace';ctx.fillText('F I S T',nx-1,224);
+        ctx.globalAlpha=.22;ctx.fillStyle=p.accent;ctx.beginPath();ctx.ellipse(nx+3,254,12,16,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
       }
       for(let yy=212;yy<286;yy+=14)for(let xx=s.x+6;xx<s.x+46;xx+=10)
         if(hash(xx+s.seg,yy)>.28){rect(xx,yy,6,8,'#0a0d18');rect(xx,yy,6,2,mix(p.light,INK,.4));
@@ -1354,8 +1490,8 @@ function drawMid(p){
       for(let yy=246;yy<290;yy+=14)rect(s.x,yy,64,2,mix(p.trim,INK,.3));
       for(let yy=246;yy<286;yy+=16)for(let xx=s.x+7;xx<s.x+60;xx+=11)
         if(hash(xx+s.seg,yy)>.35){rect(xx,yy,5,7,mix(p.light,INK,.15));rect(xx+1,yy+1,3,5,mix(p.light,CREAM,.35));rect(xx,yy+6,5,1,mix(p.trim,INK,.3));}
-      // Hanging paper lanterns under the eaves.
-      for(let i=0;i<2;i++){const lx=s.x+16+i*32,bob=Math.round(Math.sin(showFrame*.06+s.seg+i)*1);
+      // Hanging paper lanterns under the eaves — a seeded still-life sag.
+      for(let i=0;i<2;i++){const lx=s.x+16+i*32,bob=Math.round(Math.sin(s.seg*1.7+i*2.1)*1);
         line([[lx,214],[lx,218+bob]],mix(p.trim,INK,.2),1);
         rect(lx-2,218+bob,5,6,p.accent);rect(lx-2,219+bob,5,2,mix(p.light,CREAM,.3));}
       for(let yy=250;yy<286;yy+=12)rect(s.x,yy,64,1,mix(p.mid,INK,.4));
@@ -1373,12 +1509,12 @@ function drawMid(p){
       for(let cx=s.x+4;cx<s.x+22;cx+=4)for(let yy=214;yy<214+((hash(cx,s.seg)*40)|0)+20;yy+=4)
         rect(cx,yy,2,3,mix(p.trim,INK,.1));
       for(let i=0;i<4;i++){const gx=s.x+26+i*6,gy=252+i*6;
-        ctx.globalAlpha=.4+.2*Math.sin(showFrame*.15+s.seg+i);ctx.fillStyle=p.accent;
+        ctx.globalAlpha=.5;ctx.fillStyle=p.accent;
         ctx.beginPath();ctx.arc(gx,gy,3,0,TAU);ctx.fill();ctx.globalAlpha=1;}
       // Ember gape windows.
       for(let yy=228;yy<282;yy+=11)for(let xx=s.x+5;xx<s.x+48;xx+=10)
         if(hash(xx+s.seg,yy)>.22){rect(xx,yy,5,8,'#0a0608');
-          ctx.globalAlpha=.5+.3*Math.sin(showFrame*.12+xx);rect(xx+1,yy+4,3,3,p.accent);ctx.globalAlpha=1;
+          ctx.globalAlpha=.4+.35*hash(xx*3,yy+worldSeed);rect(xx+1,yy+4,3,3,p.accent);ctx.globalAlpha=1;
           if(hash(xx,yy+1)>.55)rect(xx+1,yy-2,3,1,mix(p.accent,CREAM,.3));}
     }
   }
@@ -1388,7 +1524,7 @@ function drawBase(p){
   // The ledge line right behind the fight: regular curb detail in every block.
   for(let x=0;x<W;x+=13){const lit=hash(x,worldSeed)>.5;
     rect(x,288,7,3,mix(p.trim,INK,.25));rect(x+1,289,3,1,lit?mix(p.accent,INK,.3):mix(p.trim,CREAM,.2));}
-  for(let x=6;x<W;x+=26){ctx.globalAlpha=.5+.2*Math.sin(showFrame*.08+x);rect(x,291,3,2,mix(p.accent,CREAM,.25));ctx.globalAlpha=1;}
+  for(let x=6;x<W;x+=26){ctx.globalAlpha=.6;rect(x,291,3,2,mix(p.accent,CREAM,.25));ctx.globalAlpha=1;}
   if(p.kind==='alley'){
     for(const s of layerSegs(F,54)){
       rect(s.x,286,54,8,mix(p.mid,INK,.35));
@@ -1463,9 +1599,9 @@ function drawStreet(p){
       rect(0,y,W,1,mix(p.seam,INK,a?.42:.2));rect(0,y+1,W,1,mix(p.seam,CREAM,a?.18:.32));}
   }
   if(p.kind==='alley'){
-    // Puddles catch the neon: broad, calm reflections.
+    // Puddles catch the neon: broad, calm, STILL reflections.
     for(const s of layerSegs(F,90)){if(hash(s.seg,worldSeed)>.4){
-      ctx.globalAlpha=.3+.08*Math.sin(showFrame*.07+s.seg);
+      ctx.globalAlpha=.34;
       ctx.fillStyle=hash(s.seg*3,worldSeed)>.5?p.accent:p.light;
       ctx.beginPath();ctx.ellipse(s.x+30,326,16,3,0,0,TAU);ctx.fill();ctx.globalAlpha=1;}}
     for(let y=300;y<340;y+=13)rect(0,y,W,1,mix(p.seam,INK,.22));
@@ -1477,25 +1613,27 @@ function drawStreet(p){
     for(let y=300;y<332;y+=8)rect(0,y,W,1,mix(p.seam,CREAM,.1));
     for(const s of layerSegs(F,64))if(hash(s.seg,worldSeed)>.5){ctx.strokeStyle=mix(p.trim,CREAM,.2);
       ctx.beginPath();ctx.arc(s.x+20,301,3,0,TAU);ctx.stroke();}
-    // The water beyond the dock edge, front of the stage.
+    // The water beyond the dock edge, front of the stage: the one moving
+    // material — a slow constant-luma drift (1px per ~17f), never a shimmer.
     rect(0,332,W,11,'#0c3c50');
-    for(let x=0;x<W;x+=17){ctx.globalAlpha=.4+.15*Math.sin(showFrame*.1+x);
-      rect(x+mod(Math.floor(showFrame*.5),17),335,8,1,p.light);ctx.globalAlpha=1;}
+    for(let x=0;x<W;x+=17){ctx.globalAlpha=.45;
+      rect(x+mod(Math.floor(showFrame*.06),17),335,8,1,p.light);ctx.globalAlpha=1;}
   }else if(p.kind==='dojo'){
     for(const s of layerSegs(F,32)){rect(s.x,294,30,20,mix(p.street,CREAM,.06));
       rect(s.x+2,318,26,20,mix(p.street,INK,.1));
       rect(s.x+4,300,4,4,mix(p.seam,INK,.3));rect(s.x+16,326,4,4,mix(p.seam,CREAM,.1));}
   }else{
-    // Lava seams: long glowing cracks that breathe — never speckle.
+    // Lava seams: long glowing cracks at a constant seeded glow — the heat is
+    // in the color, not a pulse (they used to breathe on three sine clocks).
     for(const s of layerSegs(F,74)){if(hash(s.seg,worldSeed)>.3){
-      ctx.globalAlpha=.55+.2*Math.sin(showFrame*.09+s.seg);
+      ctx.globalAlpha=.55+.18*hash(s.seg*7,worldSeed);
       rect(s.x+4,322,34,2,p.accent);rect(s.x+14,324,18,1,mix(p.accent,CREAM,.5));ctx.globalAlpha=1;}}
     for(const s of layerSegs(F,37)){if(hash(s.seg,worldSeed)>.4){
-      ctx.globalAlpha=.55+.15*Math.sin(showFrame*.13+s.seg);
+      ctx.globalAlpha=.55+.13*hash(s.seg*3,worldSeed);
       rect(s.x+10,306,22,1,p.accent);rect(s.x+16,310,10,1,mix(p.accent,CREAM,.4));ctx.globalAlpha=1;}}
     for(const s of layerSegs(F,26))rect(s.x+6,300,12,1,mix(p.seam,INK,.4));
     for(const s of layerSegs(F,52))if(hash(s.seg,worldSeed)>.4){
-      ctx.globalAlpha=.3+.15*Math.sin(showFrame*.11+s.seg);rect(s.x+20,312,16,1,p.accent);ctx.globalAlpha=1;}
+      ctx.globalAlpha=.32+.12*hash(s.seg*5,worldSeed);rect(s.x+20,312,16,1,p.accent);ctx.globalAlpha=1;}
   }
 }
 function drawProps(p){
@@ -1531,10 +1669,12 @@ function drawFighter(){
     rect(-9,-2,7,2,gi);rect(2,-2,9,2,gi); // the scythe leg + trail
     rect(6,-10,5,5,fist);rect(7,-9,2,1,ember);
   }else{
-    const duck=f.state==='attack'&&f.atkKind==='launcher'&&f.atkPhase==='startup'?2:0;
+    const duck=f.state==='attack'&&f.atkKind==='launcher'&&f.atkPhase==='startup'?2:
+      f.state==='jump'&&f.atkPhase!=='air'?3:0;
     const recoil=f.state==='hit'?-2:0;
-    // legs (two-frame scissor), torso, head, headband tails
-    rect(-3+step,-8+duck,3,8-duck,gi);rect(1-step,-8+duck,3,8-duck,gi);
+    // legs (two-frame scissor; tucked mid-leap), torso, head, headband tails
+    if(f.state==='jump'&&!f.grounded){rect(-3,-6,3,5,gi);rect(1,-7,3,5,gi);}
+    else{rect(-3+step,-8+duck,3,8-duck,gi);rect(1-step,-8+duck,3,8-duck,gi);}
     rect(-4+recoil,-15+duck,8,8,gi);rect(-4+recoil,-9+duck,8,2,belt);
     rect(-3+recoil,-19+duck,6,5,skin);rect(-3+recoil,-19+duck,6,2,band);
     rect(-5+recoil,-18+duck,2,1,band);rect(-6+recoil,-17+duck,1,2,band);
@@ -1548,6 +1688,7 @@ function drawFighter(){
     else if(f.state==='slam'){fx=3;fy=-8;glow=1;}
     else if(A==='launcher'){fx=ph==='startup'?2:5;fy=ph==='startup'?-6:-22;glow=ph!=='startup'?1:0;}
     else if(A&&A.startsWith('jab')){fx=ph==='active'?9:ph==='startup'?2:5;fy=-13;glow=ph==='active'?1:0;}
+    else if(f.state==='jump'){fx=f.atkPhase==='air'?6:2;fy=f.atkPhase==='air'?-9:-8;glow=f.atkPhase==='air'?1:0;}
     else if(f.state==='dodge'){fx=-1;fy=-16;}
     rect(fx,fy,5,5,fist);rect(fx+1,fy+1,2,1,ember);rect(fx+3,fy+3,1,1,ember);
     if(glow){ctx.globalAlpha=.6+.3*Math.sin(showFrame*.4);rect(fx+1,fy-1,3,1,ember);ctx.globalAlpha=inv?.45:1;}
@@ -1663,6 +1804,10 @@ function drawMarks(){
     }else if(m.kind==='super'){
       ctx.strokeStyle=GOLD;ctx.beginPath();ctx.ellipse(x,y-4,16,4,0,0,TAU);ctx.stroke();
       for(let k=0;k<4;k++)rect(x-8+k*5,y-6,2,2,k%2?'#ffffff':GOLD);
+    }else if(m.kind==='jump'){
+      // Landing quake: gold ground-crack chevrons where the drop hit.
+      for(let k=0;k<3;k++)poly([[x-9+k*7,y],[x-6+k*7,y-4],[x-3+k*7,y]],k===1?'#ffffff':GOLD);
+      rect(x-1,y-7,2,3,GOLD);
     }else if(m.kind==='hit-taken'){
       line([[x-5,y-16],[x+5,y-10]],CORAL,2);line([[x+5,y-16],[x-5,y-10]],CORAL,2);rect(x-1,y-15,2,2,'#ffffff');
     }else if(m.kind==='combo-drop'){
@@ -1691,9 +1836,9 @@ function drawForeground(p){
     for(const s of layerSegs(F,110)){rect(s.x,236,3,74,'#0c0e16');
       ctx.globalAlpha=.3;for(let yy=240;yy<306;yy+=8)rect(s.x-4,yy,11,1,'#3c4460');ctx.globalAlpha=1;
       ctx.globalAlpha=.22;for(let yy=244;yy<306;yy+=16)line([[s.x-5,yy],[s.x+7,yy+7]],'#3c4460',1);ctx.globalAlpha=1;}
-  }else if(p.kind==='market'){ // hanging wires + lantern bulbs with glow
+  }else if(p.kind==='market'){ // hanging wires + lantern bulbs, still sag
     for(const s of layerSegs(F,130)){line([[s.x,120],[s.x+60,150]],'#14101a',2);
-      for(let i=1;i<4;i++){const lx=s.x+i*15,ly=120+i*7+Math.round(Math.sin(showFrame*.05+s.seg)*1);
+      for(let i=1;i<4;i++){const lx=s.x+i*15,ly=120+i*7+Math.round(Math.sin(s.seg*1.3+i)*1);
         line([[lx,ly],[lx,ly+6]],'#14101a',1);
         ctx.globalAlpha=.3;ctx.fillStyle=p.light;ctx.beginPath();ctx.arc(lx,ly+9,4,0,TAU);ctx.fill();ctx.globalAlpha=1;
         rect(lx-2,ly+6,4,5,p.light);rect(lx-1,ly+7,2,2,mix(p.light,CREAM,.4));}}
@@ -1809,7 +1954,8 @@ globalThis.__demonFistSignature=()=>JSON.stringify({state,runFrame,worldSeed,ski
   waveCursor,camX:round(camX,4),
   p:[fighter.x,fighter.y,fighter.vx,fighter.vy,fighter.hp,fighter.meter,fighter.combo,fighter.comboT,
     fighter.state,fighter.stateT,fighter.atkKind,fighter.atkT,fighter.atkPhase,fighter.chain,
-    fighter.invulnT,fighter.dodgeCd,fighter.knockT,fighter.repositionT,fighter.splitCd||0]
+    fighter.invulnT,fighter.dodgeCd,fighter.knockT,fighter.repositionT,fighter.splitCd||0,
+    fighter.jumpCd,fighter.jumpDir,fighter.jumpVx,fighter.sprintT]
     .map(v=>typeof v==='number'?round(v,5):v),
   e:enemies.map(e=>[e.id,e.kind,round(e.x,4),round(e.y,4),round(e.vx,4),round(e.vy,4),e.hp,e.armor,
     e.state,e.stateT,e.attackCd,e.vulnerT,e.teleCd,round(e.recentHits,3),e.wave||0]),
@@ -1818,12 +1964,13 @@ globalThis.__demonFistSignature=()=>JSON.stringify({state,runFrame,worldSeed,ski
     stats.sweeps,stats.sweepHits,stats.dodges,stats.counters,stats.cracks,stats.supers,
     stats.comboMilestones,stats.comboDrops,stats.knockdowns,stats.waves,stats.waveClears,stats.acts,
     stats.eliteKos,stats.mobClears,stats.noHitMobs,stats.actClears,stats.lapses,stats.whiffs,
-    stats.contacts,stats.events,stats.progress,stats.jabs,stats.finishers]});
+    stats.contacts,stats.events,stats.progress,stats.jabs,stats.finishers,
+    stats.jumps,stats.jumpHits,stats.sprints,stats.sprintArrivals]});
 globalThis.__demonFistPhysical=()=>[round(fighter.x,7),round(fighter.y,7),round(fighter.vx,7),
   round(fighter.vy,7),fighter.state,fighter.intent&&round(fighter.intent.move,7),
   fighter.intent&&fighter.intent.attack,fighter.intent&&fighter.intent.dodge].join('|');
-globalThis.__demonFistVisualBeats=['opening','jab-chain','launcher','juggle-slam','sweep','counter',
-  'gate-warn','gate-land','mob','super','market','dojo','demon-gate','finale'];
+globalThis.__demonFistVisualBeats=['opening','jab-chain','launcher','juggle-slam','demon-drop','sweep',
+  'counter','gate-warn','gate-land','mob','super','market','dojo','demon-gate','finale'];
 // The good/bad feedback ledger for evals/feedback.js: every entry is a sim
 // event the viewer must be able to SEE, with screen coordinates at fire time.
 globalThis.__feedbackProbe=()=>({finite:allFinite(),serial:feedbackSerial,events:feedback.slice(),
@@ -1897,6 +2044,12 @@ globalThis.__demonFistSetVisualBeat=name=>{
     fixtureEnemy('thug',70);
     fighter.state='slam';fighter.stateT=26;fighter.slamTarget=d.id;fighter.y=10;fighter.vy=1.5;fighter.lockFace=true;
     visualIntent=V(0,'slam','AIR SLAM');}
+  else if(name==='demon-drop'){visualPrime(2);
+    // Mid-leap over the dock: the arc is live, the thug walks into the quake.
+    fixtureEnemy('thug',26,['stalk']);fixtureEnemy('sprinter',60);
+    fighter.state='jump';fighter.atkPhase='air';fighter.jumpDir=1;fighter.jumpVx=1.3;
+    fighter.jumpCd=JUMP_CD;fighter.y=14;fighter.vy=1.2;fighter.vx=1.5;fighter.face=1;fighter.lockFace=true;
+    visualIntent=V(1,null,'DEMON DROP');}
   else if(name==='sweep'){visualPrime(2);
     fixtureEnemy('thug',12,['stalk']);fixtureEnemy('sprinter',-13,['stalk']);fixtureEnemy('thug',-30,['stalk']);
     fighter.state='attack';fighter.atkKind='sweep';fighter.atkPhase='active';fighter.atkT=2;fighter.atkHits={};fighter.lockFace=true;
@@ -1971,6 +2124,9 @@ globalThis.__motionProbe=()=>{const on=typeof globalThis.__NO_EMOTE==='undefined
   // the world clock there); every actor reads as covered for exactly the
   // gated frames, never the free-running ones.
   const showPause=pres.cue&&pres.cue.tier>=3&&(pres.holdWorld||pres.physicsEvery>1);
+  // The jump is deliberately NOT emote-flagged: its stationary beats (5f
+  // crouch, 6f landing) sit far under the 30f bare-still limit and the arc
+  // itself moves — flagging it would only inflate the emote budget.
   const fighterPose=fighter.state==='attack'||fighter.state==='dodge'||fighter.state==='hit'||
     fighter.state==='slam'||fighter.state==='super';
   return{finite:allFinite(),actors:[
@@ -1983,7 +2139,7 @@ globalThis.__soakProbe=()=>({sig:[Math.round(fighter.x*10),Math.round(fighter.y*
   events:eventSerial,progress:progressSerial,finite:allFinite()});
 
 initSession('demon-fist',[["ARROWS","MOVE · DODGE"],["X","JAB"],["Z","LAUNCH"],
-  ["SPACE","SWEEP"],["UP","AIR SLAM"],["X+Z","GOD WHEEL"]]);
+  ["SPACE","SWEEP"],["UP","JUMP · AIR SLAM"],["X+Z","GOD WHEEL"]]);
 resetRun(true);start(()=>step(),()=>render());
 </script>
 </html>

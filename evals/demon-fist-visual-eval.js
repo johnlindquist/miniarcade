@@ -207,6 +207,29 @@ function horizontalShiftScores(before,after,crop,maxShift){
   }
   return scores;
 }
+// Background stability gate (owner directive 2026-07-17: "the sky scape
+// lights flicker waaaay too much... backgrounds should always feel stable").
+// Renders the environment layer ALONE (actors and HUD excluded by the env
+// subject selector) for the same primed beat at nearby sim times with the
+// camera and world frozen — any changed pixel is pure background animation.
+const BG_CROP={x:0,y:34,width:160,height:309};
+function backgroundStability(beat){
+  const runtime=bootRenderedGame('demon-fist',{seed:SEED});
+  const setBeat=runtime.sandbox.__demonFistSetVisualBeat;
+  if(setBeat(beat)!==true)throw new Error('unknown Demon Fist visual beat: '+beat);
+  runtime.sandbox.__DF_VISUAL_ONLY_SUBJECT='env';
+  const shot=t=>{runtime.evaluate(`showFrame=${t};render()`);return runtime.snapshot({native:true});};
+  const rows=[];
+  for(const base of[1000,1009]){
+    const first=shot(base);
+    for(const delta of[6,12,30]){
+      const diff=frameDifference(first,shot(base+delta),{native:false,crop:BG_CROP});
+      rows.push({base,delta,changedFraction:diff.changedFraction,meanDelta:diff.meanDelta});
+    }
+  }
+  return{beat,maxChanged:Math.max(...rows.map(r=>r.changedFraction)),rows};
+}
+
 function scrollCoherence(beat,fromOffset,toOffset){
   const runtime=bootRenderedGame('demon-fist',{seed:SEED});
   const setBeat=runtime.sandbox.__demonFistSetVisualBeat;
@@ -231,6 +254,8 @@ function buildCandidateEvidence(){
     launcher:{fixture:'launcher',offsets:[1,4,8,12,24]},
     launcherNoFx:{fixture:'launcher',offsets:[8],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}},
     slam:{fixture:'juggle-slam',offsets:[1,4,8,12,20,32]},
+    drop:{fixture:'demon-drop',offsets:[1,6,12,16,20,24,30]},
+    dropNoFx:{fixture:'demon-drop',offsets:[24],beforeSet:runtime=>{runtime.sandbox.__NO_PAYOFF_FX=1;}},
     sweep:{fixture:'sweep',offsets:[1,4,8,12,24]},
     counter:{fixture:'counter',offsets:[1,4,8,12,24]},
     warn:{fixture:'gate-warn',offsets:[1,6,12,24]},
@@ -264,6 +289,7 @@ function buildCandidateEvidence(){
     {id:'jab',label:'jab chain',run:'jab',offset:8},
     {id:'launcher',label:'launcher',run:'launcher',offset:8},
     {id:'slam',label:'air slam',run:'slam',offset:12},
+    {id:'drop',label:'demon drop',run:'drop',offset:12},
     {id:'sweep',label:'sweep',run:'sweep',offset:8},
     {id:'counter',label:'counter',run:'counter',offset:8},
     {id:'warn',label:'gate warning',run:'warn',offset:12},
@@ -289,11 +315,11 @@ function reviewTemplate(montageSha256){
     reviewedAt:'YYYY-MM-DD',reviewer:'PENDING native-size reference review',
     renderReceipt:{seed:'0x'+SEED.toString(16),seconds:30,fps:30,codec:'h264',dimensions:'320x720',bytes:0,sha256:'',command},
     categories:{
-      characterCraft:pending('Inspect the white-gi fighter with the oversized cursed fist (jab chain, launcher uppercut, sweep spin, backstep dodge, air slam, GOD WHEEL roulette), the four street demons (jacket thug, lean sprinter, armored mohawk bruiser, horned demon), the crowned GATEKEEPER elite, honest travel facing, and windup tells at 160x360.'),
-      environmentCraft:pending('Inspect each block with the HUD mentally removed: BACK ALLEY brick walls, fire escapes and the FIST neon; MARKET ROOF awnings, lantern strings and water towers; DOCK SIDE cranes, container stacks and water; OLD DOJO shoji screens, paper lanterns and pagoda roofs; DEMON GATE obsidian spikes, chains, lava seams and the horned gate.'),
+      characterCraft:pending('Inspect the white-gi fighter with the oversized cursed fist (jab chain, launcher uppercut, sweep spin, backstep dodge, air slam, the DEMON DROP leap with tucked-leg arc and landing quake, the clear-street sprint, GOD WHEEL roulette), the four street demons (jacket thug, lean sprinter, armored mohawk bruiser, horned demon), the crowned GATEKEEPER elite, honest travel facing, and windup tells at 160x360.'),
+      environmentCraft:pending('Inspect each block with the HUD mentally removed: BACK ALLEY brick walls, fire escapes and the always-lit FIST neon; MARKET ROOF awnings, lantern strings and water towers; DOCK SIDE cranes, container stacks and water; OLD DOJO shoji screens, paper lanterns and pagoda roofs; DEMON GATE obsidian spikes, chains, lava seams and the horned gate. The stage must read STABLE: no twinkling, strobing, or pulsing ambience anywhere.'),
       levelVariety:pending('Confirm the five blocks change spatial landmarks, wall grammar, material silhouette, and composition rather than only palette.'),
-      animationImpact:pending('Confirm aligned fighter and elite crops animate, the windup tells telegraph, jabs connect with sparks, the launcher pops airborne, the slam spikes down, sweeps knock the cluster, the counter backsteps on the tell, GOD WHEEL spins with afterimages, and the finale celebration lands.'),
-      readability:pending('Confirm intent reads from the bodies alone — honest facing that tracks travel, raised-fist windup tells, the keeper crown, the flanking mob — and that every good/bad beat is tagged gold vs coral with static aftermath decals. Confirm HP/meter/combo/block pips sit beside the fighter at the bottom with ZERO drawn guidelines, and the street flows left with travel.'),
+      animationImpact:pending('Confirm aligned fighter and elite crops animate, the windup tells telegraph, jabs connect with sparks, the launcher pops airborne, the slam spikes down, the DEMON DROP arcs over a body and fells one with the quake, sweeps knock the cluster, the counter backsteps on the tell, GOD WHEEL spins with afterimages, and the finale celebration lands.'),
+      readability:pending('Confirm intent reads from the bodies alone — honest facing that tracks travel, raised-fist windup tells, the keeper crown, the flanking mob — and that every good/bad beat is tagged gold vs coral with static aftermath decals (including the gold quake chevrons). Confirm HP/meter/combo/block pips sit beside the fighter at the bottom with ZERO drawn guidelines, and the street flows left with travel while the skyline holds still.'),
       artDirectionCohesion:pending('Confirm the five-block dusk-city palette, pixel construction, HUD, and payoff language feel like one authored street.')
     },
     guidelineOverlays:{confirmedAbsent:false,note:'Confirm every sampled beat pre-draws NOTHING about actor intent or trajectory: no route lines/dots, arrows, target highlights, intercept predictions, ghost phantoms, predicted arcs, or safe-lane markers. The keeper march, the mob flanking, and the warning banner are physical world telegraphs and stay.'}
@@ -311,7 +337,7 @@ async function main(){
   });
   const deterministic=determinism.every(value=>value.ok),{beats,frames:candidate,runs}=evidence;
 
-  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,10800,12600,15000,16800,18000,19800,21600];
+  const referenceTargets=[60,600,1200,2400,3600,5400,7200,9000,10800,12600,15000,16800,18000,19800,21600,22800];
   const horizon=captureTimeline('horizon',0xa1020401,referenceTargets);
   const blockmine=captureTimeline('blockmine',0xb10c0050,referenceTargets);
   const horizonByBeat={},blockmineByBeat={};
@@ -345,6 +371,7 @@ async function main(){
   const eliteBurst=analyzeAlignedBurst([1,6,12,24].map(offset=>runs.land.get(offset)),
     frame=>frame.probe.eliteBox,48,56);
   const slamBurst=analyzeBurst([1,4,8,12,20,32].map(offset=>runs.slam.get(offset)),{native:false,crop:WORLD_CROP});
+  const dropBurst=analyzeBurst([1,6,12,16,20,24,30].map(offset=>runs.drop.get(offset)),{native:false,crop:WORLD_CROP});
 
   const blockBeats=['opening','launcher','sweep','dojo','gate'];
   const blockFrames=blockBeats.map(id=>candidate[id]);
@@ -363,6 +390,11 @@ async function main(){
     width:Math.min(160,launchBox.x+launchBox.width+16)-Math.max(0,launchBox.x-16),
     height:Math.min(360,launchBox.y+launchBox.height+14)-Math.max(WORLD_CROP.y,launchBox.y-14)}:WORLD_CROP;
   const launchFx=frameDifference(runs.launcherNoFx.get(8),runs.launcher.get(8),{native:false,crop:launchCrop,threshold:1});
+  const dropBox=runs.drop.get(24).probe.playerBox;
+  const dropCrop={x:Math.max(0,dropBox.x-26),y:Math.max(WORLD_CROP.y,dropBox.y-16),
+    width:Math.min(160,dropBox.x+dropBox.width+26)-Math.max(0,dropBox.x-26),
+    height:Math.min(360,dropBox.y+dropBox.height+16)-Math.max(WORLD_CROP.y,dropBox.y-16)};
+  const dropFx=frameDifference(runs.dropNoFx.get(24),runs.drop.get(24),{native:false,crop:dropCrop,threshold:1});
   const superBox=runs.super.get(8).probe.playerBox;
   const superCrop={x:Math.max(0,superBox.x-24),y:Math.max(WORLD_CROP.y,superBox.y-20),
     width:Math.min(160,superBox.x+superBox.width+24)-Math.max(0,superBox.x-24),
@@ -374,6 +406,7 @@ async function main(){
     scrollCoherence('opening',8,16),
     scrollCoherence('market',8,16)
   ];
+  const bgChecks=['opening','market','juggle-slam','dojo','demon-gate'].map(backgroundStability);
 
   // Zero-guideline receipts (full native frames, HUD included).
   const planPairs=[['brawl',13],['jab',12],['warn',12],['land',12],['super',12]].map(([id,offset])=>({
@@ -389,6 +422,7 @@ async function main(){
     playerMedian:.08,playerFirstLast:.14,playerGrid:.5,
     eliteMedian:.1,eliteFirstLast:.18,eliteGrid:.55,
     slamMax:.06,
+    dropMax:.06,dropFxChanged:.003,dropFxMean:.0006,
     blockMedian:.24,blockEach:.16,
     warningChanged:.06,warningMean:.008,warningGrid:.2,warningBounds:.25,
     landChanged:.06,landMean:.012,landGrid:.22,landBounds:.22,
@@ -423,6 +457,28 @@ async function main(){
   const slam8=runs.slam.get(8).probe;
   gate('slam beat spikes downward with payoff motion',slamBurst.changedFraction.max>=bands.slamMax&&
     (slam8.pose.state==='slam'||slam8.enemyBoxes.some(box=>box.state==='launched'||box.state==='down')),{slamBurst,probe:slam8.pose});
+  const drop6=runs.drop.get(6).probe,drop20=runs.drop.get(20).probe,drop24=runs.drop.get(24).probe;
+  gate('demon drop leaps a real airborne arc over the street',
+    drop6.pose.state==='jump'&&drop6.pose.atkPhase==='air'&&
+    drop6.playerBox.y<=drop20.playerBox.y-8&&dropBurst.changedFraction.max>=bands.dropMax,
+    {air:drop6.pose,airBoxY:drop6.playerBox.y,nearLandBoxY:drop20.playerBox.y,dropBurst:dropBurst.changedFraction});
+  gate('landing quake fells a body and lands payoff pixels at the impact',
+    drop24.enemyBoxes.some(box=>box.state==='down')&&
+    dropFx.changedFraction>=bands.dropFxChanged&&dropFx.meanDelta>=bands.dropFxMean,
+    {enemies:drop24.enemyBoxes,dropFx,dropCrop});
+  // Calibrated 2026-07-17 against both builds (env-only render, showFrame
+  // deltas 6/12/30 from bases 1000/1009, native crop y34..343). Pre-fix build
+  // (strobing FIST neon, pulsing gate ember windows, drifting sky embers,
+  // breathing lava, sine curb accents, water shimmer) measured per-block max
+  // changed fractions: BACK ALLEY .00307, MARKET ROOF .0019, DOCK SIDE
+  // .00247, OLD DOJO .00247, DEMON GATE .02221 — four of five blocks above
+  // the ceiling, so the old build fails this gate. The static-stage build
+  // measures 0 everywhere except the slow dock-water drift (max .000728),
+  // keeping ~2.7x margin under the ceiling.
+  const BG_MAX=.002;
+  gate('background is a stable stage: skyline luma holds still across nearby sim times',
+    bgChecks.every(value=>value.maxChanged<=BG_MAX),
+    {ceiling:BG_MAX,bgChecks:bgChecks.map(v=>({beat:v.beat,maxChanged:+v.maxChanged.toFixed(6)}))});
   const sweep8=runs.sweep.get(8).probe;
   gate('sweep beat shows the cluster spin',sweep8.pose.atkKind==='sweep'&&sweep8.visibleEnemyCount>=2,sweep8);
   const counter4=runs.counter.get(4).probe;
@@ -546,8 +602,8 @@ async function main(){
       heavy:{maxWidth:18,maxHeight:32},elite:{maxWidth:22,maxHeight:38},footprint:.20,approach:.55,threshold:ACTOR_THRESHOLD},
       quiet:{street:QUIET_STREET_MAX,sides:QUIET_SIDES_MAX}},
     metrics:{candidate:candidateMetrics,horizon:horizonMetrics,blockmine:blockmineMetrics,
-      playerBurst,eliteBurst,slamBurst,finaleBurst,blockPairs,warningContrast,warningLand,
-      launchFx,superFx,finaleFx,scrollChecks,quietBeats,
+      playerBurst,eliteBurst,slamBurst,dropBurst,finaleBurst,blockPairs,warningContrast,warningLand,
+      launchFx,superFx,dropFx,finaleFx,scrollChecks,quietBeats,bgChecks,
       actorScale:Object.fromEntries(Object.entries(scaleSamples).map(([key,sample])=>[key,
         sample.measurements.map(m=>({id:m.id,kind:m.kind,type:m.type,bounds:m.bounds,drawnPixels:m.drawnPixels,
           clipped:m.clipped,probeOverflow:m.probeOverflow,failures:m.assertion.failures}))])),

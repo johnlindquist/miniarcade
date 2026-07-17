@@ -224,7 +224,7 @@ function clsFor(b,zone,j){
 function makeItem(kind,x,y){
   const spec=ITEM_KINDS[kind],id=++itemSerial;
   return{id,kind,cls:spec.cls,size:round(spec.size[0]+hash(id,worldSeed*13)*(spec.size[1]-spec.size[0]),2),
-    x,y,vx:0,speed:0,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,wobbleT:0,
+    x,y,vx:0,speed:0,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,rollX:0,wobbleT:0,
     state:'loose',mover:spec.mover||null,hitCd:0,seed:hash(id*3,worldSeed)};
 }
 // Shelves: full-width counters with one gap — the size-gated shortcut. A ball
@@ -288,7 +288,7 @@ function ensureItems(){
 function makeCar(kind,x,y,b){
   const spec=ITEM_KINDS[kind],id=++itemSerial;
   return{id,kind,cls:spec.cls,size:round(spec.size[0]+hash(id,worldSeed*17)*(spec.size[1]-spec.size[0]),2),
-    x,y,vx:0,speed:.5+hash(id*7,worldSeed)*.5,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,wobbleT:0,
+    x,y,vx:0,speed:.5+hash(id*7,worldSeed)*.5,d:spec.size[0],yaw:0,angle:0,va:0,roll:0,rollX:0,wobbleT:0,
     state:'loose',mover:'car',hitCd:0,wob:0,seed:hash(id*5,worldSeed)};
 }
 function ensureCars(){
@@ -305,12 +305,12 @@ function ensureCars(){
   }
   cars=cars.filter(c=>c.y>ball.y-280&&c.y<ball.y+900);
 }
-function makeBall(x,y){return{x,y,vx:0,speed:1.4,d:START_D,bulk:0,yaw:0,angle:0,va:0,roll:0,
+function makeBall(x,y){return{x,y,vx:0,speed:1.4,d:START_D,bulk:0,yaw:0,angle:0,va:0,roll:0,rollX:0,
   wobbleT:0,hitFlashT:0,invulnT:0,contactT:0,dashT:0,dashCd:0,gloryT:0,isBall:true,
   intent:null,lastX:x,lastY:y};}
 function makeSweeper(){
   return{id:sweeperSerial++,x:30+hash(sweeperSerial,worldSeed)*100,y:ball.y+540,vx:0,speed:1.1,d:SWEEPER_D,
-    yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'roam',stateT:0,lungeX:0,lungeY:0,misses:0,hitCd:0};
+    yaw:0,angle:0,va:0,roll:0,rollX:0,wobbleT:0,state:'roam',stateT:0,lungeX:0,lungeY:0,misses:0,hitCd:0};
 }
 
 // ---- one shared physics path for ball, pets, sweepers, human, bot, planner ----
@@ -337,7 +337,9 @@ function advanceBall(body,intent,env){
   const va=Math.atan2(body.vx,Math.max(.5,body.speed));
   body.yaw=(body.yaw||0)+(clamp(va,-.5,.5)-(body.yaw||0))*.24;
   body.angle=body.yaw;body.va=va;
-  body.roll=(body.roll||0)+body.speed/Math.max(6,drawR(body.d));
+  const rollR=Math.max(6,drawR(body.d));
+  body.roll=(body.roll||0)+body.speed/rollR;
+  body.rollX=(body.rollX||0)+body.vx/rollR;
   return body;
 }
 
@@ -397,7 +399,7 @@ function scatterOff(n){
     lost+=s.size*s.size*sk;
     items.push({id:++scatterSerial+1e7,kind:s.kind,cls:s.cls,size:s.size,
       x:clamp(ball.x+(hash(scatterSerial,runFrame)-.5)*30,X_LO+2,X_HI-2),y:ball.y-26-k*22,
-      vx:0,speed:0,d:s.size,yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'loose',mover:null,hitCd:0,
+      vx:0,speed:0,d:s.size,yaw:0,angle:0,va:0,roll:0,rollX:0,wobbleT:0,state:'loose',mover:null,hitCd:0,
       seed:hash(scatterSerial,worldSeed),scattered:true});
     stats.scatters++;cue('bad','scatter',ball.x,ball.y-20,.35);
   }
@@ -660,7 +662,7 @@ function spawnRain(burst){
     const lane=lanes[mod(k,burst?2:1)];
     items.push({id:s,kind:['starbit','shard','crystal'][mod(s,3)],cls:classOf(sz),size:sz,
       x:clamp(lane+(hash(s*7,worldSeed)-.5)*30,X_LO+2,X_HI-2),y:ball.y+300+hash(s*3,worldSeed)*30,
-      vx:0,speed:0,d:sz,yaw:0,angle:0,va:0,roll:0,wobbleT:0,state:'rain',
+      vx:0,speed:0,d:sz,yaw:0,angle:0,va:0,roll:0,rollX:0,wobbleT:0,state:'rain',
       vy:2.0+hash(s*11,worldSeed)*1.0,landY:ball.y+190+hash(s*13,worldSeed)*80,
       mover:null,hitCd:0,seed:hash(s,worldSeed),rain:true});
   }
@@ -995,6 +997,19 @@ function drawZoneBase(p){
   }else{
     // Orbit tide: deep field with hashed stars, nebula bands, one bright mass.
     rect(0,30,W,H-30,mix(p.floor,INK,.3));
+    // Nebula dust: broad world-anchored patches of lifted indigo so deep
+    // space is never one flat slab — soft wide blocks, never speckle. Added
+    // 2026-07-17 when the haze-veil removal exposed the flat base (largest
+    // color share hit .58 in the orbit beat).
+    for(let y=30+mod(off,12)-12;y<H;y+=12){
+      const wy=Math.floor(wyOf(y+1)/12);
+      for(let x=0;x<W;x+=20){
+        const h3=hash(Math.floor(x/20)+41,wy);
+        if(h3>.55){ctx.globalAlpha=.09+(h3-.55)*.26;
+          rect(x,Math.max(30,y),20,12,h3>.9?mix(p.accent,p.floor,.5):h3>.75?'#2a2f52':'#232848');
+          ctx.globalAlpha=1;}
+      }
+    }
     for(let y=32;y<H;y+=4)for(let x=0;x<W;x+=4){
       const h2=hash(Math.floor(x/4),Math.floor(wyOf(y)/4));
       if(h2>.94)rect(x+1,y+1,h2>.985?2:1,h2>.985?2:1,h2>.978?CREAM:h2>.96?CYAN:'#4a5a8a');}
@@ -1090,6 +1105,14 @@ function drawItem(i){
     line([[0,-s*.8-4],[0,-2]],mix(CYAN,CREAM,.4),1);line([[-1,-s*.6-2],[-1,-1]],mix(CYAN,INK,.2),1);
     ctx.globalAlpha=.3;ctx.fillStyle=CYAN;ctx.beginPath();ctx.arc(0,0,s*.7,0,TAU);ctx.fill();ctx.globalAlpha=1;}
   const u=s/2; // half-size in px
+  // Contact shadow: every grounded thing SITS on the floor. The soft dark
+  // ellipse pops each silhouette off busy tile/plank patterns — the single
+  // biggest what-is-that fix from the 2026-07-17 readability pass.
+  if(i.state!=='rain'&&i.kind!=='mote'){
+    ctx.globalAlpha=.26;ctx.fillStyle='#000';
+    ctx.beginPath();ctx.ellipse(0,u*.8,Math.max(2,u*.95),Math.max(1.2,u*.28),0,0,TAU);ctx.fill();
+    ctx.globalAlpha=1;
+  }
   switch(i.kind){
     // bits
     case'crumb':rect(-u,-u*.5,s,s*.6,c);rect(-u*.3,-u,2,2,mix(c,CREAM,.3));break;
@@ -1110,8 +1133,10 @@ function drawItem(i){
     // toys
     case'dice':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,INK,.2));
       rect(-u*.5,-u*.5,2,2,INK);rect(u*.5-2,u*.5-2,2,2,INK);if(s>8)rect(-1,-1,2,2,INK);break;
-    case'block':rect(-u,-u,s,s,c);rect(-u,-u,s,1,mix(c,CREAM,.4));rect(-u+1,-u+1,s-2,s-2,mix(c,INK,.12));
-      rect(-2,-2,4,4,CREAM);break;
+    case'block':rect(-u-1,-u-1,s+2,s+2,mix(c,INK,.5));rect(-u,-u,s,s,c);
+      rect(-u,-u,s,1,mix(c,CREAM,.4));rect(-u,u-1,s,1,mix(c,INK,.3));
+      rect(-u*.55,-u*.55,s*.55,s*.55,CREAM); // stamped face
+      rect(-1,-u*.4,2,Math.max(2,s*.4),c);rect(-u*.35,-u*.4,Math.max(2,s*.35),2,c);break;
     case'marble':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();
       ctx.fillStyle=mix(c,CREAM,.7);ctx.beginPath();ctx.arc(-u*.3,-u*.3,u*.3,0,TAU);ctx.fill();break;
     case'ball8':ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,0,u,0,TAU);ctx.fill();
@@ -1127,8 +1152,16 @@ function drawItem(i){
     case'satcell':rect(-u,-u*.6,s,s*.6,c);for(let k=-1;k<=1;k++)rect(k*u*.6-1,-u*.6,1,s*.6,mix(c,CREAM,.4));break;
     // pets (gait-animated critters)
     case'mouse':{const g=(showFrame>>3+i.id)&1;
+      line([[-u-4,g?2:1],[-u*.6,0]],mix(c,INK,.25),1); // kinked tail
+      ctx.fillStyle=mix(c,INK,.45);ctx.beginPath();ctx.ellipse(0,0,u+1,u*.7+1,0,0,TAU);ctx.fill(); // outline
       ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(0,0,u,u*.7,0,0,TAU);ctx.fill();
-      rect(-u-2,g?0:1,3,1,mix(c,INK,.2));rect(u*.4,-u-2,2,2,c);rect(u*.6,-u*.4,1,1,INK);break;}
+      ctx.fillStyle=mix(c,CREAM,.3);ctx.beginPath();ctx.ellipse(u*.1,u*.2,u*.55,u*.3,0,0,TAU);ctx.fill(); // belly
+      ctx.fillStyle=c;ctx.beginPath();ctx.arc(u*.3,-u*.75,Math.max(1.5,u*.36),0,TAU);ctx.fill(); // ear
+      ctx.fillStyle='#e8a0b8';ctx.beginPath();ctx.arc(u*.3,-u*.75,Math.max(.8,u*.18),0,TAU);ctx.fill();
+      rect(u*.8,-u*.25,2,1,'#e8a0b8'); // snout
+      rect(u*.45,-u*.4,1,1,INK); // eye
+      rect(-u*.45,u*.5+(g?1:0),2,1,mix(c,INK,.35));rect(u*.15,u*.5+(g?0:1),2,1,mix(c,INK,.35)); // trotting feet
+      break;}
     case'snail':{rect(-u,-1,s,3,mix(c,CREAM,.2));
       ctx.fillStyle=c;ctx.beginPath();ctx.arc(-u*.1,-u*.4,u*.75,0,TAU);ctx.fill();
       ctx.strokeStyle=mix(c,INK,.35);ctx.beginPath();ctx.arc(-u*.1,-u*.4,u*.4,0,TAU);ctx.stroke();
@@ -1233,29 +1266,55 @@ function drawBall(){
   ctx.rotate(ball.angle*.5+wob);
   // Dark outline first: the katamari must pop off every floor in every zone.
   ctx.fillStyle=mix(cc,INK,.55);ctx.beginPath();ctx.arc(0,0,r+1,0,TAU);ctx.fill();
-  // Core: class-colored mass with a shaded rim and a rotating highlight seam.
+  // Core: class-colored mass with a shaded rim.
   ctx.fillStyle=mix(cc,INK,.18);ctx.beginPath();ctx.arc(0,0,r,0,TAU);ctx.fill();
   ctx.fillStyle=cc;ctx.beginPath();ctx.arc(0,0,r*.82,0,TAU);ctx.fill();
-  ctx.strokeStyle=mix(cc,CREAM,.6);ctx.lineWidth=1.5;
-  ctx.beginPath();ctx.arc(0,0,r*.6,ball.roll%TAU,ball.roll%TAU+1.4);ctx.stroke();ctx.lineWidth=1;
-  ctx.strokeStyle=mix(cc,INK,.35);
-  ctx.beginPath();ctx.arc(0,0,r*.6,ball.roll%TAU+Math.PI,ball.roll%TAU+Math.PI+.9);ctx.stroke();
-  // Core dimples: permanent katamari texture even before the first pickup —
-  // three bumps riding the spin, then every stuck pickup on the rim.
-  for(let k=0;k<3;k++){const a=k*TAU/3+ball.roll*.7;
-    ctx.fillStyle=mix(cc,CREAM,.25);ctx.beginPath();ctx.arc(Math.cos(a)*r*.42,Math.sin(a)*r*.4,Math.max(1.6,r*.16),0,TAU);ctx.fill();
-    ctx.fillStyle=mix(cc,INK,.3);ctx.beginPath();ctx.arc(Math.cos(a)*r*.42+1,Math.sin(a)*r*.4+1,Math.max(1,r*.1),0,TAU);ctx.fill();}
+  // Directionally honest surface roll (pocket-league ball doctrine): every
+  // surface feature lives at fixed spherical coordinates and scrolls across
+  // the visible face along the TRUE velocity — forward roll from speed
+  // (ball.roll), side roll from vx (ball.rollX) — with rim foreshortening.
+  // Rolling north the freckles sweep down the face; steering right they
+  // drift right. Never a planar record-spin.
+  const wrapA=a=>Math.atan2(Math.sin(a),Math.cos(a));
+  const surf=(u,v)=>{
+    const ax=wrapA(u+ball.rollX),ay=wrapA(v-ball.roll),cx2=Math.cos(ax),cy2=Math.cos(ay);
+    if(cx2<=.04||cy2<=.04)return null;
+    const px=Math.sin(ax)*r*.9,py=Math.sin(ay)*r*.9;
+    if(px*px+py*py>r*r*.78)return null;
+    return{x:px,y:py,sc:cx2*cy2};
+  };
+  // Equator stripes: two latitude bands that scroll down the face with
+  // forward travel — the primary rolling read, bowing near the rim.
+  for(const ph of[0,Math.PI]){
+    const ay=wrapA(ph-ball.roll),cy2=Math.cos(ay);
+    if(cy2<=.08)continue;
+    const yy=Math.sin(ay)*r*.88,w2=Math.sqrt(Math.max(0,r*r*.78-yy*yy));
+    if(w2<1.5)continue;
+    ctx.globalAlpha=.35+.45*cy2;ctx.strokeStyle=ph===0?mix(cc,INK,.4):mix(cc,CREAM,.45);ctx.lineWidth=Math.max(1,r*.11);
+    ctx.beginPath();ctx.moveTo(-w2,yy);ctx.quadraticCurveTo(0,yy*1.5,w2,yy);ctx.stroke();
+    ctx.lineWidth=1;ctx.globalAlpha=1;
+  }
+  // Core freckles: permanent katamari texture even before the first pickup,
+  // riding the same spherical roll so the spin direction always reads.
+  for(let k=0;k<8;k++){
+    const p=surf(k*2.39996+.6,k*1.947+.9);if(!p)continue;
+    const fs=Math.max(1.3,r*.14)*(.6+p.sc*.4);
+    ctx.fillStyle=k%2?mix(cc,CREAM,.3):mix(cc,INK,.3);
+    ctx.beginPath();ctx.arc(p.x,p.y,fs,0,TAU);ctx.fill();
+  }
   for(const st of stuck){
-    const a=st.a+ball.roll,kx=Math.cos(a)*r*st.rr,ky=Math.sin(a)*r*st.rr*.94;
+    const p=surf(st.a,st.a*2.399+(st.rr||0)*TAU);if(!p)continue;
+    const kx=p.x,ky=p.y;
     const kc=st.kind==='sweeper'?STEEL:(ITEM_KINDS[st.kind]?ITEM_KINDS[st.kind].c:CLASS_COLORS[st.cls]);
-    const ks=st.size>30?4:st.size>8?3:2;
+    const ks=(st.size>30?4:st.size>8?3:2)*(.65+p.sc*.4);
     if(st.kind==='sweeper'){rect(kx-3,ky-3,6,6,'#3a3f4c');rect(kx-1,ky-1,2,2,CORAL);}
     else{ctx.fillStyle=kc;if(st.cls>=3)rect(kx-ks/2,ky-ks/2,ks,ks,kc);
       else{ctx.beginPath();ctx.arc(kx,ky,ks*.6,0,TAU);ctx.fill();}
       if(st.size>20)rect(kx-1,ky-1,1,1,mix(kc,INK,.4));}
   }
-  // Gloss: a small bright arc counter-rotating so the spin is always readable.
-  ctx.strokeStyle=mix(cc,CREAM,.85);ctx.beginPath();ctx.arc(0,0,r*.88,-ball.roll*.6-.9,-ball.roll*.6-.15);ctx.stroke();
+  // Gloss: a fixed top-left light-source arc — the light stays put while the
+  // surface rolls beneath it, exactly how a real rolling ball reads.
+  ctx.strokeStyle=mix(cc,CREAM,.85);ctx.beginPath();ctx.arc(0,0,r*.82,-2.4,-1.3);ctx.stroke();
   ctx.restore();
   // Dash vents and glory rim (render-only payoff dressing).
   if(ball.dashT>0){const k=(showFrame>>1)%2;dustAtVisual(x-3,y+r*.7,k?AMBER:GOLD);dustAtVisual(x+3,y+r*.7,k?GOLD:AMBER);}
@@ -1399,11 +1458,12 @@ function drawForeground(p){
     if(y>44&&y<H-60){rect(120,y,26,6,mix('#3a5a9a',INK,.2));rect(146,y+1,8,4,mix(STEEL,INK,.2));
       rect(124,y+2,6,2,CYAN);}
   }
-  // Zone haze: layered striations pull the far floor into the light while the
-  // foreground stays dark — the frame's depth cue and bright mass.
-  const haze=mix(p.haze,CREAM,.15),hazeBright=mix(p.haze,CREAM,.75),hazeDim=mix(p.haze,INK,.25);
-  for(let y=32;y<104;y++){const u=1-(y-32)/72;ctx.globalAlpha=.6*Math.pow(u,1.6);
-    rect(0,y,W,1,(y%6<2&&u>.25)?hazeBright:hazeDim);}
+  // Horizon glow: a short, quiet depth cue at the very top of the corridor.
+  // Never a veil — the old 70px striated wash made the far floor and its
+  // items unreadable (owner readability pass, 2026-07-17).
+  const hazeDim=mix(p.haze,INK,.2);
+  for(let y=32;y<66;y++){const u=1-(y-32)/34;ctx.globalAlpha=.3*Math.pow(u,1.7);
+    rect(0,y,W,1,hazeDim);}
   ctx.globalAlpha=1;
 }
 // ---- HUD -----------------------------------------------------------------------------

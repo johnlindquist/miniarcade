@@ -11,7 +11,7 @@
   canvas:focus-visible{outline:2px solid #59d8f5;outline-offset:-3px}
 </style>
 <canvas id="cv" width="320" height="720" tabindex="0"
-  aria-label="Sky Reign. A dragon rider soars on rails over five biomes: sweep locks onto sky packs, unleash homing volleys, weave through telegraphed fire, ride out sandstorm fronts, and break the carrier wyrm at the gate."></canvas>
+  aria-label="Sky Reign. A dragon rider soars on rails over five blended biomes: sweep locks onto sky packs, hold the charge, unleash homing volleys, ascend the lock rack with kills, weave through telegraphed fire, ride out sandstorm fronts, and break the carrier wyrm at the gate."></canvas>
 <script src="engine.js"></script>
 <script src="autoplay.js"></script>
 <script>
@@ -34,6 +34,16 @@ const{controllerMux,skillProfile,createRng}=AI;
 // wyrm, the human, the bot, and the copied-state planner rollouts.
 const TAU=Math.PI*2,SECTOR=300,BIOME_SPAN=4200,FLIGHT_FRAMES=43200,DRAGON_Y=300;
 const ALT_MIN=4,ALT_MAX=66,CORR_L=14,CORR_R=146,MAX_LOCKS=4;
+// Ascension: the dragon UPGRADES over a run. Kills grow the lock rack
+// (2 -> 3 -> 4 charges), the art evolves per tier (crown horns, dorsal armor,
+// an extra wing strut, brighter tail spade), and the HUD RANK advances.
+// __NO_UPGRADE freezes tier 0 and nothing else.
+const TIER_LOCKS=[2,3,4],TIER_KILLS=[0,12,30],CHARGE_HOLD=22;
+const maxLocks=()=>TIER_LOCKS[dragon?dragon.tier:0];
+// Land transitions: the next land's terrain rows appear on the horizon and
+// sweep down honestly (each row is drawn by the biome that OWNS its worldY)
+// while the base palette lerps over the last BLEND_SPAN units of the old land.
+const BLEND_SPAN=520;
 const INK='#070a12',CREAM='#fff3da',GOLD='#ffb02e',AMBER='#ff8a3d',CORAL='#ff5d4f',
   MINT='#67e8a2',CYAN='#59d8f5',STEEL='#9aa7b8',BLOOD='#c92c3c',VIOLET='#8a7aff';
 const BIOMES=[
@@ -67,7 +77,7 @@ let showFrame=0,runFrame=0,state='flight',resultT=0,outcome='',worldSeed=1,skill
 let dragon=null,wings=[],swarm=[],bolts=[],missiles=[],lances=[],wyrm=null,dust=null;
 let texts=[],plan=null,planAt=-1e9,skill=null,visualIntent=null;
 let persona=PERSONAS[0],personaIndex=0,wingSerial=0,swarmSerial=0,boltSerial=0;
-let generatedTo=-1,lastBiome=0,lastSector=0,volleyStreak=0,lastVolleyFrame=-1e9;
+let generatedTo=-1,lastBiome=0,lastSector=0,volleyStreak=0,lastVolleyFrame=-1e9,lastBlendFrom=-1;
 let volleySerial=0,volleyCounts={};
 let pres={cue:null,t:0,holdWorld:false,physicsEvery:1,admire:false};
 let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLapsed=false;
@@ -81,16 +91,23 @@ let eventSerial=0,progressSerial=0,lastEventFrame=0,lastProgressFrame=0,lastLaps
 let goodPulse=0,badPulse=0,feedback=[],feedbackSerial=0,marks=[];
 function screenYAt(wy,alt){return(DRAGON_Y-dragon.alt)-(wy-dragon.worldY)-(alt-dragon.alt);}
 function cue(kind,id,x,wy,alt,pulse){
-  feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
-    sx:Math.round(clamp(x,0,W)),sy:Math.round(clamp(screenYAt(wy,alt),34,H-6))});
-  if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  // Curated ledger: an event the viewer cannot see did not happen. A homing
+  // kill that lands beyond the visible strip still pulses the edge, but it
+  // never enters the ledger — every ledger entry must be croppable feedback
+  // at its on-screen location.
+  const rawY=screenYAt(wy,alt);
+  if(rawY>=36&&rawY<=H-4){
+    feedback.push({serial:feedbackSerial++,frame:runFrame,show:showFrame,kind,id,
+      sx:Math.round(clamp(x,0,W)),sy:Math.round(clamp(rawY,34,H-6))});
+    if(feedback.length>420)feedback.splice(0,feedback.length-420);
+  }
   if(kind==='good')goodPulse=Math.max(goodPulse,pulse===undefined?.45:pulse);
   else badPulse=Math.max(badPulse,pulse===undefined?.55:pulse);
 }
 const stats={markers:0,biomes:1,kills:0,volleyKills:0,volleys:0,volleyWipes:0,locks:0,lanceHits:0,
   lances:0,boltsFaced:0,nearMisses:0,hitsTaken:0,shieldBreaks:0,wounds:0,collisions:0,wrecks:0,
   lapses:0,acts:0,actClears:0,storms:0,stormClears:0,wyrms:0,phaseBreaks:0,wyrmKills:0,dodges:0,contacts:0,
-  sweeps:0,sweepHits:0,
+  sweeps:0,sweepHits:0,upgrades:0,fullRacks:0,maxRack:0,
   events:0,progress:0,maxEventLull:0,maxProgressLull:0,maxStep:0,appliedIntents:0,admireIntents:0};
 const SHOW=createShow({queueLimit:3,recoveryGap:90,tiers:{
   1:{frames:12},2:{frames:44,minGap:100},
@@ -130,6 +147,7 @@ function makeDragon(){return{x:80,alt:26,worldY:60,vx:0,valt:0,speed:2.05,cruise
   turn:.105,turnA:.085,drag:.82,dragA:.8,accel:.03,yaw:0,bank:0,va:0,isDragon:true,windFactor:1,
   shield:45,shieldMax:45,hull:100,shieldT:0,lanceCd:0,locks:[],sweepT:0,lockAge:0,
   hitFlashT:0,invulnT:0,wreckT:0,settleT:0,gloryT:0,contactT:0,lockGlow:0,dodgeT:0,
+  tier:0,ascendT:0,chargeT:0,
   intent:null,lastX:80,lastY:60};}
 function makeWing(kind,x,wy,alt,slot){const spec=WING_KINDS[kind];return{id:slot,kind,x,worldY:wy,alt,
   vx:0,valt:0,speed:spec.cruise,cruise:spec.cruise,turn:spec.turn,turnA:spec.turnA,drag:.82,dragA:.8,accel:.03,
@@ -248,7 +266,8 @@ function lockTargetScore(t){
   return 400-Math.abs(d-150)*2-dx*1.6-da*1.2;
 }
 function acquireLock(){
-  if(dragon.locks.length>=MAX_LOCKS)return false;
+  if(typeof globalThis.__NO_VOLLEY!=='undefined')return false;
+  if(dragon.locks.length>=maxLocks())return false;
   let best=null,bestScore=0;
   // During a wyrm act the staged weak point takes repeated lock charges —
   // concentrating the whole volley on the called break.
@@ -287,6 +306,7 @@ function releaseVolley(){
   const locks=dragon.locks.splice(0,dragon.locks.length);
   if(!locks.length)return;
   stats.volleys++;markEvent(6);
+  if(locks.length>=maxLocks())stats.fullRacks++;
   volleyStreak=showFrame-lastVolleyFrame<900?volleyStreak+1:1;lastVolleyFrame=showFrame;
   const vid=++volleySerial;volleyCounts[vid]=0;
   let i=0;
@@ -301,8 +321,26 @@ function releaseVolley(){
   if(marks.length>48)marks.shift();
   fxAt(dragon.x,dragonScreenY(),14,CYAN,2.2);fxAt(dragon.x,dragonScreenY(),6,'#ffffff',1.6);
 }
+// Ascension: kill milestones grow the lock rack and evolve the dragon's art.
+// This is the run's visible power curve — announced, decaled, and pinned by
+// the upgrade telemetry (stats.upgrades / stats.maxRack / stats.fullRacks).
+function maybeAscend(){
+  if(typeof globalThis.__NO_UPGRADE!=='undefined')return;
+  while(dragon.tier<TIER_LOCKS.length-1&&stats.kills>=TIER_KILLS[dragon.tier+1]){
+    dragon.tier++;stats.upgrades++;dragon.ascendT=90;
+    markEvent(20);markProgress(10);
+    cue('good','ascend',dragon.x,dragon.worldY,dragon.alt,.6);
+    marks.push({kind:'ascend',x:dragon.x,wy:dragon.worldY,alt:dragon.alt,f:runFrame});
+    if(marks.length>48)marks.shift();
+    offer('ascend',2,dragon.x,dragon.worldY,'tier-'+dragon.tier);
+    fxAt(dragon.x,dragonScreenY(),20,GOLD,2.6,.008);fxAt(dragon.x,dragonScreenY(),8,CREAM,1.8);
+    ring(dragon.x,dragonScreenY(),GOLD,2.6,30);shake(3);
+    say('ASCENSION · RACK '+TIER_LOCKS[dragon.tier],GOLD,dragon.worldY,90,dragon.x,dragon.alt);
+  }
+}
 function killFoe(t,byVolley,volleyId){
   t.hp=0;stats.kills++;markEvent(byVolley?14:8);markProgress(byVolley?5:2);
+  maybeAscend();
   if(byVolley){stats.volleyKills++;
     if(volleyId!==undefined){volleyCounts[volleyId]=(volleyCounts[volleyId]||0)+1;
       // The apex of the volley fantasy: one release wiping three-plus foes.
@@ -518,13 +556,18 @@ function rawBotIntent(){
   // weak direct fire for when the volley isn't worth the rack (PD tap-fire).
   let fire=0;
   pruneLocks();
-  const rackFull=dragon.locks.length>=MAX_LOCKS;
+  const volleyOn=typeof globalThis.__NO_VOLLEY==='undefined';
+  const cap=maxLocks();
+  const rackFull=dragon.locks.length>=cap;
   const envelope=lockables().filter(t=>lockTargetScore(t)>0);
   const wyrmTarget=wyrm&&!wyrm.dead&&act.phase==='live';
   const anyTarget=envelope.length>0||wyrmTarget;
-  const wantSweep=wyrmTarget||envelope.length>=3||dragon.locks.length>0;
-  if(rackFull||(dragon.locks.length>0&&(!anyTarget&&dragon.lockAge>60||dragon.lockAge>170)))fire=0; // unleash
-  else if(wantSweep&&anyTarget&&dragon.locks.length<MAX_LOCKS)fire=2;
+  const wantSweep=wyrmTarget||envelope.length>=Math.min(3,cap)||dragon.locks.length>0;
+  if(volleyOn){
+    if(rackFull&&dragon.chargeT<CHARGE_HOLD)fire=2; // hold the FULL rack charged: the power-up beat
+    else if(rackFull||(dragon.locks.length>0&&(!anyTarget&&dragon.lockAge>60||dragon.lockAge>170)))fire=0; // unleash
+    else if(wantSweep&&anyTarget&&dragon.locks.length<cap)fire=2;
+  }
   if(fire!==2&&dragon.locks.length===0&&dragon.lanceCd<=0){
     for(const t of lockables()){
       const d=t.worldY-dragon.worldY;
@@ -885,18 +928,28 @@ function stepDragon(){
       say('WINGS · FLARE · UP!',GOLD,dragon.worldY,60,dragon.x,dragon.alt);}
     return;}
   const intent=controller();dragon.intent=intent;stats.appliedIntents++;
+  if(dragon.ascendT>0)dragon.ascendT--;
   // Fire ladder: 1 taps a lance with an empty rack, 2 holds the lock sweep,
   // and dropping to 0 with a loaded rack unleashes the volley (PD control).
+  // __NO_VOLLEY disables ONLY the lock-and-volley system: the hold key taps
+  // lances on the same cooldown instead, so the baseline stays armed.
+  const volleyOn=typeof globalThis.__NO_VOLLEY==='undefined';
   if(intent.fire===1&&dragon.lanceCd<=0&&dragon.locks.length===0)fireLance();
-  if(intent.fire===2){
+  if(volleyOn&&intent.fire===2){
     stats.sweeps++;dragon.lockGlow=Math.min(20,dragon.lockGlow+2);dragon.sweepT++;dragon.lockAge++;
     if(dragon.sweepT>=13){dragon.sweepT=0;if(acquireLock())stats.sweepHits++;}
   }else{
     dragon.lockGlow=Math.max(0,dragon.lockGlow-2);
     if(intent.fire===0&&dragon.locks.length)releaseVolley();
+    if(!volleyOn&&intent.fire===2&&dragon.lanceCd<=0)fireLance();
     dragon.sweepT=0;dragon.lockAge=0;
   }
   pruneLocks();
+  // Charge clock: how long the rack has been FULL. The bot holds the charged
+  // rack for CHARGE_HOLD frames (the power-up beat the viewer reads on the
+  // dragon's aura) before it unleashes.
+  dragon.chargeT=dragon.locks.length>=maxLocks()&&dragon.locks.length>0?dragon.chargeT+1:0;
+  stats.maxRack=Math.max(stats.maxRack,dragon.locks.length);
   advanceCraft(dragon,intent,envNow());
   if(dragon.gloryT>0&&showFrame%3===0)dustAt(dragon.x,dragonScreenY()+8,1,GOLD);
   const stepLen=Math.hypot(dragon.x-dragon.lastX,dragon.worldY-dragon.lastY);stats.maxStep=Math.max(stats.maxStep,stepLen);
@@ -905,6 +958,11 @@ function biomeProgress(){
   const sector=Math.floor(dragon.worldY/SECTOR);
   if(sector!==lastSector){stats.markers+=Math.max(1,sector-lastSector);lastSector=sector;markEvent(2);markProgress(1);}
   const biome=currentBiome();
+  // Border call-out: when the next land's terrain starts filling the horizon
+  // (the blended border), the crew names it BEFORE the crossing banner lands.
+  const info=blendInfo();
+  if(info.t>0&&lastBlendFrom!==info.cur){lastBlendFrom=info.cur;markEvent(1);
+    say(BIOMES[info.next].name+' AHEAD',BIOMES[info.next].accent,dragon.worldY+130,120,80,dragon.alt+18);}
   if(biome!==lastBiome){lastBiome=biome;stats.biomes++;markProgress(40);
     offer('biome',2,dragon.x,dragon.worldY,BIOMES[biome].name);
     say(BIOMES[biome].name,BIOMES[biome].accent,dragon.worldY+60,150,80,dragon.alt+20);}
@@ -953,7 +1011,7 @@ function resetRun(full){
   worldSeed=RI(1,999999);skillSeed=RI(1,0x7fffffff);runFrame=0;state='flight';resultT=0;outcome='';
   dragon=makeDragon();wings=[];swarm=[];bolts=[];missiles=[];lances=[];wyrm=null;dust=null;
   texts=[];plan=null;planAt=-1e9;visualIntent=null;
-  generatedTo=Math.floor(dragon.worldY/SECTOR);lastBiome=0;lastSector=0;wingSerial=0;swarmSerial=0;boltSerial=0;
+  generatedTo=Math.floor(dragon.worldY/SECTOR);lastBiome=0;lastSector=0;lastBlendFrom=-1;wingSerial=0;swarmSerial=0;boltSerial=0;
   volleyStreak=0;lastVolleyFrame=-1e9;volleySerial=0;volleyCounts={};
   feedback.length=0;goodPulse=0;badPulse=0;marks.length=0;
   lastEventFrame=showFrame;lastProgressFrame=showFrame;lastLapsed=false;
@@ -998,6 +1056,25 @@ function step(){
 // field fighting the actors. Everything terrain-anchored scrolls DOWN-screen
 // through sy() as the dragon flies north; altitude reads through the actor's
 // own screen height and its ground shadow, never through a fake scale hack.
+// ---- land ownership and the blended border ------------------------------------
+// Each terrain row belongs to the biome that owns its worldY, so the next
+// land's features appear on the horizon and sweep down with the scroll instead
+// of snapping at the boundary. The base palette lerps across the final
+// BLEND_SPAN units of the old land; at the boundary the lerp completes exactly
+// as currentBiome() flips, so the ground plane never cuts. All render-only.
+const biomeAt=wy=>mod(Math.floor(wy/BIOME_SPAN),BIOMES.length);
+function blendInfo(){
+  const u=mod(dragon.worldY,BIOME_SPAN),cur=currentBiome(),next=mod(cur+1,BIOMES.length);
+  return{cur,next,t:clamp((u-(BIOME_SPAN-BLEND_SPAN))/BLEND_SPAN,0,1)};
+}
+function blendPalette(a,b,t){
+  if(t<=0)return a;
+  const out={name:a.name,kind:a.kind};
+  for(const k of['ground','far','ridge','ridgeD','rock','accent','haze'])out[k]=mix(a[k],b[k],t);
+  return out;
+}
+let rowFilter=-1;
+const rowOwned=wy=>rowFilter<0||biomeAt(wy)===rowFilter;
 function drawBiomeBase(p){
   rect(0,0,W,H,mix(p.ground,INK,.12));
   // Broad value bands: the ground plane darkens toward the viewer so the far
@@ -1033,7 +1110,7 @@ function drawBiomeBase(p){
 }
 function drawDuneSea(p){
   for(let wy=Math.floor((dragon.worldY-80)/48)*48;wy<dragon.worldY+300;wy+=48){
-    const y=sy(wy);if(y<34||y>H+8)continue;
+    const y=sy(wy);if(y<34||y>H+8||!rowOwned(wy))continue;
     const ph=Math.floor(wy/48);
     // Three-tone dune ridge: lit crest, mid slope, dark lee — the desert's
     // grammar with real value steps.
@@ -1062,6 +1139,7 @@ function drawCloudReef(p){
   // The cloud sea floor: layered banks in three tones with hard-shaded rims
   // fill the mid ground — the dragon threads between the reef islets poking through.
   for(let wy=Math.floor((dragon.worldY-100)/74)*74;wy<dragon.worldY+330;wy+=74){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/74),alt=14+hash(ph,worldSeed)*14;
     const y=screenYAt(wy,alt);if(y<30||y>H+20)continue;
     const cx=hash(ph*3,worldSeed)>.5?36:118,w=44+hash(ph*5,worldSeed)*26;
@@ -1075,6 +1153,7 @@ function drawCloudReef(p){
   }
   // Drifting wisps at dragon altitude: fast parallax streaks of thin cloud.
   for(let wy=Math.floor((dragon.worldY-90)/74)*74;wy<dragon.worldY+320;wy+=74){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/74),alt=26+hash(ph,worldSeed)*34;
     const y=screenYAt(wy,alt);if(y<20||y>H+16)continue;
     const cx=20+hash(ph*3,worldSeed)*120,w=26+hash(ph*5,worldSeed)*22;
@@ -1087,6 +1166,7 @@ function drawCloudReef(p){
   }
   // Reef needles: thin stone spires with lit tips punching through the cloud sea.
   for(let wy=Math.floor((dragon.worldY-90)/200)*200;wy<dragon.worldY+320;wy+=200){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/200);if(hash(ph*29,worldSeed)<.45)continue;
     const alt=18+hash(ph*31,worldSeed)*20,y=screenYAt(wy,alt);if(y<40||y>H+10)continue;
     const nx=14+hash(ph*37,worldSeed)*132,h=18+hash(ph*41,worldSeed)*16;
@@ -1097,6 +1177,7 @@ function drawCloudReef(p){
   // Reef islets: floating rock slabs with grass crowns, drip-stone roots,
   // beacon lights — and cloud shadows on the sea below them.
   for(let wy=Math.floor((dragon.worldY-90)/120)*120;wy<dragon.worldY+320;wy+=120){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/120);if(hash(ph,worldSeed*3)<.3)continue;
     const alt=30+hash(ph*7,worldSeed)*26,y=screenYAt(wy,alt);if(y<26||y>H+20)continue;
     const ix=26+hash(ph*11,worldSeed)*108,iw=17+hash(ph*13,worldSeed)*11;
@@ -1112,7 +1193,7 @@ function drawCloudReef(p){
 }
 function drawSunkenRuins(p){
   for(let wy=Math.floor((dragon.worldY-80)/44)*44;wy<dragon.worldY+300;wy+=44){
-    const y=sy(wy);if(y<34||y>H+8)continue;
+    const y=sy(wy);if(y<34||y>H+8||!rowOwned(wy))continue;
     const ph=Math.floor(wy/44);
     // Two wave tiers per row: long broken swells, never stipple.
     ctx.globalAlpha=.9;
@@ -1144,7 +1225,7 @@ function drawSunkenRuins(p){
 }
 function drawAshFields(p){
   for(let wy=Math.floor((dragon.worldY-80)/48)*48;wy<dragon.worldY+300;wy+=48){
-    const y=sy(wy);if(y<34||y>H+8)continue;
+    const y=sy(wy);if(y<34||y>H+8||!rowOwned(wy))continue;
     const ph=Math.floor(wy/48);
     // Basalt plate seams: big rim-lit plates, two per row — real edge structure.
     for(let x=mod(ph*31,60)-60;x<W;x+=92){
@@ -1180,6 +1261,7 @@ function drawAshFields(p){
 function drawTheGate(p){
   // Concentric gate rings ahead: huge slow arcs the corridor threads.
   for(let wy=Math.floor((dragon.worldY-120)/260)*260;wy<dragon.worldY+360;wy+=260){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/260),y=sy(wy);if(y<-90||y>H+90)continue;
     const r=52+hash(ph,worldSeed)*22;
     ctx.globalAlpha=.85;ctx.strokeStyle=mix(p.ridge,CREAM,.2);ctx.lineWidth=3;
@@ -1191,6 +1273,7 @@ function drawTheGate(p){
   }
   // Glyph plates: broad luminous slabs with dark sigil bars.
   for(let wy=Math.floor((dragon.worldY-80)/84)*84;wy<dragon.worldY+300;wy+=84){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/84),y=sy(wy);if(y<32||y>H+12)continue;
     const gx=20+hash(ph*13,worldSeed)*96;
     rect(gx,y,24,8,mix(p.rock,p.far,.25));rect(gx+2,y+2,20,1,mix(p.accent,CREAM,.4));
@@ -1198,6 +1281,7 @@ function drawTheGate(p){
   }
   // Light pillars: vertical beams anchored to the plane.
   for(let wy=Math.floor((dragon.worldY-80)/130)*130;wy<dragon.worldY+300;wy+=130){
+    if(!rowOwned(wy))continue;
     const ph=Math.floor(wy/130),y=sy(wy);if(y<30||y>H+40)continue;
     const px=18+hash(ph*23,worldSeed)*124;
     ctx.globalAlpha=.2;rect(px-3,y-34,7,38,p.accent);ctx.globalAlpha=.55;rect(px-1,y-32,3,34,CYAN);ctx.globalAlpha=1;
@@ -1259,14 +1343,26 @@ function drawStormOverlay(){
     rect(xx,yy,16,2,i%3?'#c9a25e':'#fff3da');}
   ctx.globalAlpha=1;
 }
-function drawEnvironment(p){
-  drawBiomeBase(p);
+function drawBiomeFeatures(index){
+  const p=BIOMES[index];
+  rowFilter=index;
   if(p.kind==='dune')drawDuneSea(p);
   else if(p.kind==='reef')drawCloudReef(p);
   else if(p.kind==='ruins')drawSunkenRuins(p);
   else if(p.kind==='ash')drawAshFields(p);
   else drawTheGate(p);
-  drawFarHaze(p);
+  rowFilter=-1;
+}
+function drawEnvironment(){
+  // Blended border: the base plane and haze lerp between the two lands while
+  // each land's terrain grammar draws only the rows it owns, so the far edge
+  // fills with the NEXT land before the dragon crosses — no hard cut.
+  const info=blendInfo(),base=blendPalette(BIOMES[info.cur],BIOMES[info.next],info.t);
+  drawBiomeBase(base);
+  const behind=biomeAt(dragon.worldY-130),ahead=biomeAt(dragon.worldY+340);
+  drawBiomeFeatures(behind);
+  if(ahead!==behind)drawBiomeFeatures(ahead);
+  drawFarHaze(base);
   drawDustWall();
   drawStormOverlay();
 }
@@ -1387,32 +1483,77 @@ function drawLance(l){
   rect(l.x-1,y-4,2,8,'#bff4ff');rect(l.x,y-5,1,2,'#ffffff');
 }
 function drawDragon(){
-  const dx=dragon.x,dy=dragonScreenY();
+  const dx=dragon.x,dy=dragonScreenY(),tier=dragon.tier;
   // Ground shadow: the honest altitude read — it never leaves the ground plane.
   ctx.globalAlpha=clamp(.3-dragon.alt*.003,.1,.3);ctx.fillStyle='#000';
-  ctx.beginPath();ctx.ellipse(dx,DRAGON_Y+5,7-dragon.alt*.04,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  ctx.beginPath();ctx.ellipse(dx,DRAGON_Y+5,8-dragon.alt*.04,2,0,0,TAU);ctx.fill();ctx.globalAlpha=1;
   ctx.save();ctx.translate(Math.round(dx),Math.round(dy));ctx.rotate(dragon.bank||0);
-  const flap=Math.sin(showFrame*.22)*2.2;
   const flash=dragon.hitFlashT>0&&((showFrame>>1)&1);
-  const body=flash?(((showFrame>>1)&1)?'#ffffff':CORAL):'#e8b23a',membrane=flash?body:'#c98a2e';
-  // Swept wing membranes with finger struts — the dragon's silhouette.
-  poly([[-2,-2],[-13,-6-flap],[-11,2],[-3,4]],membrane);
-  poly([[2,-2],[13,-6-flap],[11,2],[3,4]],membrane);
-  line([[-3,0],[-11,-5-flap]],mix(membrane,CREAM,.3),1);
-  line([[3,0],[11,-5-flap]],mix(membrane,CREAM,.3),1);
-  // Body, head, horns, tail
-  rect(-2,-7,4,12,body);
-  poly([[-2,-7],[0,-11],[2,-7]],mix(body,CREAM,.3)); // head
-  poly([[-2,-10],[-4,-13],[-1,-10]],CREAM);poly([[2,-10],[4,-13],[1,-10]],CREAM); // horns
-  rect(-1,5,2,6,mix(body,INK,.3));poly([[-3,11],[0,8],[3,11]],mix(body,CYAN,.35)); // tail fin
-  // The rider
-  rect(-1,-5,2,3,'#3a2c14');rect(-1,-7,2,2,'#d8a07b');rect(-1,-8,2,1,'#59d8f5');
-  // Chest gem: the lock-charge read — it brightens as the sweep holds.
-  if(dragon.lockGlow>0){ctx.globalAlpha=.4+dragon.lockGlow/20*.6;rect(-1,-2,2,2,CYAN);ctx.globalAlpha=1;}
+  const body=flash?(((showFrame>>1)&1)?'#ffffff':CORAL):'#e8b23a',
+    membrane=flash?body:'#c98a2e',membraneD=flash?body:mix('#c98a2e',INK,.3),
+    bone=flash?body:mix('#e8b23a',CREAM,.5),scale=flash?body:'#f5d98c';
+  // Articulated flap cycle: three readable wing poses (downstroke / glide /
+  // upstroke) on a continuous clock. The upstroke folds and lifts the tips,
+  // the downstroke reaches and drops them — a beating wing, not a static kite.
+  const cyc=Math.sin(showFrame*.16),pose=cyc>.45?1:cyc<-.45?-1:0;
+  const lift=pose===1?-5:pose===-1?3:0,reach=pose===1?12:pose===-1?16:15;
+  for(const s of[-1,1]){
+    const l=lift;
+    // One swept membrane per side with a twice-scalloped trailing edge — the
+    // bat-wing silhouette — then a darker outer half and radiating fingers.
+    poly([[s*2,-4],[s*8,-7+l*.6],[s*reach,-5+l],[s*(reach-3),-1+l*.7],[s*(reach-1.5),1+l*.5],
+      [s*(reach-5.5),1.5+l*.4],[s*(reach-4.5),3.5+l*.3],[s*5,3],[s*3,1]],membrane);
+    poly([[s*8,-7+l*.6],[s*reach,-5+l],[s*(reach-3),-1+l*.7],[s*9,-2+l*.5]],membraneD);
+    line([[s*3,-3],[s*reach,-5+l]],bone,1);
+    line([[s*3,-2],[s*(reach-1.5),1+l*.5]],mix(membrane,CREAM,.3),1);
+    if(tier>=2)line([[s*3,-1],[s*(reach-4.5),3.5+l*.3]],mix(membrane,CREAM,.15),1);
+  }
+  // Tail: trails behind and whips AGAINST actual lateral travel (pose from
+  // measured vx, never cosmetic intent), ending in a spade fin.
+  const whip=clamp(-dragon.vx*2.6,-4.5,4.5)+Math.sin(showFrame*.07)*1.1;
+  rect(Math.round(whip*.3)-1,6,3,3,mix(body,INK,.15));
+  rect(Math.round(whip*.65)-1,9,3,3,mix(body,INK,.3));
+  rect(Math.round(whip)-1,12,2,2,mix(body,INK,.45));
+  poly([[whip-2.5,14],[whip,11],[whip+2.5,14],[whip,16]],tier>=1?mix(CYAN,body,.35):mix(body,CYAN,.5));
+  // Body mass: broad shoulders tapering to the hips, ridged dorsal scales.
+  poly([[-3,-5],[3,-5],[4,0],[3,6],[-3,6],[-4,0]],body);
+  for(let i=0;i<4;i++)rect(-2,-3+i*2,4,1,i%2?scale:mix(scale,body,.5));
+  rect(-3,-4,6,1,bone); // shoulder ridge
+  if(tier>=2){rect(-4,-3,1,5,mix(GOLD,CREAM,.4));rect(3,-3,1,5,mix(GOLD,CREAM,.4));} // ascended flank armor
+  // Sinuous neck to a horned head: the neck sways with actual travel.
+  const sway=clamp(dragon.vx*1.4,-2,2)+Math.sin(showFrame*.05)*.6,hx=Math.round(sway*.8);
+  rect(-1,-7,3,2,mix(body,CREAM,.12));
+  rect(Math.round(sway*.4)-1,-10,2,3,mix(body,CREAM,.22));
+  rect(hx-2,-14,5,4,mix(body,CREAM,.3)); // skull
+  rect(hx-1,-16,3,2,mix(body,CREAM,.15)); // snout
+  rect(hx-2,-13,1,1,GOLD);rect(hx+2,-13,1,1,GOLD); // eyes
+  poly([[hx-2,-13],[hx-5,-16],[hx-1,-14]],bone);poly([[hx+3,-13],[hx+6,-16],[hx+2,-14]],bone); // horn pair
+  if(tier>=1){poly([[hx-1,-14],[hx-3,-17],[hx,-14.5]],mix(GOLD,CREAM,.5));
+    poly([[hx+2,-14],[hx+4,-17],[hx+1,-14.5]],mix(GOLD,CREAM,.5));} // ascension crown horns
+  // The rider, seated between the shoulders.
+  rect(-1,0,2,3,'#3a2c14');rect(-1,-1,2,2,'#d8a07b');rect(-1,-2,2,1,'#59d8f5');
+  // Soul gem: the lock-charge read — it brightens as the sweep holds.
+  if(dragon.lockGlow>0){ctx.globalAlpha=.4+dragon.lockGlow/20*.6;rect(-1,-4,2,2,CYAN);ctx.globalAlpha=1;}
+  // Volley power-up: an aura ring grows with each racked lock; a FULL rack
+  // turns it gold with orbiting charge sparks until the release.
+  if(dragon.locks.length>0){
+    const rackN=dragon.locks.length,full=rackN>=maxLocks();
+    ctx.globalAlpha=Math.min(.8,.22+.1*rackN+(full?.2+.15*Math.sin(showFrame*.45):0));
+    ctx.strokeStyle=full?GOLD:CYAN;ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(0,-2,9+rackN+(full?Math.sin(showFrame*.3)*1.5:0),0,TAU);ctx.stroke();
+    ctx.globalAlpha=1;
+    if(full)for(let i=0;i<3;i++){const b=showFrame*.35+i*TAU/3;
+      rect(Math.round(Math.cos(b)*11)-1,Math.round(-2+Math.sin(b)*11)-1,2,2,i?GOLD:CREAM);}
+  }
+  // Ascension flare: a brief gold shimmer right after an upgrade lands.
+  if(dragon.ascendT>0&&typeof globalThis.__NO_PAYOFF_FX==='undefined'){
+    ctx.globalAlpha=.2+.25*Math.sin(showFrame*.4);
+    ctx.strokeStyle=GOLD;ctx.beginPath();ctx.arc(0,0,13,0,TAU);ctx.stroke();ctx.globalAlpha=1;
+  }
   ctx.restore();
   // Wingtip vortices while banking hard — motion, not a route line.
   if(Math.abs(dragon.vx)>1.2){ctx.globalAlpha=.25;
-    rect(dx-13,dy+2,3,1,'#fff');rect(dx+10,dy+2,3,1,'#fff');ctx.globalAlpha=1;}
+    rect(dx-14,dy+2,3,1,'#fff');rect(dx+11,dy+2,3,1,'#fff');ctx.globalAlpha=1;}
   if(typeof globalThis.__NO_PAYOFF_FX==='undefined'&&dragon.gloryT>0){
     ctx.globalAlpha=.5+.3*Math.sin(showFrame*.55);const k=(showFrame>>2)%4,gp=[[-6,-6],[5,-3],[-6,4],[4,7]][k];
     rect(dx+gp[0],dy+gp[1],2,2,GOLD);ctx.globalAlpha=1;}
@@ -1431,13 +1572,15 @@ function drawLocks(){
     else{const t=l.ref;if(!t||t.hp<=0)continue;tx=t.x;ty=screenYAt(t.worldY,t.alt);}
     if(ty<28||ty>H+8)continue;
     const pulse=.6+.4*Math.sin(showFrame*.2+l.t);
-    ctx.globalAlpha=.55+.45*pulse;ctx.strokeStyle=l.kind==='wyrm'?GOLD:CYAN;ctx.lineWidth=1;
+    // A FULL rack turns every bracket gold: the charged read before release.
+    const charged=dragon.locks.length>=maxLocks();
+    ctx.globalAlpha=.55+.45*pulse;ctx.strokeStyle=l.kind==='wyrm'||charged?GOLD:CYAN;ctx.lineWidth=1;
     const r=7+Math.sin(showFrame*.15+l.t)*1.5;
     for(const[ sx2,sy2]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
       ctx.beginPath();ctx.moveTo(tx+sx2*r,ty+sy2*r-sy2*3);ctx.lineTo(tx+sx2*r,ty+sy2*r);ctx.lineTo(tx+sx2*r-sx2*3,ty+sy2*r);ctx.stroke();}
     ctx.globalAlpha=1;
     const idx=dragon.locks.indexOf(l);
-    rect(tx-4+idx*2,ty-r-5,2,2,l.kind==='wyrm'?GOLD:CYAN); // charge pip
+    rect(tx-4+idx*2,ty-r-5,2,2,l.kind==='wyrm'||charged?GOLD:CYAN); // charge pip
   }
   // The hold shimmer: two faint scan rays from the dragon while the sweep runs.
   if(dragon.lockGlow>4){ctx.globalAlpha=.12;const dy=dragonScreenY();
@@ -1468,6 +1611,9 @@ function drawMarks(){
     }else if(m.kind==='volley'){
       for(let k=0;k<3;k++){const w2=10-k*3;
         rect(m.x-w2/2,y+2-k*4,w2,2,k===1?'#ffffff':CYAN);}
+    }else if(m.kind==='ascend'){
+      for(let k=0;k<3;k++){const yy=y+5-k*5-age*8;
+        poly([[m.x-5,yy],[m.x,yy-3],[m.x+5,yy],[m.x,yy-1]],k===1?CREAM:GOLD);}
     }else if(m.kind==='wound'||m.kind==='shield-down'){
       rect(m.x-2,y-2,5,5,CORAL);
       for(let k=0;k<4;k++)rect(m.x+(k%2?3:-7),y+2+k*3,5,3,k%2?'#ffffff':CORAL);
@@ -1516,7 +1662,14 @@ function drawHud(p){
   ctx.fillStyle='#8a90a8';ctx.fillText('HUL',52,sy2+6);
   rect(64,sy2+3,32,4,'#252b3c');rect(64,sy2+3,32*clamp(dragon.hull/100,0,1),4,dragon.hull>40?MINT:CORAL);
   ctx.fillStyle='#8a90a8';ctx.fillText('LOCK',100,sy2+6);
-  for(let i=0;i<MAX_LOCKS;i++)rect(118+i*6,sy2+3,5,4,i<dragon.locks.length?GOLD:'#30364a');
+  // The rack GROWS with ascension: sealed slots read dark until earned; a
+  // full rack blinks gold-white while the charge holds.
+  const rackFull=dragon.locks.length>=maxLocks()&&dragon.locks.length>0;
+  for(let i=0;i<MAX_LOCKS;i++){
+    const open=i<maxLocks();
+    rect(118+i*6,sy2+3,5,4,i<dragon.locks.length?(rackFull&&(showFrame>>2&1)?CREAM:GOLD):open?'#30364a':'#171b28');
+    if(!open)rect(119+i*6,sy2+4,3,2,'#0c0f1a');
+  }
   // Wyrm stage bar lives in the same cluster while a carrier is on the field.
   if(wyrm&&!wyrm.dead){
     const st=wyrm.stages[Math.min(wyrm.stage,wyrm.stages.length-1)];
@@ -1528,6 +1681,9 @@ function drawHud(p){
     ctx.fillStyle=GOLD;ctx.fillText(''+stats.kills,26,sy2+14);
     ctx.fillStyle='#8a90a8';ctx.fillText('VOLLEY',52,sy2+14);
     ctx.fillStyle=CYAN;ctx.fillText(''+stats.volleyKills,76,sy2+14);
+    ctx.fillStyle='#8a90a8';ctx.fillText('RANK',100,sy2+14);
+    ctx.fillStyle=dragon.tier>=2?GOLD:dragon.tier>=1?CYAN:'#aab2c8';
+    ctx.fillText(['I','II','III'][dragon.tier],122,sy2+14);
   }
   if(state==='gate'){
     ctx.globalAlpha=.9;rect(8,128,144,86,INK);ctx.globalAlpha=1;ctx.strokeStyle=GOLD;ctx.strokeRect(8.5,128.5,143,85);
@@ -1542,8 +1698,7 @@ function drawHud(p){
 function renderIsolated(only){
   rect(0,0,W,H,INK);
   isolatedSubject=true;
-  const p=BIOMES[currentBiome()];
-  if(only==='env')drawEnvironment(p);
+  if(only==='env')drawEnvironment();
   else if(only==='dragon')drawDragon();
   else if(only==='wyrm')drawWyrm();
   else if(only.startsWith('wing-')){const w=wings.find(q=>'wing-'+q.id===only);if(w)drawFoe(w);}
@@ -1556,7 +1711,7 @@ function render(){
   const only=typeof globalThis.__SK_VISUAL_ONLY_SUBJECT!=='undefined'?globalThis.__SK_VISUAL_ONLY_SUBJECT:null;
   if(only!==null){renderIsolated(String(only));return;}
   const p=BIOMES[currentBiome()];
-  drawEnvironment(p);
+  drawEnvironment();
   preDraw();
   // far-to-near: turrets on the ground first, then fliers, then the dragon
   for(const s of swarm)if(s.turret)drawTurret(s);
@@ -1584,6 +1739,7 @@ globalThis.__skyReignProbe=()=>({state,runFrame,showFrame,worldSeed,skillSeed,pe
   biome:BIOMES[currentBiome()].name,finite:allFinite(),outcome,
   dragon:{x:dragon.x,alt:dragon.alt,worldY:dragon.worldY,vx:dragon.vx,valt:dragon.valt,speed:dragon.speed,
     shield:dragon.shield,hull:dragon.hull,locks:dragon.locks.length,lockGlow:dragon.lockGlow,
+    tier:dragon.tier,cap:maxLocks(),chargeT:dragon.chargeT,ascendT:dragon.ascendT,
     wreckT:dragon.wreckT,lanceCd:dragon.lanceCd,tactic:dragon.intent&&dragon.intent.tactic,
     targetX:dragon.intent&&dragon.intent.targetX,targetAlt:dragon.intent&&dragon.intent.targetAlt},
   wings:wings.length,activeWings:wings.filter(w=>w.respawnT<=0&&w.state!=='down').length,
@@ -1594,9 +1750,10 @@ globalThis.__skyReignProbe=()=>({state,runFrame,showFrame,worldSeed,skillSeed,pe
   maxEventLull:Math.max(stats.maxEventLull,showFrame-lastEventFrame),maxProgressLull:Math.max(stats.maxProgressLull,showFrame-lastProgressFrame),
   act:{phase:act.phase,type:act.type,wind:round(act.wind,4),notes:act.notes.slice()},show:SHOW.probe(),playing:playing()});
 globalThis.__skyReignSignature=()=>JSON.stringify({state,runFrame,worldSeed,skillSeed,persona:persona.name,lastBiome,lastSector,
-  volleyStreak,lastVolleyFrame,generatedTo,
+  volleyStreak,lastVolleyFrame,generatedTo,lastBlendFrom,
   d:[dragon.x,dragon.alt,dragon.worldY,dragon.vx,dragon.valt,dragon.speed,dragon.shield,dragon.hull,dragon.shieldT,
     dragon.lanceCd,dragon.sweepT,dragon.lockAge,dragon.wreckT,dragon.invulnT,dragon.hitFlashT,dragon.contactT,dragon.dodgeT,
+    dragon.tier,dragon.ascendT,dragon.chargeT,
     dragon.locks.map(l=>[l.kind,l.ref?l.ref.id:-1])]
     .map(v=>Array.isArray(v)?v:typeof v==='number'?round(v,5):v),
   w:wings.map(w=>[w.id,w.kind,round(w.x,4),round(w.alt,4),round(w.worldY,4),round(w.vx,4),round(w.speed,4),w.hp,w.state,w.stateT,
@@ -1612,7 +1769,8 @@ globalThis.__skyReignSignature=()=>JSON.stringify({state,runFrame,worldSeed,skil
   st:[stats.markers,stats.biomes,stats.kills,stats.volleyKills,stats.volleys,stats.volleyWipes,stats.locks,stats.lanceHits,
     stats.lances,stats.boltsFaced,stats.nearMisses,stats.hitsTaken,stats.shieldBreaks,stats.wounds,stats.collisions,
     stats.wrecks,stats.lapses,stats.acts,stats.storms,stats.stormClears,stats.wyrms,stats.phaseBreaks,stats.wyrmKills,
-    stats.dodges,stats.contacts,stats.sweeps,stats.sweepHits,stats.events,stats.progress]});
+    stats.dodges,stats.contacts,stats.sweeps,stats.sweepHits,stats.upgrades,stats.fullRacks,stats.maxRack,
+    stats.events,stats.progress]});
 globalThis.__skyReignPhysical=()=>[round(dragon.x,7),round(dragon.alt,7),round(dragon.worldY,7),round(dragon.vx,7),
   round(dragon.valt,7),round(dragon.speed,7),dragon.intent&&round(dragon.intent.steer,7),dragon.intent&&round(dragon.intent.climb,7),
   dragon.intent&&dragon.intent.fire,
@@ -1620,18 +1778,19 @@ globalThis.__skyReignPhysical=()=>[round(dragon.x,7),round(dragon.alt,7),round(d
   bolts.map(b=>[round(b.x,3),round(b.worldY,3)].join(',')).join(';'),
   wyrm?[round(wyrm.x,4),round(wyrm.worldY,4),wyrm.state].join(','):'',
   dust?round(dust.worldY,4):'',round(act.wind,6)].join('|');
-globalThis.__skyReignVisualBeats=['opening','lock-sweep','volley','volley-kill','dodge','reef','ruins',
-  'storm-warn','storm-live','wyrm-warn','wyrm-fight','phase-break','ash','gate'];
+globalThis.__skyReignVisualBeats=['opening','lock-sweep','volley','volley-kill','dodge','upgrade','transition',
+  'reef','ruins','storm-warn','storm-live','wyrm-warn','wyrm-fight','phase-break','ash','gate'];
 // The good/bad feedback ledger for evals/feedback.js: every entry is a sim
 // event the viewer must be able to SEE, with screen coordinates at fire time.
 globalThis.__feedbackProbe=()=>({finite:allFinite(),serial:feedbackSerial,events:feedback.slice(),
   pulses:{good:round(goodPulse,4),bad:round(badPulse,4)},
   dragon:{bank:round(dragon.bank,5),va:round(dragon.va||0,5),vx:round(dragon.vx,5),speed:round(dragon.speed,5),
     shield:round(dragon.shield,2),hull:dragon.hull,locks:dragon.locks.length,lockGlow:dragon.lockGlow,
+    tier:dragon.tier,chargeT:dragon.chargeT,
     hitFlashT:dragon.hitFlashT,gloryT:dragon.gloryT,wreckT:dragon.wreckT}});
 function visualActors(){
   const out=[{id:'dragon',kind:'dragon',type:'player',
-    box:{x:dragon.x-13,y:dragonScreenY()-13,width:26,height:24}}];
+    box:{x:dragon.x-19,y:dragonScreenY()-20,width:38,height:40}}];
   for(const w of wings){if(w.respawnT>0)continue;const yy=screenYAt(w.worldY,w.alt);if(yy<40||yy>H-8)continue;
     out.push({id:'wing-'+w.id,kind:'wing',type:w.kind,state:w.state,
       box:{x:w.x-10,y:yy-9,width:20,height:18}});}
@@ -1645,7 +1804,8 @@ function visualActors(){
 }
 globalThis.__skyReignVisualProbe=()=>({frame:showFrame,biome:BIOMES[currentBiome()].name,
   tactic:displayedTactic(),danger:act.phase!=='calm',act:act.phase,actType:act.type,state,finite:allFinite(),
-  persona:persona.name,
+  persona:persona.name,tier:dragon.tier,cap:maxLocks(),
+  transition:(()=>{const info=blendInfo();return{from:BIOMES[info.cur].name,to:BIOMES[info.next].name,t:round(info.t,4)};})(),
   wingCount:wings.filter(w=>w.respawnT<=0&&w.state!=='down').length,
   swarmCount:swarm.filter(s=>s.hp>0).length,
   wyrmState:wyrm?{stage:wyrm.stage,state:wyrm.state,dead:wyrm.dead}:null,
@@ -1656,7 +1816,7 @@ globalThis.__skyReignVisualProbe=()=>({frame:showFrame,biome:BIOMES[currentBiome
     approach:{enter:38,contact:268,visible:230,travel:322},
     hudStatus:HUD_STATUS},
   actors:visualActors(),
-  playerBox:{x:dragon.x-15,y:dragonScreenY()-15,width:30,height:30},
+  playerBox:{x:dragon.x-19,y:dragonScreenY()-20,width:38,height:40},
   foeBoxes:lockables().map(t=>({x:t.x-12,y:screenYAt(t.worldY,t.alt)-10,width:24,height:20,kind:t.kind,state:t.state})),
   wyrmBox:(()=>{if(!wyrm||wyrm.dead)return null;const yy=screenYAt(wyrm.worldY,wyrm.alt);
     return{x:wyrm.x-44,y:yy-44,width:88,height:92,stage:wyrm.stage,state:wyrm.state};})(),
@@ -1666,7 +1826,7 @@ let fixtureSwarm=[];
 function visualPrime(biome){
   worldSeed=777;runFrame=0;state='flight';outcome='';
   dragon=makeDragon();dragon.worldY=biome*BIOME_SPAN+900;dragon.x=80;dragon.alt=26;
-  lastBiome=biome;lastSector=Math.floor(dragon.worldY/SECTOR);
+  lastBiome=biome;lastSector=Math.floor(dragon.worldY/SECTOR);lastBlendFrom=-1;
   wings=[];swarm=[];bolts=[];missiles=[];lances=[];wyrm=null;dust=null;
   texts=[];marks=[];feedback=[];goodPulse=0;badPulse=0;plan=null;planAt=-1e9;visualIntent=null;
   generatedTo=Math.floor((dragon.worldY+760)/SECTOR);swarmSerial=0;boltSerial=0;
@@ -1691,18 +1851,36 @@ globalThis.__skyReignSetVisualBeat=name=>{
   else if(name==='lock-sweep'){visualPrime(0);
     const a=fixtureSwarmFoe('vyr',62,120,30),b=fixtureSwarmFoe('wasp',98,104,24),c=fixtureSwarmFoe('manta',80,168,38);
     fixtureWing('spire',112,210,44,0);
-    dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0}];dragon.lockGlow=16;
+    dragon.tier=1;dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0}];dragon.lockGlow=16;
     visualIntent={steer:0,climb:0,fire:2,targetX:80,targetAlt:26,tactic:'SWEEP · LOCK'};}
   else if(name==='volley'){visualPrime(0);
     const a=fixtureSwarmFoe('vyr',60,110,28),b=fixtureSwarmFoe('wasp',100,100,24),
       c=fixtureSwarmFoe('vyr',80,150,34),d=fixtureSwarmFoe('manta',72,190,40);
+    dragon.tier=2;stats.kills=32;stats.upgrades=2;
     dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0},{kind:'foe',ref:c,t:0},{kind:'foe',ref:d,t:0}];
-    dragon.lockGlow=20;
+    dragon.lockGlow=20;dragon.chargeT=CHARGE_HOLD;
     visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'UNLEASH'};}
   else if(name==='volley-kill'){visualPrime(0);
     const a=fixtureSwarmFoe('vyr',66,86,26),b=fixtureSwarmFoe('wasp',94,78,22),c=fixtureSwarmFoe('vyr',80,120,30);
+    dragon.tier=1;stats.kills=16;stats.upgrades=1;
     dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0},{kind:'foe',ref:c,t:0}];dragon.lockGlow=20;
     visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:26,tactic:'UNLEASH'};}
+  else if(name==='upgrade'){visualPrime(1);
+    // The ascended dragon: tier-2 art (crown horns, flank armor, extra wing
+    // strut, bright tail spade) holding a FULL charged four-lock rack.
+    const a=fixtureSwarmFoe('vyr',58,112,28),b=fixtureSwarmFoe('wasp',102,98,24),
+      c=fixtureSwarmFoe('manta',76,156,36),d=fixtureSwarmFoe('vyr',96,196,32);
+    dragon.tier=2;stats.kills=34;stats.upgrades=2;stats.maxRack=4;dragon.ascendT=60;
+    dragon.locks=[{kind:'foe',ref:a,t:0},{kind:'foe',ref:b,t:0},{kind:'foe',ref:c,t:0},{kind:'foe',ref:d,t:0}];
+    dragon.lockGlow=20;dragon.chargeT=10;
+    visualIntent={steer:0,climb:0,fire:2,targetX:80,targetAlt:26,tactic:'FULL RACK · HOLD'};}
+  else if(name==='transition'){visualPrime(0);
+    // The blended border: dragon mid-crossing, dune rows behind, reef rows
+    // sweeping in ahead, palette mid-lerp.
+    dragon.worldY=BIOME_SPAN-140;
+    lastSector=Math.floor(dragon.worldY/SECTOR);generatedTo=Math.floor((dragon.worldY+760)/SECTOR);
+    fixtureWing('manta',60,150,36,0);fixtureSwarmFoe('vyr',98,120,30);
+    visualIntent={steer:0,climb:.1,fire:0,targetX:80,targetAlt:30,tactic:'CROSS THE BORDER'};}
   else if(name==='dodge'){visualPrime(1);
     fixtureWing('manta',60,170,36,0,['windup',20]);fixtureWing('vyr',104,140,26,1);
     bolts.push(makeBolt(74,dragon.worldY+64,30,.18,-.04,-1.9,'bolt','fixture'));
@@ -1734,12 +1912,14 @@ globalThis.__skyReignSetVisualBeat=name=>{
     fixtureWing('vyr',48,120,26,0);fixtureWing('manta',116,150,36,1);
     Object.assign(act,{phase:'live',type:'wyrm',landAt:runFrame-60,endAt:runFrame+1800});
     wyrm=makeWyrm();wyrm.state='fight';wyrm.worldY=dragon.worldY+205;wyrm.x=84;wyrm.alt=42;
+    dragon.tier=1;stats.kills=18;stats.upgrades=1;
     dragon.locks=[{kind:'wyrm',t:0},{kind:'wyrm',t:0}];dragon.lockGlow=18;
     visualIntent={steer:.1,climb:.1,fire:2,targetX:84,targetAlt:34,tactic:'BREAK THE ENGINES'};}
   else if(name==='phase-break'){visualPrime(4);
     Object.assign(act,{phase:'live',type:'wyrm',landAt:runFrame-60,endAt:runFrame+1800});
     wyrm=makeWyrm();wyrm.state='fight';wyrm.worldY=dragon.worldY+200;wyrm.x=80;wyrm.alt=42;
     wyrm.stages[0].hp=2;
+    dragon.tier=1;stats.kills=20;stats.upgrades=1;
     dragon.locks=[{kind:'wyrm',t:0},{kind:'wyrm',t:0}];dragon.lockGlow=20;
     visualIntent={steer:0,climb:0,fire:0,targetX:80,targetAlt:34,tactic:'BREAK THE ENGINES'};}
   else if(name==='ash'){visualPrime(3);
@@ -1747,7 +1927,7 @@ globalThis.__skyReignSetVisualBeat=name=>{
     visualIntent={steer:-.1,climb:.1,fire:0,targetX:76,targetAlt:32,tactic:'SKIRT THE EMBERS'};}
   else if(name==='gate'){visualPrime(4);
     fixtureWing('manta',62,160,38,0);
-    dragon.alt=34;stats.kills=41;stats.volleyKills=23;stats.wyrmKills=1;runFrame=FLIGHT_FRAMES-1;
+    dragon.alt=34;dragon.tier=2;stats.upgrades=2;stats.kills=41;stats.volleyKills=23;stats.wyrmKills=1;runFrame=FLIGHT_FRAMES-1;
     visualIntent={steer:0,climb:.2,fire:0,targetX:80,targetAlt:40,tactic:'RIDE THE WIND'};}
   else return false;
   return true;
